@@ -1,0 +1,14 @@
+{
+  "name": "@agentbrowser/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build-artifact.mjs",
+    "test": "tsx --test test/*.test.ts",
+    "start": "node dist/services/relay/src/main.js"
+  },
+  "dependencies": {"ws": "8.18.3"},
+  "devDependencies": {"@types/node": "22.15.30", "@types/ws": "8.18.1", "tsx": "4.20.3", "typescript": "5.8.3"}
+}

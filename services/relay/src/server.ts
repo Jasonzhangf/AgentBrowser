@@ -1,0 +1,262 @@
+import {createServer, type ServerOptions} from 'node:https';
+import type {IncomingMessage, ServerResponse} from 'node:http';
+import {randomBytes, randomUUID, verify} from 'node:crypto';
+import {WebSocket, WebSocketServer} from 'ws';
+import {RelayError, authTranscript, object, snapshot, text, type HostSnapshot, type Channel, type TunnelOffer} from '../../../protocol/relay/index.js';
+import {RelayStore, digest, type Account, type Device} from './store.js';
+
+interface Peer {ws: WebSocket; account: Account; device: Device; token: string; hostId?: string; snapshot?: HostSnapshot; publishedAt?: number; expired?: boolean}
+interface Ticket {tunnel: Tunnel; side: 0 | 1; channel: Channel; expiresAt: number}
+interface Tunnel {id: string; peers: [Peer, Peer]; sockets: Record<Channel, [WebSocket?, WebSocket?]>; expiresAt: number; tickets: Set<string>}
+
+export interface RelayOptions {
+  store: RelayStore;
+  tls: Pick<ServerOptions, 'key' | 'cert'>;
+  directoryTtlMs?: number;
+  ticketTtlMs?: number;
+  sweepMs?: number;
+}
+
+export function createRelayServer(options: RelayOptions) {
+  const {store} = options;
+  if (!options.tls.key || !options.tls.cert) throw new Error('TLS key and certificate required');
+  const directoryTtl = options.directoryTtlMs ?? 30_000;
+  const ticketTtl = options.ticketTtlMs ?? 10_000;
+  const peers = new Set<Peer>();
+  const hosts = new Map<string, Peer>();
+  const tickets = new Map<string, Ticket>();
+  const tunnels = new Map<string, Tunnel>();
+  let inflight = 0;
+  let loginWindow = store.now();
+  let loginAttempts = 0;
+  const accountAttempts = new Map<string, number>();
+  const wss = new WebSocketServer({noServer: true, maxPayload: 1024 * 1024, perMessageDeflate: false});
+  const errorBody = (error: unknown) => error instanceof RelayError
+    ? {code: error.code, message: error.message} : {code: 'INTERNAL_ERROR', message: 'Relay request failed'};
+
+  function send(ws: WebSocket, message: unknown) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.bufferedAmount > 256 * 1024) { ws.close(1013, 'Control backpressure'); return; }
+    ws.send(JSON.stringify(message));
+  }
+  function directory(accountId: string) {
+    return [...hosts.values()].filter(peer => peer.account.id === accountId && peer.snapshot && authorized(peer) && store.now() - peer.publishedAt! < directoryTtl)
+      .map(peer => ({hostId: peer.hostId, deviceId: peer.device.id, deviceName: peer.device.name, snapshot: peer.snapshot}));
+  }
+  function publishDirectory(accountId: string) {
+    const message = {type: 'directory.snapshot', hosts: directory(accountId)};
+    for (const peer of peers) if (peer.account.id === accountId) send(peer.ws, message);
+  }
+  function closeTunnel(tunnel: Tunnel, reason: string) {
+    if (!tunnels.delete(tunnel.id)) return;
+    for (const key of tunnel.tickets) tickets.delete(key);
+    for (const pair of Object.values(tunnel.sockets)) for (const ws of pair) ws?.close(1000, reason);
+    for (const peer of tunnel.peers) send(peer.ws, {type: 'tunnel.closed', tunnelId: tunnel.id, reason});
+  }
+  function validPeer(peer: Peer) {
+    if (!peers.has(peer) || peer.ws.readyState !== WebSocket.OPEN || store.authenticate(peer.token).id !== peer.account.id) throw new RelayError('UNAUTHORIZED', 'Peer authorization expired', 401);
+    return true;
+  }
+  function authorized(peer: Peer) {
+    try { return validPeer(peer); } catch { return false; }
+  }
+  function offerTunnel(client: Peer, host: Peer) {
+    if (tunnels.size >= 128 || [...tunnels.values()].filter(item => item.peers.includes(client)).length >= 8) {
+      throw new RelayError('TUNNEL_LIMIT', 'Tunnel limit reached', 429);
+    }
+    const tunnel: Tunnel = {id: randomUUID(), peers: [client, host], sockets: {control: [], media: []}, expiresAt: store.now() + ticketTtl, tickets: new Set()};
+    tunnels.set(tunnel.id, tunnel);
+    for (const side of [0, 1] as const) {
+      const channels = {} as TunnelOffer['channels'];
+      for (const channel of ['control', 'media'] as const) {
+        const ticket = randomBytes(32).toString('base64url');
+        const key = digest(ticket);
+        tunnel.tickets.add(key);
+        tickets.set(key, {tunnel, side, channel, expiresAt: tunnel.expiresAt});
+        channels[channel] = {path: `/v1/tunnel/${tunnel.id}/${channel}/${side}`, ticket};
+      }
+      send(tunnel.peers[side].ws, {type: 'tunnel.offer', tunnelId: tunnel.id, peerDeviceId: tunnel.peers[side === 0 ? 1 : 0].device.id, expiresAt: tunnel.expiresAt, channels} satisfies TunnelOffer);
+    }
+  }
+
+  async function body(req: IncomingMessage) {
+    const chunks: Buffer[] = []; let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > 16 * 1024) throw new RelayError('BODY_TOO_LARGE', 'Request too large', 413);
+      chunks.push(chunk);
+    }
+    try { return JSON.parse(Buffer.concat(chunks).toString()); }
+    catch { throw new RelayError('INVALID_JSON', 'Invalid JSON'); }
+  }
+  function bearer(req: IncomingMessage) {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) throw new RelayError('UNAUTHORIZED', 'Bearer required', 401);
+    return text(header.slice(7), 'token', 256);
+  }
+  function reply(res: ServerResponse, status: number, data: unknown) {
+    res.writeHead(status, {'content-type': 'application/json', 'cache-control': 'no-store'});
+    res.end(JSON.stringify(data));
+  }
+  const server = createServer({...options.tls, minVersion: 'TLSv1.2', requestTimeout: 10_000, headersTimeout: 10_000}, async (req, res) => {
+    if (inflight >= 16) { reply(res, 429, {error: {code: 'BUSY', message: 'Too many requests'}}); return; }
+    inflight++;
+    try {
+      if (req.url === '/health' && req.method === 'GET') { reply(res, 200, {ok: true}); return; }
+      if (req.url === '/v1/login' && req.method === 'POST') {
+        const data = object(await body(req), ['username', 'password']);
+        const username = text(data.username, 'username', 64);
+        if (store.now() - loginWindow >= 60_000) { loginWindow = store.now(); loginAttempts = 0; accountAttempts.clear(); }
+        const attempts = accountAttempts.get(username) ?? 0;
+        if (loginAttempts >= 160 || attempts >= 20) throw new RelayError('RATE_LIMIT', 'Login attempt limit reached', 429);
+        loginAttempts++; accountAttempts.set(username, attempts + 1);
+        reply(res, 200, await store.login(username, text(data.password, 'password', 1024))); return;
+      }
+      const token = bearer(req); const account = store.authenticate(token);
+      if (req.url === '/v1/devices' && req.method === 'POST') {
+        const data = object(await body(req), ['name', 'publicKey']);
+        const device = store.addDevice(account, text(data.name, 'name', 64), text(data.publicKey, 'key', 1024));
+        reply(res, 201, {id: device.id}); return;
+      }
+      if (req.url === '/v1/hosts' && req.method === 'POST') {
+        const data = object(await body(req), ['deviceId']);
+        reply(res, 201, {id: store.addHost(account, text(data.deviceId, 'deviceId')).id}); return;
+      }
+      if (req.url === '/v1/directory' && req.method === 'GET') { reply(res, 200, {hosts: directory(account.id)}); return; }
+      if (req.url === '/v1/token' && req.method === 'DELETE') { store.revoke(token); reply(res, 200, {revoked: true}); return; }
+      throw new RelayError('NOT_FOUND', 'Endpoint not found', 404);
+    } catch (error) { reply(res, error instanceof RelayError ? error.status : 500, {error: errorBody(error)}); }
+    finally { inflight--; }
+  });
+
+  server.on('upgrade', (req, socket, head) => {
+    try {
+      if (wss.clients.size >= 128) throw new RelayError('BUSY', 'Connection limit', 429);
+      const path = req.url ?? '';
+      if (path.startsWith('/v1/tunnel/')) {
+        const key = digest(bearer(req)); const ticket = tickets.get(key);
+        if (!ticket || ticket.expiresAt <= store.now() || path !== `/v1/tunnel/${ticket.tunnel.id}/${ticket.channel}/${ticket.side}` || !ticket.tunnel.peers.every(validPeer)) {
+          throw new RelayError('UNAUTHORIZED', 'Invalid tunnel ticket', 401);
+        }
+        tickets.delete(key); ticket.tunnel.tickets.delete(key);
+        wss.handleUpgrade(req, socket, head, ws => {
+          const {tunnel, channel, side} = ticket;
+          const pair = tunnel.sockets[channel]; pair[side] = ws;
+          if (pair[0] && pair[1]) for (const endpoint of pair) send(endpoint!, {type: 'channel.ready', tunnelId: tunnel.id, channel});
+          ws.on('message', (raw, binary) => {
+            const other = pair[side === 0 ? 1 : 0];
+            try {
+              if (!tunnel.peers.every(validPeer)) throw new RelayError('UNAUTHORIZED', 'Authorization expired');
+              if (!binary || !other || other.readyState !== WebSocket.OPEN) throw new RelayError('CHANNEL_NOT_READY', 'Binary paired channel required');
+              const bytes = Buffer.isBuffer(raw) ? raw : Buffer.concat(Array.isArray(raw) ? raw : [Buffer.from(raw)]);
+              if (bytes.length > (channel === 'control' ? 64 * 1024 : 1024 * 1024) || other.bufferedAmount + bytes.length > 2 * 1024 * 1024) {
+                throw new RelayError('BACKPRESSURE', 'Channel limit reached');
+              }
+              other.send(bytes, {binary: true});
+            } catch (error) { closeTunnel(tunnel, errorBody(error).code); }
+          });
+          ws.on('close', () => closeTunnel(tunnel, 'PEER_DISCONNECTED'));
+          ws.on('error', () => closeTunnel(tunnel, 'TRANSPORT_ERROR'));
+        });
+        return;
+      }
+      if (!/^\/v1\/control\/(client|host\/[a-zA-Z0-9-]+)$/.test(path)) throw new RelayError('NOT_FOUND', 'Unknown WS path', 404);
+      wss.handleUpgrade(req, socket, head, ws => {
+        const nonce = randomBytes(32).toString('base64url');
+        let peer: Peer | undefined;
+        const authTimeout = setTimeout(() => ws.close(4401, 'Authentication timeout'), 5000);
+        send(ws, {type: 'auth.challenge', version: 1, nonce});
+        ws.on('message', (raw, binary) => {
+          try {
+            if (binary || raw.toString().length > 64 * 1024) throw new RelayError('INVALID_MESSAGE', 'Control JSON required');
+            let parsed: unknown;
+            try { parsed = JSON.parse(raw.toString()); }
+            catch { throw new RelayError('INVALID_JSON', 'Invalid JSON'); }
+            if (!peer) {
+              const auth = object(parsed, ['type', 'token', 'deviceId', 'signature']);
+              if (auth.type !== 'auth.prove') throw new RelayError('UNAUTHORIZED', 'Authentication required', 401);
+              const token = text(auth.token, 'token', 256); const account = store.authenticate(token);
+              const device = store.device(account, text(auth.deviceId, 'deviceId'));
+              const signature = Buffer.from(text(auth.signature, 'signature', 128), 'base64url');
+              if (!verify(null, authTranscript(nonce, path, device.id, digest(token)), device.publicKey, signature)) throw new RelayError('UNAUTHORIZED', 'Device signature rejected', 401);
+              const hostId = path.startsWith('/v1/control/host/') ? path.slice('/v1/control/host/'.length) : undefined;
+              if (hostId && (store.host(account, hostId).deviceId !== device.id || hosts.has(hostId))) throw new RelayError('HOST_CONFLICT', 'Host unavailable or already connected', 409);
+              peer = {ws, account, device, token, hostId}; peers.add(peer);
+              if (hostId) hosts.set(hostId, peer);
+              clearTimeout(authTimeout); send(ws, {type: 'auth.ready', deviceId: device.id}); publishDirectory(account.id); return;
+            }
+            validPeer(peer);
+            const data = object(parsed, ['type', 'snapshot', 'peerDeviceId', 'data', 'hostId']);
+            switch (data.type) {
+              case 'host.publish': {
+                object(parsed, ['type', 'snapshot']);
+                if (!peer.hostId) throw new RelayError('FORBIDDEN', 'Host required', 403);
+                const next = snapshot(data.snapshot);
+                if (peer.snapshot && (next.incarnation !== peer.snapshot.incarnation || next.revision <= peer.snapshot.revision)) throw new RelayError('STALE_SNAPSHOT', 'Snapshot revision must increase');
+                peer.snapshot = next; peer.publishedAt = store.now(); peer.expired = false; publishDirectory(peer.account.id); break;
+              }
+              case 'signal.send': {
+                object(parsed, ['type', 'peerDeviceId', 'data']);
+                const deviceId = text(data.peerDeviceId, 'peerDeviceId'); const signal = text(data.data, 'signal', 32 * 1024);
+                const targets = [...peers].filter(item => item.account.id === peer!.account.id && item.device.id === deviceId && item !== peer);
+                if (targets.length !== 1) throw new RelayError('PEER_UNAVAILABLE', 'Peer missing or ambiguous', 409);
+                if (!validPeer(targets[0]!)) throw new RelayError('PEER_UNAVAILABLE', 'Peer expired', 409);
+                send(targets[0]!.ws, {type: 'signal.received', peerDeviceId: peer.device.id, data: signal}); break;
+              }
+              case 'tunnel.open': {
+                object(parsed, ['type', 'hostId']);
+                if (peer.hostId) throw new RelayError('FORBIDDEN', 'Client required', 403);
+                const host = hosts.get(text(data.hostId, 'hostId'));
+                if (!host || host.account.id !== peer.account.id || !validPeer(host)) throw new RelayError('HOST_UNAVAILABLE', 'Host unavailable', 404);
+                offerTunnel(peer, host); break;
+              }
+              default: throw new RelayError('UNKNOWN_MESSAGE', 'Unknown control message');
+            }
+          } catch (error) {
+            send(ws, {type: 'error', ...errorBody(error)});
+            if (!peer || (error instanceof RelayError && error.code === 'UNAUTHORIZED')) ws.close(4401, 'Authorization failed');
+          }
+        });
+        ws.on('error', () => ws.close(1011, 'Transport error'));
+        ws.on('close', () => {
+          clearTimeout(authTimeout);
+          if (!peer) return;
+          peers.delete(peer);
+          if (peer.hostId && hosts.get(peer.hostId) === peer) hosts.delete(peer.hostId);
+          for (const tunnel of tunnels.values()) if (tunnel.peers.includes(peer)) closeTunnel(tunnel, 'CONTROL_DISCONNECTED');
+          publishDirectory(peer.account.id);
+        });
+      });
+    } catch (error) {
+      socket.end(`HTTP/1.1 ${error instanceof RelayError ? error.status : 500} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    }
+  });
+  const sweep = setInterval(() => {
+    for (const peer of peers) {
+      if (!authorized(peer)) {
+        for (const tunnel of tunnels.values()) if (tunnel.peers.includes(peer)) closeTunnel(tunnel, 'UNAUTHORIZED');
+        peer.ws.close(4401, 'Authorization expired');
+      }
+      if (peer.snapshot && !peer.expired && store.now() - peer.publishedAt! >= directoryTtl) {
+        peer.expired = true; publishDirectory(peer.account.id);
+      }
+    }
+    for (const tunnel of tunnels.values()) if (store.now() >= tunnel.expiresAt && Object.values(tunnel.sockets).some(pair => !pair[0] || !pair[1])) closeTunnel(tunnel, 'PAIRING_TIMEOUT');
+  }, options.sweepMs ?? 1000);
+  sweep.unref();
+
+  return {
+    async listen(port = 0, host = '127.0.0.1') {
+      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => {server.off('error', reject); resolve();}); });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Invalid listener address');
+      return `https://${host}:${address.port}`;
+    },
+    async close() {
+      clearInterval(sweep);
+      for (const ws of wss.clients) ws.terminate();
+      await new Promise<void>(resolve => wss.close(() => resolve()));
+      if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  };
+}

@@ -22,3 +22,6 @@ local.properties
 /.appsdk/records/evidence/client-connection/
 /.appsdk/records/fix-candidate-record-client-connection.json
 /.appsdk/records/pre-review-validation-record-client-connection.json
+/.appsdk/records/evidence/relay-service/
+/.appsdk/records/fix-candidate-record-relay-service.json
+/.appsdk/records/pre-review-validation-record-relay-service.json

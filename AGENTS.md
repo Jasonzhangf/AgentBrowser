@@ -13,6 +13,10 @@ project Skills, and machine workflow belongs in declared guidance contracts.
 - Current owner candidate: AB-05 direct prepaired WSS kernel, bound in AppSDK.
   Scope, build inputs and evidence boundaries: `docs/client-connection.md`.
   No milestone or whole-product delivery is established by this module.
+- Relay service implementation in `services/relay`, with its
+  protocol owner in `protocol/relay`. Module commands are bound in
+  `.appsdk/project.json`; entrypoints and limits are in `docs/relay-service.md`.
+  This does not establish an installed browser or production endpoint.
 - Client/relay repository: https://github.com/Jasonzhangf/AgentBrowser.
   Engine/daemon fork: https://github.com/Jasonzhangf/obscura.
 - Browser protocol belongs to the Obscura fork; relay protocol belongs here.

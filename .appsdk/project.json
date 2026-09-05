@@ -100,6 +100,29 @@
   },
   "modules": [
     {
+      "active_artifact": "active/lib/relay-service",
+      "artifact_paths": ["relay.tar"],
+      "build": {"args": ["run", "build"], "program": "npm", "working_directory": "services/relay"},
+      "contract_paths": ["docs/relay-service.md", "docs/architecture.md"],
+      "dependency_modules": [],
+      "deployment_operations": [],
+      "generated_outputs": ["services/relay/dist/**", "generated/modules/relay-service/**"],
+      "module_id": "relay-service",
+      "owned_paths": ["services/relay/src/**", "services/relay/test/**", "services/relay/package.json", "services/relay/package-lock.json", "services/relay/tsconfig.json", "services/relay/build-artifact.mjs", "services/relay/validate-admission.mjs", "protocol/relay/**"],
+      "regression": {
+        "allow_skipped": false,
+        "command": {"args": ["test"], "program": "npm", "working_directory": "services/relay"},
+        "input_paths": ["services/relay/src/**", "services/relay/test/**", "services/relay/package.json", "services/relay/package-lock.json", "services/relay/tsconfig.json", "services/relay/build-artifact.mjs", "services/relay/validate-admission.mjs", "protocol/relay/**"],
+        "minimum_test_count": 6,
+        "ordinary_mode_after_freeze": "disabled",
+        "reenable_on": ["source_change", "contract_change", "public_api_change", "artifact_change", "dependency_change"],
+        "required_before_freeze": true,
+        "suite_id": "relay-tls-wss"
+      },
+      "source_owner": "relay-service",
+      "stage": "contract_bound"
+    },
+    {
       "active_artifact": "active/lib/client-connection",
       "artifact_paths": [
         "libagentbrowser_connection.rlib",
