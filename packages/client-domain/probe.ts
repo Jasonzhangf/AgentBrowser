@@ -4,6 +4,7 @@ export type ProbeCommand = { op: 'play'; sample: 'portrait' | 'broken' } | { op:
 export interface ProbeSnapshot {
   state: ProbeState; generation: number; renderedFrames: number; released: boolean;
   codec: string; error: string | null;
+  source?: 'mp4' | 'annexb';
 }
 export interface NativePort { request(command: ProbeCommand): ProbeSnapshot }
 export function parseSnapshot(raw: string): ProbeSnapshot {
@@ -13,6 +14,7 @@ export function parseSnapshot(raw: string): ProbeSnapshot {
       || !Number.isSafeInteger(value.generation) || value.generation < 0
       || !Number.isSafeInteger(value.renderedFrames) || value.renderedFrames < 0
       || typeof value.released !== 'boolean' || typeof value.codec !== 'string'
+      || !(value.source === undefined || value.source === 'mp4' || value.source === 'annexb')
       || !(value.error === null || typeof value.error === 'string')) throw new Error('INVALID_NATIVE_RESPONSE');
   return value;
 }

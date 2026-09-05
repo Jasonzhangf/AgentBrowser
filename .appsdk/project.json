@@ -114,6 +114,7 @@
       },
       "contract_paths": [
         "docs/android-probe.md",
+        "docs/android-annexb.md",
         "docs/architecture.md"
       ],
       "dependency_modules": [],
@@ -165,7 +166,7 @@
           "package-lock.json",
           "tsconfig.json"
         ],
-        "minimum_test_count": 6,
+        "minimum_test_count": 8,
         "ordinary_mode_after_freeze": "disabled",
         "reenable_on": [
           "source_change",

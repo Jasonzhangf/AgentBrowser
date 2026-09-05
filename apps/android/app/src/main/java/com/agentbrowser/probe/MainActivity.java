@@ -22,11 +22,17 @@ import java.util.Map;
 public final class MainActivity extends Activity {
     static final String ORIGIN = "https://probe.agentbrowser.invalid/";
     private MediaProbe probe;
+    AnnexBDecoder annex;
+    private boolean annexSelected;
+    private FrameLayout stage;
+    FrameLayout videoClip;
+    private int codedWidth=360, codedHeight=640, visibleWidth=360, visibleHeight=640;
     WebView webView;
     SurfaceView video;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         probe = new MediaProbe(this);
+        annex = new AnnexBDecoder();
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.rgb(245,247,244));
@@ -35,21 +41,21 @@ public final class MainActivity extends Activity {
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
             return insets;
         });
-        FrameLayout stage = new FrameLayout(this);
+        stage = new FrameLayout(this);
         stage.setBackgroundColor(Color.rgb(13,20,16));
         video = new SurfaceView(this);
         video.setContentDescription("H.264 原生视频显示区");
-        stage.addView(video);
+        videoClip = new FrameLayout(this);
+        videoClip.setClipChildren(true);
+        videoClip.addView(video);
+        stage.addView(videoClip);
         stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
-            int width = r-l, height = b-t;
-            int fitWidth = Math.min(width, height * 360 / 640);
-            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(fitWidth, fitWidth * 640 / 360, android.view.Gravity.CENTER);
-            video.setLayoutParams(params);
+            layoutVideo();
         });
         video.getHolder().addCallback(new SurfaceHolder.Callback() {
-            public void surfaceCreated(SurfaceHolder holder) { probe.setSurface(holder.getSurface()); }
+            public void surfaceCreated(SurfaceHolder holder) { probe.setSurface(holder.getSurface()); annex.setSurface(holder.getSurface()); }
             public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { }
-            public void surfaceDestroyed(SurfaceHolder holder) { probe.setSurface(null); }
+            public void surfaceDestroyed(SurfaceHolder holder) { probe.setSurface(null); annex.setSurface(null); }
         });
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(245,247,244));
@@ -90,19 +96,55 @@ public final class MainActivity extends Activity {
     private static WebResourceResponse blocked() {
         return new WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", Map.of(), new ByteArrayInputStream(new byte[0]));
     }
+    private void layoutVideo() {
+        float scale=Math.min(stage.getWidth()/(float)visibleWidth,stage.getHeight()/(float)visibleHeight);
+        if(scale<=0) return;
+        videoClip.setLayoutParams(new FrameLayout.LayoutParams(Math.round(visibleWidth*scale),Math.round(visibleHeight*scale),android.view.Gravity.CENTER));
+        video.setLayoutParams(new FrameLayout.LayoutParams(Math.round(codedWidth*scale),Math.round(codedHeight*scale),android.view.Gravity.TOP|android.view.Gravity.LEFT));
+    }
+    private void geometry(int cw,int ch,int vw,int vh) {
+        codedWidth=cw; codedHeight=ch; visibleWidth=vw; visibleHeight=vh;
+        video.getHolder().setFixedSize(cw,ch);
+        layoutVideo();
+    }
+    /** Local native ingress; call on main thread. No encoded bytes enter WebView. */
+    public java.util.concurrent.CompletableFuture<AnnexBDecoder.Receipt> submitAccessUnit(AccessUnit unit) {
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()) throw new IllegalStateException("MAIN_THREAD_REQUIRED");
+        if(!probe.snapshot().optBoolean("released")) throw new IllegalStateException("MP4_PROBE_BUSY");
+        var result=annex.submit(unit);
+        annexSelected=true;
+        geometry(unit.codedWidth,unit.codedHeight,unit.visibleWidth,unit.visibleHeight);
+        return result;
+    }
+    private String dispatch(ProbeCommand command) throws org.json.JSONException {
+        if(command.op==ProbeCommand.Op.PLAY) {
+            if(!annex.released()) throw new IllegalStateException("ANNEX_B_BUSY");
+            annexSelected=false; geometry(360,640,360,640);
+        }
+        if(command.op==ProbeCommand.Op.STOP) annex.stop();
+        if(annexSelected) return annex.snapshot().toString();
+        probe.request(command);
+        return probe.snapshot().put("source","mp4").toString();
+    }
     private final class Bridge {
         @JavascriptInterface public String request(String raw) {
-            try { return probe.request(ProbeCommand.parse(raw)); }
+            try {
+                ProbeCommand command=ProbeCommand.parse(raw);
+                var task=new java.util.concurrent.FutureTask<String>(() -> dispatch(command));
+                runOnUiThread(task);
+                return task.get(2,java.util.concurrent.TimeUnit.SECONDS);
+            }
             catch (Exception error) {
                 // Command rejection remains an error; never mutate active decode state.
                 return "{\"rejection\":" + org.json.JSONObject.quote(error.getClass().getSimpleName()+": "+error.getMessage()) + "}";
             }
         }
     }
-    @Override protected void onStart() { super.onStart(); probe.foreground(true); }
-    @Override protected void onStop() { probe.foreground(false); super.onStop(); }
+    @Override protected void onStart() { super.onStart(); probe.foreground(true); annex.foreground(true); }
+    @Override protected void onStop() { probe.foreground(false); annex.foreground(false); super.onStop(); }
     @Override protected void onDestroy() {
         probe.close();
+        annex.close();
         webView.removeJavascriptInterface("ProbeNative");
         webView.destroy();
         super.onDestroy();

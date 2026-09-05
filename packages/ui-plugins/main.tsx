@@ -22,7 +22,7 @@ function Panel({ctx}: {ctx: Context}) {
   }
   const busy = !snapshot.released;
   return <section data-state={snapshot.state} data-released={String(snapshot.released)} data-frames={snapshot.renderedFrames}>
-    <h1>AgentBrowser</h1><p className="intro">本地视频探针 · 12 秒 H.264 样本</p>
+    <h1>AgentBrowser</h1><p className="intro">{snapshot.source === 'annexb' ? '原生 Annex B 解码端口 · 本地输入' : '本地视频探针 · 12 秒 H.264 样本'}</p>
     <div className="status" role="status"><strong>{labels[snapshot.state]}</strong><span>{snapshot.renderedFrames} 帧呈现</span></div>
     <div className="actions"><button id="play" disabled={busy} onClick={() => request('portrait')}>播放样本</button><button id="stop" className="secondary" disabled={!busy} onClick={() => request()}>停止并释放</button></div>
     {(snapshot.error || problem) && <p className="error" role="alert">{snapshot.error || problem}。停止后可重新播放。</p>}

@@ -1,10 +1,10 @@
 {
-  "goal_id":"android-cordis-h264",
-  "raw_request":"建立最小可构建 Android 壳、Cordis 内置插件生命周期及 typed native bridge、H.264 原生接收解码显示探针，在 15T 真机验证。",
-  "understood_objective":"在独占 android-cordis-h264 工作树构建并安装独立 Probe APK，证明本地 H.264 动态显示和 Cordis/native 生命周期，保留证据并执行只读 review。",
-  "acceptance_criteria":["真实 APK 构建安装于已授权 15T","MediaCodec Surface 真实动态像素和呈现回调","Cordis 内置插件注入与卸载重载","坏样本及停止/Activity 生命周期释放","有界可重放入口和 AGY review"],
+  "goal_id":"android-annexb",
+  "raw_request":"Android 原生 H.264 Annex B access-unit 输入和 MediaCodec Surface 显示；复用 Cordis 生命周期，保留 MP4 诊断。",
+  "understood_objective":"在独占 android-annexb 工作树验证真实 Host 编码文件的原生解码、可见裁切、尺寸重建、代次隔离及资源释放；不实现网络协议。",
+  "acceptance_criteria":["真实 APK 构建安装于已授权 15T","Host Annex B 样本动态像素与391x845可见裁切","旧generation和损坏数据/尺寸/字节上限拒绝","Surface和Activity释放，原MP4/Cordis回归","真实candidate admission和AGY review"],
   "non_goals":["Obscura Host 实现","网络/WebRTC/WSS/Relay","主线集成、发布、freeze 或工作树清理"],
   "assumptions":[],"ambiguities":[],"questions":[],
   "status":"confirmed","confirmed_by":"user-delegation-01a07079-6a5c-7071-a7d7-bcd1b3547ba8",
-  "confirmed_at":"2026-09-05T08:39:44Z","created_at":"2026-09-05T08:39:44Z"
+  "confirmed_at":"2026-09-05T13:15:52Z","created_at":"2026-09-05T13:15:52Z"
 }

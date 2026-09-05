@@ -6,6 +6,9 @@ operation, establish a network transport, or implement an Obscura Host.
 
 ## Source ownership and actual edges
 
+The subsequent native Annex B input, local limits and distinct test fixtures are
+documented in [android-annexb.md](android-annexb.md); MP4 remains diagnostic only.
+
 | Existing design owner | Implemented path | Edge / resource |
 | --- | --- | --- |
 | AB-01 ui-kernel | `packages/ui-kernel/kernel.ts` | Cordis root owns injected provider and built-in plugin lifetime |
