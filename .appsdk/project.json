@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "project_id": "agentbrowser",
+  "sdk": {"name": "appsdk", "version": "0.1.6", "bundle_manifest": ".appsdk/contracts/sdk-bundle.manifest.json", "resource_record": ".appsdk/sdk-resources.json"},
+  "lifecycle": {"stage": "draft"},
+  "access": {"protected_paths": [".appsdk/**", "generated/**", "protected/source/**"]},
+  "development_scenarios": {"manifest": ".appsdk/contracts/development-scenarios.manifest.json", "enabled": []},
+  "guidance": {
+    "enforcement": "advisory",
+    "compiled_manifest": ".appsdk/guidance/compiled.json",
+    "rule_sources": [
+      {"source_id":"project-agents","kind":"agents","path":"AGENTS.md","required":false,"precedence":100},
+      {"source_id":"appsdk-governance-skill","kind":"skill","path":".appsdk/skills/appsdk-project-governance/SKILL.md","contract_path":".appsdk/skills/appsdk-project-governance/appsdk-guidance.json","required":true,"precedence":200}
+    ]
+  },
+  "governance": {
+    "playground_root": "playground/experiments/**",
+    "active_root": "active/lib/**",
+    "protected_root": "protected/**",
+    "generated_root": "generated/**",
+    "active_kind": "immutable_consumable_library",
+    "protected_kinds": ["source", "contracts", "history"],
+    "generated_kinds": ["compiler_output", "indexes"],
+    "freeze_requirements": ["git_clean", "source_commit_or_tag", "library_hash", "public_api_hash", "review_pass", "previous_active_immutable"],
+    "promotion_requires": ["experiment_evidence", "architecture_review_pass", "unique_owner", "required_gates"],
+    "runtime_forbidden_roots": ["playground/**", "generated/**"],
+    "record_contracts": ["contracts/records/worktree-record.schema.json", "contracts/records/reproduction-record.schema.json", "contracts/records/evidence-record.schema.json", "contracts/records/fix-candidate-record.schema.json", "contracts/records/goal-clarification-record.schema.json", "contracts/records/review-record.schema.json", "contracts/records/effectiveness-record.schema.json", "contracts/records/pre-review-validation-record.schema.json", "contracts/records/collaboration-record.schema.json", "contracts/records/collaboration-index.schema.json", "contracts/records/merge-queue-record.schema.json", "contracts/records/merge-queue-state.schema.json", "contracts/records/integration-record.schema.json", "contracts/records/mainline-receipt-record.schema.json", "contracts/records/merge-record.schema.json", "contracts/records/promotion-record.schema.json", "contracts/records/regression-report.schema.json", "contracts/records/freeze-record.schema.json", "contracts/records/record-graph.contract.json"],
+    "zone_transition_contract": "contracts/transitions/zone-transition-manifest.json",
+    "playground_retention": "archive_then_remove",
+    "debug_merge_comment_required": true
+  },
+  "lifecycles": {"issue": "open", "library": "draft", "source_snapshot": "mutable", "artifact": "generated"},
+  "modules": []
+}

@@ -1,0 +1,10 @@
+# BEGIN APPSDK MANAGED
+.appsdk-control/
+.appsdk/sdk.bin
+/active/lib/
+/generated/
+# END APPSDK MANAGED
+
+# Local worktrees and private execution evidence
+/playground/
+/.agent-collab/

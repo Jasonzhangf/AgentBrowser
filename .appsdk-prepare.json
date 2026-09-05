@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "preparation_id": "agentbrowser-design-bootstrap",
+  "status": "confirmed",
+  "objective": "Initialize AgentBrowser design governance and a discussion plan for a mobile-first detachable browser backed by the authorized Obscura fork.",
+  "change_kind": "new_project",
+  "project_root": ".",
+  "legacy_roots": [],
+  "new_roots": ["."],
+  "protected_roots": [],
+  "runtime_forbidden_roots": [],
+  "boundary": {
+    "allowed_paths": ["AGENTS.md", "README.md", "docs/**", ".appsdk/**", ".appsdk-prepare.json", ".gitignore"],
+    "forbidden_paths": ["../obscura/**"],
+    "payload_control_separation": "Host session, attachment and viewport control remain typed control resources, separate from webpage payloads."
+  },
+  "acceptance_criteria": ["AppSDK initializes and its actual validation result is recorded", "Design separates confirmed requirements from proposals and open decisions", "Plan identifies cross-repository owners and real Mac/Android acceptance"],
+  "non_goals": ["Runtime implementation", "Obscura source changes", "Publication or release", "Claiming runtime acceptance from design checks"],
+  "assumptions": ["User request authorizes new AgentBrowser governance and design files; remote repository has no initial commit"],
+  "questions": [],
+  "confirmed_by": "user request in current conversation",
+  "confirmed_at": "2026-09-05T00:00:00Z",
+  "created_at": "2026-09-05T00:00:00Z"
+}
