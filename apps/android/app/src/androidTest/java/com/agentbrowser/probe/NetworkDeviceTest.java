@@ -30,7 +30,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         fail("Condition: "+script+"\nstatus="+js("JSON.stringify("+STATUS+")")+"\n"+js("document.body.innerText"));
     }
     private void click(String id)throws Exception{js("document.getElementById('"+id+"').click()");}
-    private void remoteClick(double x,double y)throws Exception{js("(()=>{const s="+STATUS+";return ProbeNative.request(JSON.stringify({op:'click',epoch:s.epoch,x:"+x+",y:"+y+"}))})()");}
+    private void remoteClick(double x,double y)throws Exception{String result=js("(()=>{const s="+STATUS+";return ProbeNative.request(JSON.stringify({op:'click',epoch:s.epoch,x:"+x+",y:"+y+"}))})()");assertFalse("Remote click rejected: "+result,result.contains("rejection"));}
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
     private void touch(float x,float y)throws Exception{
         until(STATUS+".inputReady",6000);
@@ -46,9 +46,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(up);}finally{down.recycle();up.recycle();}
     }
     private Bitmap capture(String name)throws Exception{
-        Bitmap image=Bitmap.createBitmap(Math.max(1,activity.videoClip.getWidth()),Math.max(1,activity.videoClip.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
-        getInstrumentation().runOnMainSync(()->PixelCopy.request(activity.videoClip,image,value->{result[0]=value;done.countDown();},new Handler(Looper.getMainLooper())));
+        Bitmap full=Bitmap.createBitmap(Math.max(1,activity.video.getWidth()),Math.max(1,activity.video.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
+        getInstrumentation().runOnMainSync(()->PixelCopy.request(activity.video,full,value->{result[0]=value;done.countDown();},new Handler(Looper.getMainLooper())));
         assertTrue(done.await(3,TimeUnit.SECONDS));assertEquals(PixelCopy.SUCCESS,result[0]);
+        Bitmap image=activity.videoClip.getHeight() < full.getHeight() ? Bitmap.createBitmap(full,0,0,full.getWidth(),activity.videoClip.getHeight()) : full;
         File directory=new File(activity.getFilesDir(),"network-evidence");assertTrue(directory.isDirectory()||directory.mkdirs());
         try(var output=new FileOutputStream(new File(directory,name+".png"))){assertTrue(image.compress(Bitmap.CompressFormat.PNG,100,output));}
         return image;
@@ -72,7 +73,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             do { SystemClock.sleep(150); after=capture("after"); }
             while (Color.green(after.getPixel(30,30))<=160 && SystemClock.elapsedRealtime()<paintDeadline);
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
-            remoteClick(30,125);SystemClock.sleep(250);
+            remoteClick(30,225);SystemClock.sleep(250);
             until(STATUS+".inputReady",6000);
             String accepted=js("(()=>{const s="+STATUS+";return !JSON.parse(ProbeNative.request(JSON.stringify({op:'input_text',epoch:s.epoch,text:'native-network-proof'}))).rejection})()");
             assertEquals("true",accepted);
