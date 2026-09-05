@@ -19,5 +19,21 @@ footer { border-top: 1px solid #d6dfd6; margin-top: 8px; padding-top: 4px; }
 .text-button { background: transparent; color: #235d43; padding-left: 0; min-height: 44px; font-size: 13px; }
 footer p { margin: 2px 0; }
 .error { color: #9e2525; overflow-wrap: anywhere; font-size: 13px; }
+.network { border-top: 1px solid #d6dfd6; margin-top: 14px; padding-top: 8px; }
+.network h2 { margin: 0; font-size: 15px; }
+.network .actions { margin-top: 8px; }
+.network .actions button { min-height: 42px; padding: 8px 10px; font-size: 13px; }
+.text-entry { display: flex; gap: 8px; margin-top: 8px; }
+.text-entry input { min-width: 0; flex: 1; border: 1px solid #cad6cc; border-radius: 8px; padding: 9px; font: inherit; }
+.text-entry button { min-height: 42px; padding: 8px 12px; font-size: 13px; }
 ::selection { background: #d3eadb; }
+.remote > h1, .remote > .intro, .remote > .status, .remote > .local-probe, .remote > details { display: none; }
+.remote .network { margin: 0; padding: 0; border: 0; }
+.remote .network h2 { display: none; }
+.remote .network .detail { margin: 0 0 6px; }
+.remote .network .actions { margin-top: 0; }
+.remote .network button { min-height: 40px; padding: 7px 8px; }
+.remote .text-entry { margin-top: 6px; }
+body:has(.remote) { padding: 10px 14px; }
+body:has(.remote) footer { display: none; }
 @media (min-width: 600px) { body { padding: 16px 24px; } }

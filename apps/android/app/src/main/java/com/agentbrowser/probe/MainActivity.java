@@ -31,7 +31,7 @@ public final class MainActivity extends Activity {
     private LinearLayout layout;
     private boolean landscape;
     FrameLayout videoClip;
-    private int codedWidth=360, codedHeight=640, visibleWidth=360, visibleHeight=640;
+    int codedWidth=360, codedHeight=640, visibleWidth=360, visibleHeight=640;
     WebView webView;
     SurfaceView video;
     @Override public void onCreate(Bundle saved) {

@@ -21,6 +21,8 @@ final class NetworkSession {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private long handle,token,generation,shownEpoch;
+    private int declaredWidth,declaredHeight;
+    private boolean declaredLandscape;
     private boolean running,closed,framePending,commandPending;
     private NetworkFrame displayed;
     private JSONObject host;
@@ -35,6 +37,8 @@ final class NetworkSession {
     synchronized void declareViewport(int cssWidth,int cssHeight,boolean landscape){
         if(!connected()||commandPending)return;
         if(cssWidth<=0||cssHeight<=0)return;
+        if(cssWidth==declaredWidth&&cssHeight==declaredHeight&&landscape==declaredLandscape)return;
+        declaredWidth=cssWidth;declaredHeight=cssHeight;declaredLandscape=landscape;
         command(6,0,cssWidth,cssHeight,landscape?1:0,0,"");
     }
     private static long next(long value){if(value==Long.MAX_VALUE)throw new IllegalStateException("GENERATION_EXHAUSTED");return value+1;}
@@ -65,6 +69,7 @@ final class NetworkSession {
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
         token=next(token);generation=next(generation);long expected=token;
         state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";
+        declaredWidth=0;declaredHeight=0;declaredLandscape=false;
         worker.execute(()->open(expected));
     }
     private void open(long expected){

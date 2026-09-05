@@ -6,10 +6,11 @@ import { hostname, userInfo } from 'node:os';
 import assert from 'node:assert/strict';
 
 const moduleId = 'android-probe';
-const issueId = 'android-annexb';
+const issueId = 'android-network';
 const serial = process.env.ANDROID_SERIAL;
 assert(serial, 'ANDROID_SERIAL must identify the authorized device');
 assert(process.env.JAVA_HOME && process.env.ANDROID_HOME, 'JAVA_HOME and ANDROID_HOME required');
+assert(process.env.OBSCURA_PROTOCOL_ROOT && process.env.OBSCURA_BIN_DIR && process.env.OBSCURA_ENDPOINT_BIND_IP, 'Explicit real protocol/Host fixture required');
 const hash = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const now = () => new Date().toISOString();
 function command(program, args, log) {
@@ -66,6 +67,15 @@ const restartTime = now();
 command('bash',['scripts/device.sh','replay'],`${directory}/blackbox.log`);
 const device = JSON.parse(readFileSync('evidence/device-result.json','utf8'));
 const annex = JSON.parse(readFileSync('evidence/annexb-result.json','utf8'));
+const network = JSON.parse(readFileSync('evidence/network-result.json','utf8'));
+const dom = JSON.parse(readFileSync('evidence/network-dom.json','utf8'));
+assert(network.networkFrames && network.observerTouchIgnored && network.takeoverPixels && network.reconnectPreservesDocument && network.backgroundRelease && network.staleCallbacksFenced);
+assert.deepEqual(dom.dom, {clicked:1,text:'native-network-proof'});
+assert.equal(network.sessionId,dom.session);
+copyFileSync('evidence/network-result.json',`${directory}/network-result.json`);
+copyFileSync('evidence/network-dom.json',`${directory}/network-dom.json`);
+copyFileSync('evidence/network-screen.png',`${directory}/network-screen.png`);
+copyFileSync('evidence/network-test.log',`${directory}/network-test.log`);
 assert(annex.cropVerified && annex.generationRejected && annex.corruptDataRejected && annex.codedMismatchRejected && annex.surfaceRelease && annex.activityRelease && annex.inputLimitsRejected);
 assert(annex.changedPixels>1000 && annex.visibleWidth===391 && annex.visibleHeight===845);
 writeFileSync(`${directory}/annexb-result.json`,JSON.stringify(annex,null,2));

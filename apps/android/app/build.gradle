@@ -2,6 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'com.agentbrowser.probe'
     compileSdk 36
+    ndkVersion '29.0.14206865'
     defaultConfig {
         applicationId 'com.agentbrowser.probe'
         minSdk 30
@@ -9,8 +10,10 @@ android {
         versionCode 1
         versionName '0.1.0-probe'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+        ndk { abiFilters 'arm64-v8a' }
     }
     sourceSets.main.assets.srcDirs += ['build/generated/probeAssets']
+    sourceSets.main.jniLibs.srcDirs += ['build/generated/nativeLibs']
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
@@ -25,3 +28,12 @@ tasks.register('bundleUi', Exec) {
     outputs.dir 'build/generated/probeAssets/ui'
 }
 tasks.named('preBuild').configure { dependsOn 'bundleUi' }
+tasks.register('buildNative', Exec) {
+    workingDir '../../..'
+    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
+    commandLine 'python3', 'scripts/build-native.py'
+    // External protocol binding is a required development input. Always invoke
+    // Cargo so a changed owner checkout cannot leave an old native library.
+    outputs.upToDateWhen { false }
+}
+tasks.named('preBuild').configure { dependsOn 'buildNative' }

@@ -25,6 +25,7 @@ case "${1:-}" in
     adb -s "$ANDROID_SERIAL" exec-out run-as "$app" cat files/annexb-evidence/after.png > evidence/annexb-after.png
     adb -s "$ANDROID_SERIAL" exec-out run-as "$app" cat files/annexb-evidence/resized-coded.png > evidence/annexb-coded.png
     adb -s "$ANDROID_SERIAL" exec-out run-as "$app" cat files/annexb-evidence/resized-visible.png > evidence/annexb-visible.png
+    python3 scripts/network-replay.py
     ;;
   *) echo 'Usage: ANDROID_SERIAL=<verified serial> scripts/device.sh install|restart|replay' >&2; exit 2;;
 esac

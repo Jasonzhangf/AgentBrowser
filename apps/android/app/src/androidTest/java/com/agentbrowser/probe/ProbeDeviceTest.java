@@ -47,7 +47,7 @@ public class ProbeDeviceTest extends InstrumentationTestCase {
         activity = (MainActivity) getInstrumentation().startActivitySync(intent);
         try {
             until("!!document.getElementById('play')", 10000);
-            assertEquals("true", js("JSON.parse(ProbeNative.request('{\"op\":\"takeover\"}')).rejection.includes('UNKNOWN_COMMAND')"));
+            assertEquals("true", js("JSON.parse(ProbeNative.request('{\"op\":\"navigate\"}')).rejection.includes('UNKNOWN_COMMAND')"));
             assertEquals("true", js("JSON.parse(ProbeNative.request('{\"op\":\"play\",\"sample\":\"https://example.com\"}')).rejection.includes('INVALID_SAMPLE')"));
             click("play");
             until("Number(document.querySelector('section').dataset.frames)>12", 6000);

@@ -115,9 +115,10 @@
       "contract_paths": [
         "docs/android-probe.md",
         "docs/android-annexb.md",
+        "docs/android-network.md",
         "docs/architecture.md"
       ],
-      "dependency_modules": [],
+      "dependency_modules": ["client-connection"],
       "deployment_operations": [
         "install",
         "restart"
@@ -139,6 +140,10 @@
         "packages/ui-kernel/**",
         "packages/ui-plugins/**",
         "packages/client-domain/**",
+        "packages/android-bridge/**",
+        "scripts/build-native.py",
+        "scripts/device-pairing.py",
+        "scripts/network-replay.py",
         "scripts/validate-android.mjs",
         "scripts/android.sh",
         "scripts/build-android.sh",
