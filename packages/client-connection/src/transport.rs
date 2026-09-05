@@ -3,7 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, sync::{mpsc, oneshot, watch}};
 use tokio_rustls::{rustls::{self, pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName}}, TlsConnector};
 use tokio_tungstenite::{client_async_with_config, tungstenite::{client::IntoClientRequest, protocol::WebSocketConfig, Message}, WebSocketStream};
-use crate::{protocol::{Command, Mode, Operation, Request, Response, ResultValue, SessionStatus}, decode_video, Failure, MediaSequence, Video};
+use crate::{protocol::{Command, Mode, Operation, Request, Response, ResultValue, SessionStatus, ViewportDeclaration}, decode_video, Failure, MediaSequence, Video};
 
 type Socket = WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
 type Answer = oneshot::Sender<Result<ResultValue, Failure>>;
@@ -33,6 +33,7 @@ pub enum Input {
 
 enum Action {
     Status,
+    DeclareViewport(ViewportDeclaration),
     Takeover(u64),
     Release(u64),
     Input(Input, DisplayedFrame, u64),
@@ -65,6 +66,9 @@ impl Connection {
         recv.await.unwrap_or(Err(if mutating { Failure::OutcomeUnknown } else { Failure::Closed }))
     }
     pub async fn status(&self) -> Result<SessionStatus, Failure> { status(self.call(Action::Status).await?) }
+    pub async fn declare_viewport(&self, viewport: ViewportDeclaration) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::DeclareViewport(viewport)).await?)
+    }
     pub async fn takeover(&self, epoch: u64) -> Result<SessionStatus, Failure> { status(self.call(Action::Takeover(epoch)).await?) }
     pub async fn release(&self, epoch: u64) -> Result<SessionStatus, Failure> { status(self.call(Action::Release(epoch)).await?) }
     pub async fn input(&self, input: Input, displayed: DisplayedFrame, epoch: u64) -> Result<(), Failure> {
@@ -83,7 +87,7 @@ fn status(value: ResultValue) -> Result<SessionStatus, Failure> {
 }
 
 impl Connector {
-    pub async fn connect(&mut self, pairing: Pairing) -> Result<Connection, Failure> {
+    pub async fn connect(&mut self, pairing: Pairing, viewport: Option<ViewportDeclaration>) -> Result<Connection, Failure> {
         let generation = self.generation.borrow().checked_add(1)
             .ok_or_else(|| Failure::Protocol("Connection generation exhausted".into()))?;
         // Fence the previous sockets before performing a new handshake, including
@@ -91,7 +95,7 @@ impl Connector {
         self.generation.send_replace(generation);
         let mut changed = self.generation.subscribe();
         let (mut control, mut media_socket, initial_status, mut id) =
-            tokio::time::timeout(Duration::from_secs(15), establish(pairing)).await.map_err(transport)??;
+            tokio::time::timeout(Duration::from_secs(15), establish(pairing, viewport)).await.map_err(transport)??;
         let session = initial_status.session_id.clone();
         let attachment = initial_status.attachment_id;
         let (work, mut requests) = mpsc::channel::<Work>(1);
@@ -138,7 +142,7 @@ impl Connector {
     }
 }
 
-async fn establish(pairing: Pairing) -> Result<(Socket, Socket, SessionStatus, u64), Failure> {
+async fn establish(pairing: Pairing, viewport: Option<ViewportDeclaration>) -> Result<(Socket, Socket, SessionStatus, u64), Failure> {
     let base = url::Url::parse(&pairing.endpoint).map_err(transport)?;
     if base.scheme() != "wss" || base.host_str().is_none() || !base.username().is_empty()
         || base.password().is_some() || base.query().is_some() || base.fragment().is_some()
@@ -156,11 +160,11 @@ async fn establish(pairing: Pairing) -> Result<(Socket, Socket, SessionStatus, u
     let (mut control, token) = open(&base, "/control", &tls, None).await?;
     let token = token.ok_or_else(|| Failure::Protocol("Missing media binding".into()))?;
     let session = match response(&mut control).await? {
-        Response::Ready { version: 3, session_id } if !session_id.is_empty() => session_id,
-        _ => return Err(Failure::Protocol("Expected Host protocol version 3".into())),
+        Response::Ready { version: 4, session_id } if !session_id.is_empty() => session_id,
+        _ => return Err(Failure::Protocol("Expected Host protocol version 4".into())),
     };
     let mut id = 0;
-    let attached = status(exchange(&mut control, &mut id, Command::Attach { mode: Mode::Observe }, None).await?)?;
+    let attached = status(exchange(&mut control, &mut id, Command::Attach { mode: Mode::Observe, viewport }, None).await?)?;
     if attached.session_id != session || attached.attachment_id.is_none() || attached.mode != Some(Mode::Observe) {
         return Err(Failure::Protocol("Invalid observation attachment".into()));
     }
@@ -228,6 +232,7 @@ async fn exchange(socket: &mut Socket, id: &mut u64, command: Command, operation
 async fn execute(socket: &mut Socket, id: &mut u64, action: Action, generation: u64, session: &str, attachment: Option<u64>) -> Result<ResultValue, Failure> {
     let (command, operation) = match action {
         Action::Status => (Command::Status {}, None),
+        Action::DeclareViewport(viewport) => (Command::DeclareViewport { viewport }, None),
         Action::Takeover(epoch) => (Command::RequestTakeover { epoch }, None),
         Action::Release(epoch) => (Command::ReleaseControl { epoch }, None),
         Action::Input(input, frame, epoch) => {
@@ -237,6 +242,12 @@ async fn execute(socket: &mut Socket, id: &mut u64, action: Action, generation: 
             let current = status(exchange(socket, id, Command::Status {}, None).await?)?;
             if current.session_id != session || current.attachment_id != attachment {
                 return Err(Failure::Protocol("Control attachment changed".into()));
+            }
+            if current.viewport_pending {
+                return Err(Failure::Host { code: "VIEWPORT_PENDING".into(), message: "Viewport layout is pending".into() });
+            }
+            if current.viewport_revision != frame.viewport_revision || current.document_revision != frame.document_revision {
+                return Err(Failure::Protocol("Input belongs to an undisplayed revision".into()));
             }
             let command = match input {
                 Input::Click { x, y } => Command::Click { x, y },

@@ -33,7 +33,7 @@ async fn exercise() {
     let mut local = BufReader::new(tokio::net::UnixStream::connect(root.join("host/host.sock")).await.unwrap());
     let mut line = String::new(); local.read_line(&mut line).await.unwrap();
     let mut id = 0;
-    let attached = state(local_call(&mut local, &mut id, Command::Attach { mode: Mode::Agent }, None).await);
+    let attached = state(local_call(&mut local, &mut id, Command::Attach { mode: Mode::Agent, viewport: None }, None).await);
     let navigated = state(local_call(&mut local, &mut id, Command::Navigate { url:
         "data:text/html,<button style='width:200px;height:100px' onclick='window.clicked=(window.clicked||0)+1'>click</button>".into()
     }, Some(identity(&attached))).await);
@@ -51,8 +51,8 @@ async fn exercise() {
     let mut connector = Connector::default();
     let mut untrusted = pairing();
     untrusted.server_ca_der = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap().cert.der().to_vec();
-    assert!(connector.connect(untrusted).await.is_err(), "Server trust cannot be bypassed");
-    let mut connection = connector.connect(pairing()).await.unwrap();
+    assert!(connector.connect(untrusted, None).await.is_err(), "Server trust cannot be bypassed");
+    let mut connection = connector.connect(pairing(), None).await.unwrap();
     assert_eq!(connection.initial_status.session_id, navigated.session_id);
     let displayed = loop {
         connection.media.changed().await.unwrap();
@@ -78,7 +78,7 @@ async fn exercise() {
     match effect { ResultValue::Evaluation { result } => assert_eq!(result.value.unwrap().as_f64(), Some(1.0)), _ => panic!("Expected DOM evidence") }
     let observed = connection.status().await.unwrap();
     connection.takeover(observed.control.epoch).await.unwrap();
-    let replacement = connector.connect(pairing()).await.unwrap();
+    let replacement = connector.connect(pairing(), None).await.unwrap();
     connection.failure.wait_for(|failure| failure.is_some()).await.unwrap();
     assert!(connection.status().await.is_err());
     let after = replacement.status().await.unwrap();
@@ -88,7 +88,7 @@ async fn exercise() {
     assert!(replacement.input(Input::Click { x:30., y:30. }, displayed, after.control.epoch).await.is_err());
     // A failed explicit new attempt must still fence the previous sockets.
     let mut invalid = pairing(); invalid.endpoint = "http://localhost".into();
-    assert!(connector.connect(invalid).await.is_err());
+    assert!(connector.connect(invalid, None).await.is_err());
     drop(replacement); connection.close();
     endpoint.kill().await.unwrap(); endpoint.wait().await.unwrap();
     host.kill().await.unwrap(); host.wait().await.unwrap();

@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.view.SurfaceView;
 import android.view.SurfaceHolder;
 import android.view.View;
+import android.view.MotionEvent;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -23,8 +24,12 @@ public final class MainActivity extends Activity {
     static final String ORIGIN = "https://probe.agentbrowser.invalid/";
     private MediaProbe probe;
     AnnexBDecoder annex;
+    NetworkSession network;
     private boolean annexSelected;
+    private boolean networkSelected;
     private FrameLayout stage;
+    private LinearLayout layout;
+    private boolean landscape;
     FrameLayout videoClip;
     private int codedWidth=360, codedHeight=640, visibleWidth=360, visibleHeight=640;
     WebView webView;
@@ -33,7 +38,8 @@ public final class MainActivity extends Activity {
         super.onCreate(saved);
         probe = new MediaProbe(this);
         annex = new AnnexBDecoder();
-        LinearLayout layout = new LinearLayout(this);
+        network = new NetworkSession(this, this::submitNetworkFrame, () -> annex.stop());
+        layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.rgb(245,247,244));
         layout.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -49,13 +55,15 @@ public final class MainActivity extends Activity {
         videoClip.setClipChildren(true);
         videoClip.addView(video);
         stage.addView(videoClip);
+        video.setOnTouchListener((view, event) -> networkTouch(event));
         stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
             layoutVideo();
+            if (networkSelected && network.connected()) reportViewport();
         });
         video.getHolder().addCallback(new SurfaceHolder.Callback() {
             public void surfaceCreated(SurfaceHolder holder) { probe.setSurface(holder.getSurface()); annex.setSurface(holder.getSurface()); }
             public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { }
-            public void surfaceDestroyed(SurfaceHolder holder) { probe.setSurface(null); annex.setSurface(null); }
+            public void surfaceDestroyed(SurfaceHolder holder) { network.disconnect(); probe.setSurface(null); annex.setSurface(null); }
         });
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(245,247,244));
@@ -81,7 +89,7 @@ public final class MainActivity extends Activity {
                 } catch (IOException error) { return new WebResourceResponse("text/plain", "UTF-8", 500, "Asset missing", Map.of(), new ByteArrayInputStream(error.toString().getBytes(StandardCharsets.UTF_8))); }
             }
         });
-        boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
         if (landscape) layout.setOrientation(LinearLayout.HORIZONTAL);
         layout.addView(stage, landscape ? new LinearLayout.LayoutParams(0, -1, 1) : new LinearLayout.LayoutParams(-1, 0, 1));
         int panel = (int) (370 * getResources().getDisplayMetrics().density);
@@ -116,19 +124,88 @@ public final class MainActivity extends Activity {
         geometry(unit.codedWidth,unit.codedHeight,unit.visibleWidth,unit.visibleHeight);
         return result;
     }
+    private java.util.concurrent.CompletableFuture<AnnexBDecoder.Receipt> submitNetworkFrame(NetworkFrame frame, long token, long generation) {
+        if (!network.current(token)) throw new IllegalStateException("STALE_CONNECTION_GENERATION");
+        return submitAccessUnit(frame.accessUnit(generation));
+    }
+    private boolean networkTouch(MotionEvent event) {
+        if (!networkSelected || !network.inputReady()) return networkSelected;
+        if (event.getActionMasked() != MotionEvent.ACTION_UP) return true;
+        if (!network.humanShown()) return true;
+        float sx = videoClip.getWidth() / (float) Math.max(1, visibleWidth);
+        float sy = videoClip.getHeight() / (float) Math.max(1, visibleHeight);
+        double x=event.getX()/sx,y=event.getY()/sy;
+        if(x<0||y<0||x>=visibleWidth||y>=visibleHeight)return true;
+        network.command(3, network.epoch(), x, y, 0, 0, "");
+        return true;
+    }
     private String dispatch(ProbeCommand command) throws org.json.JSONException {
         if(command.op==ProbeCommand.Op.PLAY) {
+            if(network.active()) throw new IllegalStateException("NETWORK_BUSY");
             if(!annex.released()) throw new IllegalStateException("ANNEX_B_BUSY");
-            annexSelected=false; geometry(360,640,360,640);
+            annexSelected=false; networkSelected=false; geometry(360,640,360,640);
         }
-        if(command.op==ProbeCommand.Op.STOP) annex.stop();
+        if(command.op==ProbeCommand.Op.STOP) { network.disconnect(); annex.stop(); }
+        if(command.op==ProbeCommand.Op.STATUS && networkSelected) return network.snapshot(annex.snapshot()).toString();
         if(annexSelected) return annex.snapshot().toString();
         probe.request(command);
         return probe.snapshot().put("source","mp4").toString();
     }
+    String dispatchNetwork(org.json.JSONObject value) throws org.json.JSONException {
+        String op = value.optString("op", "");
+        switch (op) {
+            case "connect" -> {
+                requireFields(value, "op");
+                if (!annex.released() || !probe.snapshot().optBoolean("released")) throw new IllegalStateException("MEDIA_BUSY");
+                networkSelected = true;
+                int panel=(int)(136*getResources().getDisplayMetrics().density);
+                // Reserve compact chrome, then measure the remaining actual page
+                // area. Host viewport negotiation will use this area, not screen size.
+                webView.setLayoutParams(landscape ? new LinearLayout.LayoutParams(panel,-1) : new LinearLayout.LayoutParams(-1,panel));
+                network.connect();
+                stage.postDelayed(this::reportViewport, 250);
+            }
+            case "disconnect" -> { requireFields(value, "op"); network.disconnect(); }
+            case "observe" -> { requireFields(value, "op"); network.command(0, 0, 0, 0, 0, 0, ""); }
+            case "takeover" -> { requireFields(value, "op", "epoch"); network.command(1, value.getLong("epoch"), 0, 0, 0, 0, ""); }
+            case "release" -> { requireFields(value, "op", "epoch"); network.command(2, value.getLong("epoch"), 0, 0, 0, 0, ""); }
+            case "click" -> { requireFields(value, "op", "epoch", "x", "y"); network.command(3, value.getLong("epoch"), finite(value, "x"), finite(value, "y"), 0, 0, ""); }
+            case "input_text" -> { requireFields(value, "op", "epoch", "text"); String text = value.getString("text"); if (text.length() > 4096) throw new IllegalArgumentException("INPUT_TEXT_LIMIT"); network.command(4, value.getLong("epoch"), 0, 0, 0, 0, text); }
+            case "scroll" -> { requireFields(value, "op", "epoch", "x", "y", "dx", "dy"); network.command(5, value.getLong("epoch"), finite(value, "x"), finite(value, "y"), finite(value, "dx"), finite(value, "dy"), ""); }
+            case "status" -> requireFields(value, "op");
+            default -> throw new IllegalArgumentException("UNKNOWN_NETWORK_COMMAND");
+        }
+        return network.snapshot(annex.snapshot()).toString();
+    }
+    private void reportViewport() {
+        if (!networkSelected || !network.connected()) return;
+        float density = getResources().getDisplayMetrics().density;
+        int width = Math.max(1, Math.round(stage.getWidth() / density));
+        int height = Math.max(1, Math.round(stage.getHeight() / density));
+        network.declareViewport(width, height, landscape);
+    }
+    private static void requireFields(org.json.JSONObject value, String... allowed) throws org.json.JSONException {
+        java.util.Set<String> names = new java.util.HashSet<>(java.util.Arrays.asList(allowed));
+        java.util.Iterator<String> keys = value.keys();
+        while (keys.hasNext()) if (!names.contains(keys.next())) throw new IllegalArgumentException("UNKNOWN_NETWORK_COMMAND_FIELD");
+        for (String name : allowed) if (!"op".equals(name) && !value.has(name)) throw new IllegalArgumentException("MISSING_NETWORK_COMMAND_FIELD");
+    }
+    private static double finite(org.json.JSONObject value, String key) throws org.json.JSONException {
+        double number = value.getDouble(key);
+        if (!Double.isFinite(number) || Math.abs(number) > 1_000_000) throw new IllegalArgumentException("INVALID_NETWORK_COORDINATE");
+        return number;
+    }
     private final class Bridge {
         @JavascriptInterface public String request(String raw) {
             try {
+                org.json.JSONObject json = new org.json.JSONObject(raw);
+                String op = json.optString("op", "");
+                if (java.util.Set.of("connect", "disconnect", "observe", "takeover", "release", "click", "input_text", "scroll").contains(op)
+                        || ("status".equals(op) && networkSelected)) {
+                    var task = new java.util.concurrent.FutureTask<String>(() -> dispatchNetwork(json));
+                    runOnUiThread(task);
+                    return task.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                }
                 ProbeCommand command=ProbeCommand.parse(raw);
                 var task=new java.util.concurrent.FutureTask<String>(() -> dispatch(command));
                 runOnUiThread(task);
@@ -141,10 +218,11 @@ public final class MainActivity extends Activity {
         }
     }
     @Override protected void onStart() { super.onStart(); probe.foreground(true); annex.foreground(true); }
-    @Override protected void onStop() { probe.foreground(false); annex.foreground(false); super.onStop(); }
+    @Override protected void onStop() { network.disconnect(); probe.foreground(false); annex.foreground(false); super.onStop(); }
     @Override protected void onDestroy() {
         probe.close();
         annex.close();
+        network.close();
         webView.removeJavascriptInterface("ProbeNative");
         webView.destroy();
         super.onDestroy();
