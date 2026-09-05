@@ -1,0 +1,21 @@
+[package]
+name = "agentbrowser-connection"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+# Development binding is explicit via scripts/connection.py. The protocol is
+# owned by Obscura and is not published or mirrored by this crate.
+obscura-host-protocol = "=0.1.0"
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+serde_json = "1"
+url = "2"
+thiserror = "2"
+
+[dev-dependencies]
+rcgen = "0.13"
+uuid = { version = "1", features = ["v4"] }

@@ -1,11 +1,13 @@
 {
   "schema_version": 1,
-  "modules": [{
-    "module_id": "app-core",
-    "status": "active",
-    "owner": "app-core",
-    "owned_paths": ["playground/experiments/**", "tests/core/**"],
+  "modules": [{"module_id":"android-probe","status":"contract_bound","owner":"android-probe",
+    "owned_paths":["apps/android/**","packages/ui-kernel/**","packages/ui-plugins/**","packages/client-domain/**"],
+    "forbidden_paths":["active/lib/**","protected/**","generated/**"],"verification_gates":["android-cordis-h264"]}, {
+    "module_id": "client-connection",
+    "status": "contract_bound",
+    "owner": "client-connection",
+    "owned_paths": ["packages/client-connection/**", "scripts/connection.py", "scripts/connection-admission.mjs", "Cargo.toml", "Cargo.lock"],
     "forbidden_paths": ["active/lib/**", "protected/**", "generated/**"],
-    "verification_gates": ["fix_lifecycle_graph", "mainline_merge_identity"]
+    "verification_gates": ["connection-direct-wss"]
   }]
 }
