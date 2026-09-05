@@ -45,7 +45,7 @@ Mac 上 Agent 通过本地 endpoint 使用同一 operation/控制权协议；本
 
 ## 模块和路径 owner
 
-以下是计划路径，不代表目录或实现已存在。模块在真实路径、命令和验收入口存在后绑定 AppSDK，不登记虚假 source_implemented。
+以下是完整产品模块边界；多数仍为计划路径。AB-01/02/03/04 的本地客户端兼容性切片已实现，实际文件、调用边和验收入口见 [android-probe.md](android-probe.md)。AppSDK `android-probe` 只绑定该切片的单一 APK，不代表完整产品模块已完成。
 
 | ID | 仓库 / 计划路径 | 唯一职责 | 禁止职责 |
 | --- | --- | --- | --- |

@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.agentbrowser.probe'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.agentbrowser.probe'
+        minSdk 30
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0-probe'
+        testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+    }
+    sourceSets.main.assets.srcDirs += ['build/generated/probeAssets']
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    useLibrary 'android.test.runner'
+    useLibrary 'android.test.base'
+}
+dependencies { testImplementation 'junit:junit:4.13.2'; testImplementation 'org.json:json:20240303' }
+tasks.register('bundleUi', Exec) {
+    workingDir '../../..'
+    commandLine 'npm', 'run', 'build:ui'
+    inputs.dir '../../../packages'
+    inputs.file '../../../package-lock.json'
+    inputs.file '../../../scripts/build-ui.mjs'
+    outputs.dir 'build/generated/probeAssets/ui'
+}
+tasks.named('preBuild').configure { dependsOn 'bundleUi' }

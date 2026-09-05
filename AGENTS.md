@@ -7,8 +7,11 @@ project Skills, and machine workflow belongs in declared guidance contracts.
 
 - Purpose: mobile-first detachable browser. Confirmed product semantics and
   operations: `docs/design.md`; module and network ownership: `docs/architecture.md`.
-- Current stage: design and governance bootstrap. No product runtime, build,
-  installed app, production endpoint, or implemented AppSDK module exists yet.
+- Current stage: local Android compatibility probe. The `android-probe` APK
+  implements built-in Cordis UI, a typed native bridge and local H.264 decode.
+  Source boundaries and actual verification commands: `docs/android-probe.md`.
+  No BrowserSession Host, network transport or production endpoint is implemented
+  by this slice; broader product behavior remains design work.
 - Client/relay repository: https://github.com/Jasonzhangf/AgentBrowser.
   Engine/daemon fork: https://github.com/Jasonzhangf/obscura.
 - Browser protocol belongs to the Obscura fork; relay protocol belongs here.

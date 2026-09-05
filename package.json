@@ -1,0 +1,15 @@
+{
+  "name": "agentbrowser-probe", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": {
+    "build:ui": "node scripts/build-ui.mjs",
+    "test": "tsx --test packages/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "verify:local": "npm run typecheck && npm test && npm run build:ui",
+    "verify:ci": "npm run verify:local && bash scripts/android.sh testDebugUnitTest assembleDebug",
+    "build:android": "bash scripts/build-android.sh",
+    "install:android": "bash scripts/device.sh install",
+    "replay:android": "bash scripts/device.sh replay"
+  },
+  "dependencies": {"@cordisjs/core":"3.18.1", "react":"19.1.1", "react-dom":"19.1.1"},
+  "devDependencies": {"@types/react":"19.1.10", "@types/react-dom":"19.1.9", "@types/node":"22.18.0", "esbuild":"0.25.9", "tsx":"4.20.5", "typescript":"5.9.2"}
+}
