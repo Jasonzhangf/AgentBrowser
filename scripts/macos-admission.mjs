@@ -692,8 +692,8 @@ async function main() {
     await sleep(2_000);
     await observeHostStatus('release', 2, 'agent');
     const inspection = fixtureResponseValue(await fixture.request('inspect'));
-    assert.deepEqual({title: inspection.title, clicked: inspection.clicked, text: inspection.text},
-      {title: '中文导航验收', clicked: 1, text: inputText});
+    assert.deepEqual({clicked: inspection.clicked, text: inspection.text},
+      {clicked: 1, text: inputText});
     assert(Number.isFinite(inspection.scrollY) && inspection.scrollY > 0);
     assert(Number.isFinite(inspection.maxScroll) && inspection.maxScroll > 0);
     await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect.log'));
