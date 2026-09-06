@@ -61,6 +61,8 @@ struct InnerTls {
     server_key_der: Vec<u8>,
     client_cert_der: Vec<u8>,
     client_key_der: Vec<u8>,
+    second_client_cert_der: Vec<u8>,
+    second_client_key_der: Vec<u8>,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -87,6 +89,12 @@ async fn relay_host_real_endpoint_replay() {
         .register_device("m1-replay-client", client_identity)
         .await
         .expect("register replay client");
+    let second_client_identity = DeviceIdentity::from_seed([0x26; 32]);
+    let second_client_public_key = second_client_identity.public_key_bytes();
+    let second_client_device = alice
+        .register_device("m1-replay-second-client", second_client_identity)
+        .await
+        .expect("register second legal client");
     let inner = inner_tls();
     let host_seed = [0x42; 32];
     let host_public_key = DeviceIdentity::from_seed(host_seed).public_key_bytes();
@@ -108,11 +116,18 @@ async fn relay_host_real_endpoint_replay() {
             inner.server_key_der.clone(),
             inner.ca_der.clone(),
         ),
-        peer: RelayPeerBinding::new(
-            client_device.id(),
-            client_public_key,
-            fingerprint(&inner.client_cert_der),
-        ),
+        peer_bindings: vec![
+            RelayPeerBinding::new(
+                client_device.id(),
+                client_public_key,
+                fingerprint(&inner.client_cert_der),
+            ),
+            RelayPeerBinding::new(
+                second_client_device.id(),
+                second_client_public_key,
+                fingerprint(&inner.second_client_cert_der),
+            ),
+        ],
         device_identity: DeviceIdentity::from_seed(host_seed),
     }));
 
@@ -136,12 +151,18 @@ async fn relay_host_real_endpoint_replay() {
         inner.client_cert_der.clone(),
         inner.client_key_der.clone(),
     );
+    let second_client_tls = RelayTlsClientIdentity::new(
+        "localhost",
+        inner.ca_der.clone(),
+        inner.second_client_cert_der.clone(),
+        inner.second_client_key_der.clone(),
+    );
     let tunnel = client_connection
         .open_secure_tunnel(
             &host.host_id,
             &endpoint.info.session,
-            host_binding,
-            client_tls,
+            host_binding.clone(),
+            client_tls.clone(),
         )
         .await
         .expect("secure Relay tunnel");
@@ -182,9 +203,107 @@ async fn relay_host_real_endpoint_replay() {
     );
     assert!(matches!(takeover.control.phase, ControlPhase::Human { .. }));
 
-    let first_frame = next_access_unit(&tunnel).await;
+    let wrong_identity = DeviceIdentity::from_seed([0x25; 32]);
+    let wrong_device = alice
+        .register_device("m1-replay-wrong-peer", wrong_identity)
+        .await
+        .expect("register wrong peer");
+    let wrong_connection = alice
+        .connector()
+        .connect(&wrong_device)
+        .await
+        .expect("wrong-peer Relay connection");
+    let wrong_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        wrong_connection.open_secure_tunnel(
+            &host.host_id,
+            &endpoint.info.session,
+            host_binding.clone(),
+            client_tls.clone(),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(
+            &wrong_result,
+            Ok(Err(agentbrowser_connection::relay::RelayFailure::Remote {
+                status: 409,
+                ref code,
+                ..
+            })) if code == "HOST_REJECTED_UNKNOWN_PEER"
+        ),
+        "wrong peer must receive typed Relay rejection"
+    );
+
+    let second_connection = alice
+        .connector()
+        .connect(&second_client_device)
+        .await
+        .expect("second legal Relay connection");
+    let second_binding = RelayPeerBinding::new(
+        host.device_id.clone(),
+        host_public_key,
+        fingerprint(&inner.server_cert_der),
+    );
+    let second_tunnel = second_connection
+        .open_secure_tunnel(
+            &host.host_id,
+            &endpoint.info.session,
+            second_binding,
+            second_client_tls,
+        )
+        .await
+        .expect("second legal secure Relay tunnel");
+    match recv_control(&second_tunnel).await {
+        Response::Ready {
+            version: 4,
+            session_id,
+        } => assert_eq!(session_id, endpoint.info.session),
+        other => panic!("expected second endpoint Ready, got {other:?}"),
+    }
+    let second_attached = status(
+        request(
+            &second_tunnel,
+            1,
+            Command::Attach {
+                mode: Mode::Observe,
+                viewport: None,
+            },
+            None,
+        )
+        .await,
+    );
+    assert_eq!(second_attached.session_id, endpoint.info.session);
+    assert!(second_attached.attachment_id.is_some());
+    let second_click = request(
+        &second_tunnel,
+        2,
+        Command::Click { x: 30.0, y: 30.0 },
+        Some(Operation {
+            session_id: second_attached.session_id.clone(),
+            attachment_id: second_attached
+                .attachment_id
+                .expect("second attachment remains active"),
+            sequence: second_attached.next_sequence,
+            control_epoch: second_attached.control.epoch,
+            viewport_revision: second_attached.viewport_revision,
+            document_revision: second_attached.document_revision,
+        }),
+    )
+    .await;
+    assert!(matches!(
+        second_click,
+        Response::Error { ref code, .. } if code == "CONTROL_REQUIRED"
+    ));
+    let first_live_frame = next_access_unit(&tunnel).await;
+    let _second_frame = next_access_unit(&second_tunnel).await;
+    assert!(!first_live_frame.bytes.is_empty());
+    drop(second_tunnel);
+    drop(second_connection);
+    drop(wrong_connection);
+
     let (session_id, sequence, document_revision, viewport_revision) =
-        access_identity(&first_frame);
+        access_identity(&first_live_frame);
     let attachment_id = attached.attachment_id.expect("attachment remains active");
     let before_click = status(request(&tunnel, 3, Command::Status {}, None).await);
     let click = request(
@@ -345,12 +464,21 @@ fn inner_tls() -> InnerTls {
     let client = client_params
         .signed_by(&client_key, &ca, &ca_key)
         .expect("inner client");
+    let second_client_key = KeyPair::generate().expect("second inner client key");
+    let mut second_client_params =
+        CertificateParams::new(vec![]).expect("second inner client params");
+    second_client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let second_client = second_client_params
+        .signed_by(&second_client_key, &ca, &ca_key)
+        .expect("second inner client");
     InnerTls {
         ca_der: ca.der().to_vec(),
         server_cert_der: server.der().to_vec(),
         server_key_der: server_key.serialize_der(),
         client_cert_der: client.der().to_vec(),
         client_key_der: client_key.serialize_der(),
+        second_client_cert_der: second_client.der().to_vec(),
+        second_client_key_der: second_client_key.serialize_der(),
     }
 }
 

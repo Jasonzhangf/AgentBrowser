@@ -149,16 +149,45 @@ independent of Obscura document revision. It does not read `host.sock`, run
 Browser operations, implement navigation, arbitrate Session/control state, or
 recreate the Browser ABI. Those remain Obscura endpoint/Host responsibilities.
 
+The Host adapter accepts a typed authorized peer set. The CLI takes one
+`--peer-bindings` JSON file; the root is a non-empty array and unknown fields,
+empty IDs, duplicate device IDs, empty public keys, and empty certificate pins
+are rejected. Each offer selects one binding by its authenticated Relay
+`peerDeviceId`; the shared connection owner then verifies the matching inner
+TLS certificate pin and signed `TunnelHello`:
+
+```json
+[
+  {
+    "relay_device_id": "registered-device-id",
+    "auth_public_key": "64 hex characters",
+    "certificate_sha256": "64 hex characters"
+  }
+]
+```
+
+Relay Host keeps one global heartbeat/control supervisor and admits at most
+eight independent forwarding sessions. An individual offer's authentication,
+handshake, or endpoint failure ends only that session and retains its typed
+diagnostic; Relay control or heartbeat failure ends the adapter after awaiting
+heartbeat and session cleanup. Obscura remains the sole owner of attachment,
+Session, operation, and control arbitration.
+
 HTTPS and outer WSS require the configured CA, reject plaintext/redirects, and
 expose bounded connection and request failures. No automatic retry, silent
 downgrade, or fallback is introduced. Wrong peer/device keys, same-CA but
 unpinned certificates, role/channel/tunnel/session mismatches, replayed or
-expired offers, and mixed control/media tickets fail explicitly.
+expired offers, and mixed control/media tickets fail explicitly. Host-side
+`tunnel.reject` accepts only `UNKNOWN_PEER` or `CAPACITY` while the offer is
+pending and owned by that authenticated Host. Relay closes only that tunnel
+and returns `HOST_REJECTED_UNKNOWN_PEER` or `HOST_REJECTED_CAPACITY` to the
+requester as a typed 409 result; unknown, expired, foreign-Host, and already
+established offers remain explicit errors.
 
 The connection build stages `relay-acceptance` beside
-`relay-connection-acceptance`. `relay-acceptance` is the low-level Relay
-service/tunnel consumer; it is not public `Connection` proof.
-`relay-connection-acceptance` is compiled from
+`relay-connection-acceptance` and `connection-acceptance`.
+`relay-acceptance` is the low-level Relay service/tunnel consumer; it is not
+public `Connection` proof. `relay-connection-acceptance` is compiled from
 `packages/client-connection/tests/relay_connection.rs` and runs the public
 `Connector::connect_relay` entrypoint against a real Relay fixture, real
 `agentbrowser-relay-host`, and real Obscura endpoint. It covers directory
@@ -167,6 +196,12 @@ Attach → media`, H.264 delivery, observe/takeover/input/release, and
 generation-fenced reconnect. Admission executes both exact compiled Relay
 consumers, with the relay-host binary and Obscura binaries supplied as hashed
 external inputs.
+generation-fenced reconnect. The native Relay test also proves Host rejection
+receipts for both reasons, requester typed failures, pending/active fencing,
+foreign-Host rejection, and a later isolated tunnel. Admission executes the
+exact compiled consumers for the real Host path, public Relay `Connection`
+path, and the HTTPS/WSS Relay fixture, with the relay-host binary and Obscura
+binaries supplied as hashed external inputs.
 Relay service sources, protocol and dependency lock are hashed as test inputs.
 The fixture requires the local Node/tsx runtime; these development consumers
 are not portable deployment artifacts. Client platform login UI, direct-path
@@ -219,3 +254,19 @@ This replay proves the public Relay `Connection` path only for the supplied
 local binaries and fixture. It does not prove an installed client, platform
 login UI, production Relay, or the separate relay-host module's own delivery
 gates.
+
+The isolation case registers two distinct Relay devices with independent
+device identities and inner client certificates. It offers an unauthorized
+peer while the first tunnel is active, then admits the second authorized peer
+without interrupting the first. Both tunnels receive media concurrently; an
+operation from the observing second attachment receives the typed
+`CONTROL_REQUIRED` Host error while the first attachment owns control; after
+the second tunnel closes, the first still performs an operation and receives a
+new media sequence. An unauthorized offer is rejected through
+`RelayHostConnection::reject_offer` with `RelayRejectReason::UnknownPeer`;
+capacity admission uses `RelayRejectReason::Capacity`. The Host waits for the
+matching `tunnel.closed` receipt before continuing, and the requester receives
+the typed `HOST_REJECTED_UNKNOWN_PEER` or `HOST_REJECTED_CAPACITY` 409 error. A
+rejected offer cannot tear down an established tunnel; rejection or receipt
+failure is reported as a Relay control error and terminates the Host supervisor
+explicitly.

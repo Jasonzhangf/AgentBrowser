@@ -4,6 +4,15 @@ use agentbrowser_connection::relay::{
     DeviceIdentity, RelayNetwork, RelayPeerBinding, RelayTlsServerIdentity,
 };
 use agentbrowser_relay_host::{run, RelayHostSettings};
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PeerBindingConfig {
+    relay_device_id: String,
+    auth_public_key: String,
+    certificate_sha256: String,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -15,12 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args(env::args().skip(1))?;
     let seed = parse_fixed_hex::<32>(&required(&args, "device-seed")?, "device-seed")?;
-    let peer_auth_public_key = parse_fixed_hex::<32>(
-        &required(&args, "peer-auth-public-key")?,
-        "peer-auth-public-key",
-    )?;
-    let peer_certificate_sha256 =
-        parse_fixed_hex::<32>(&required(&args, "peer-cert-sha256")?, "peer-cert-sha256")?;
+    let peer_bindings = read_peer_bindings(PathBuf::from(required(&args, "peer-bindings")?))?;
     let network = parse_network(&required(&args, "network")?)?;
     let read = |name: &str| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Ok(fs::read(PathBuf::from(required(&args, name)?))?)
@@ -41,11 +45,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             read("inner-server-key")?,
             read("inner-client-ca")?,
         ),
-        peer: RelayPeerBinding::new(
-            required(&args, "peer-device-id")?,
-            peer_auth_public_key,
-            peer_certificate_sha256,
-        ),
+        peer_bindings,
         device_identity: DeviceIdentity::from_seed(seed),
     })
     .await?;
@@ -105,6 +105,24 @@ fn parse_fixed_hex<const N: usize>(
     Ok(output)
 }
 
+fn read_peer_bindings(path: PathBuf) -> Result<Vec<RelayPeerBinding>, Box<dyn std::error::Error>> {
+    let contents = fs::read_to_string(path)?;
+    let configs = serde_json::from_str::<Vec<PeerBindingConfig>>(&contents)?;
+    if configs.is_empty() {
+        return Err("peer-bindings must contain at least one peer".into());
+    }
+    configs
+        .into_iter()
+        .map(|config| {
+            Ok(RelayPeerBinding::new(
+                config.relay_device_id,
+                parse_fixed_hex::<32>(&config.auth_public_key, "peer auth public key")?,
+                parse_fixed_hex::<32>(&config.certificate_sha256, "peer certificate sha256")?,
+            ))
+        })
+        .collect()
+}
+
 fn hex_digit(value: u8) -> Option<u8> {
     match value {
         b'0'..=b'9' => Some(value - b'0'),
@@ -129,6 +147,6 @@ fn print_usage() {
 --device-name NAME --device-seed HEX64 --endpoint WSS_ORIGIN --network lan|public|tailscale \
 --endpoint-ca DER --endpoint-client-cert DER --endpoint-client-key PKCS8_DER \
 --inner-server-cert DER --inner-server-key PKCS8_DER --inner-client-ca DER \
---peer-device-id ID --peer-auth-public-key HEX64 --peer-cert-sha256 HEX64"
+--peer-bindings JSON_FILE"
     );
 }

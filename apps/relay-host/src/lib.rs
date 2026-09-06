@@ -4,13 +4,13 @@
 //! byte-preserving forwarding to an already-running Obscura endpoint. It does
 //! not read Host sockets, interpret browser operations, or own Session state.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use agentbrowser_connection::{
     protocol::{Command, Mode, Request, Response, ResultValue},
     relay::{
         HostSnapshot, RelayClient, RelayEndpoint, RelayFailure, RelayNetwork, RelayPeerBinding,
-        RelayTlsServerIdentity, SecureRelayChannel, SecureRelayTunnel,
+        RelayRejectReason, RelayTlsServerIdentity, SecureRelayChannel, SecureRelayTunnel,
     },
 };
 use futures_util::{stream::SplitSink, stream::SplitStream, SinkExt, StreamExt};
@@ -21,7 +21,8 @@ use rustls::{
 use thiserror::Error;
 use tokio::{
     net::TcpStream,
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Mutex, Semaphore, TryAcquireError},
+    task::JoinSet,
 };
 use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{
@@ -40,6 +41,7 @@ const ENDPOINT_TIMEOUT: Duration = Duration::from_secs(15);
 const DIRECTORY_REFRESH: Duration = Duration::from_secs(10);
 const MAX_CONTROL_MESSAGE: usize = 64 * 1024;
 const MAX_MEDIA_MESSAGE: usize = 4 * 1024 * 1024 + 4096;
+const MAX_ACTIVE_SESSIONS: usize = 8;
 
 type EndpointSocket = WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
 
@@ -71,7 +73,7 @@ pub struct RelayHostSettings {
     pub endpoint_client_cert_der: Vec<u8>,
     pub endpoint_client_key_pkcs8_der: Vec<u8>,
     pub inner_server: RelayTlsServerIdentity,
-    pub peer: RelayPeerBinding,
+    pub peer_bindings: Vec<RelayPeerBinding>,
     pub device_identity: agentbrowser_connection::relay::DeviceIdentity,
 }
 
@@ -88,6 +90,7 @@ struct EndpointChannel {
 }
 
 pub async fn run(settings: RelayHostSettings) -> Result<()> {
+    validate_peer_bindings(&settings.peer_bindings)?;
     let relay_config = agentbrowser_connection::relay::RelayConfig::new(
         &settings.relay_origin,
         settings.relay_ca_der,
@@ -147,31 +150,147 @@ pub async fn run(settings: RelayHostSettings) -> Result<()> {
         }
     });
 
+    let authorized_peers = Arc::new(settings.peer_bindings.clone());
+    let session_permits = Arc::new(Semaphore::new(MAX_ACTIVE_SESSIONS));
+    let mut sessions = JoinSet::new();
     let result = loop {
         tokio::select! {
             error = heartbeat_error_rx.recv() => {
                 break Err(error.unwrap_or_else(|| RelayHostError::Transport("Relay snapshot refresh stopped".into())));
+            }
+            session = sessions.join_next(), if !sessions.is_empty() => {
+                match session {
+                    Some(Ok(Ok(()))) => {}
+                    Some(Ok(Err(error))) => {
+                        eprintln!("relay-host tunnel ended: {error}");
+                    }
+                    Some(Err(error)) => {
+                        break Err(RelayHostError::Transport(format!(
+                            "relay-host session task failed: {error}"
+                        )));
+                    }
+                    None => {}
+                }
             }
             offer = host_connection.next_offer() => {
                 let offer = match offer {
                     Ok(offer) => offer,
                     Err(error) => break Err(error.into()),
                 };
-                let tunnel = match host_connection
-                    .accept_secure_offer(offer, settings.peer.clone(), settings.inner_server.clone())
-                    .await
-                {
-                    Ok(tunnel) => tunnel,
-                    Err(error) => break Err(error.into()),
+                let peer = match peer_binding_for_device(&authorized_peers, offer.peer_device_id()) {
+                    Ok(peer) => peer,
+                    Err(error) => {
+                        let offer_id = offer.id().to_owned();
+                        let peer_device_id = offer.peer_device_id().to_owned();
+                        if let Err(rejection_error) = host_connection
+                            .reject_offer(offer, RelayRejectReason::UnknownPeer)
+                            .await
+                        {
+                            break Err(rejection_error.into());
+                        }
+                        eprintln!(
+                            "relay-host rejected offer {} from unauthorized peer {}: {error}",
+                            offer_id, peer_device_id
+                        );
+                        continue;
+                    }
                 };
-                if let Err(error) = forward_tunnel(&tunnel, &settings.endpoint_url, &endpoint_tls).await {
-                    eprintln!("relay-host tunnel ended: {error}");
-                }
+                let permit = match session_permits.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(TryAcquireError::NoPermits) => {
+                        let offer_id = offer.id().to_owned();
+                        if let Err(rejection_error) = host_connection
+                            .reject_offer(offer, RelayRejectReason::Capacity)
+                            .await
+                        {
+                            break Err(rejection_error.into());
+                        }
+                        eprintln!(
+                            "relay-host rejected offer {}: active session limit {} reached",
+                            offer_id,
+                            MAX_ACTIVE_SESSIONS
+                        );
+                        continue;
+                    }
+                    Err(TryAcquireError::Closed) => {
+                        break Err(RelayHostError::Transport(
+                            "relay-host session admission closed".into(),
+                        ));
+                    }
+                };
+                let host_connection = Arc::clone(&host_connection);
+                let endpoint_url = settings.endpoint_url.clone();
+                let endpoint_tls = endpoint_tls.clone();
+                let inner_server = settings.inner_server.clone();
+                sessions.spawn(async move {
+                    let _permit = permit;
+                    let tunnel = host_connection
+                        .accept_secure_offer(offer, peer, inner_server)
+                        .await
+                        .map_err(RelayHostError::from)?;
+                    forward_tunnel(&tunnel, &endpoint_url, &endpoint_tls).await
+                });
             }
         }
     };
     heartbeat.abort();
+    let _ = heartbeat.await;
+    sessions.abort_all();
+    while let Some(session) = sessions.join_next().await {
+        match session {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => eprintln!("relay-host tunnel cleanup: {error}"),
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => eprintln!("relay-host session cleanup failed: {error}"),
+        }
+    }
     result
+}
+
+fn validate_peer_bindings(bindings: &[RelayPeerBinding]) -> Result<()> {
+    if bindings.is_empty() {
+        return Err(RelayHostError::Configuration(
+            "at least one authorized Relay peer is required".into(),
+        ));
+    }
+    let mut ids = HashSet::new();
+    for binding in bindings {
+        if binding.relay_device_id.is_empty() {
+            return Err(RelayHostError::Configuration(
+                "authorized Relay peer device id is empty".into(),
+            ));
+        }
+        if binding.auth_public_key.iter().all(|byte| *byte == 0) {
+            return Err(RelayHostError::Configuration(format!(
+                "authorized Relay peer {} has an empty auth public key",
+                binding.relay_device_id
+            )));
+        }
+        if binding.certificate_sha256.iter().all(|byte| *byte == 0) {
+            return Err(RelayHostError::Configuration(format!(
+                "authorized Relay peer {} has an empty certificate pin",
+                binding.relay_device_id
+            )));
+        }
+        if !ids.insert(&binding.relay_device_id) {
+            return Err(RelayHostError::Configuration(format!(
+                "duplicate authorized Relay peer {}",
+                binding.relay_device_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn peer_binding_for_device(
+    bindings: &[RelayPeerBinding],
+    device_id: &str,
+) -> Result<RelayPeerBinding> {
+    bindings
+        .iter()
+        .find(|binding| binding.relay_device_id == device_id)
+        .cloned()
+        .ok_or(RelayHostError::Relay(RelayFailure::IdentityMismatch))
 }
 
 async fn probe_endpoint(
@@ -671,5 +790,44 @@ mod tests {
                 .expect("parse successful response")
         );
         assert_eq!(pending, None);
+    }
+
+    fn peer(id: &str, byte: u8) -> RelayPeerBinding {
+        RelayPeerBinding::new(id, [byte; 32], [byte.wrapping_add(1); 32])
+    }
+
+    #[test]
+    fn peer_selection_requires_an_exact_authorized_device() {
+        let bindings = vec![peer("client-a", 1), peer("client-b", 2)];
+        assert_eq!(
+            peer_binding_for_device(&bindings, "client-b")
+                .expect("select authorized peer")
+                .relay_device_id,
+            "client-b"
+        );
+        assert!(matches!(
+            peer_binding_for_device(&bindings, "unknown"),
+            Err(RelayHostError::Relay(RelayFailure::IdentityMismatch))
+        ));
+    }
+
+    #[test]
+    fn peer_validation_rejects_empty_and_duplicate_bindings() {
+        assert!(matches!(
+            validate_peer_bindings(&[]),
+            Err(RelayHostError::Configuration(message)) if message.contains("at least one")
+        ));
+        assert!(matches!(
+            validate_peer_bindings(&[peer("client-a", 1), peer("client-a", 2)]),
+            Err(RelayHostError::Configuration(message)) if message.contains("duplicate")
+        ));
+        assert!(matches!(
+            validate_peer_bindings(&[RelayPeerBinding::new("client-a", [0; 32], [1; 32])]),
+            Err(RelayHostError::Configuration(message)) if message.contains("auth public key")
+        ));
+        assert!(matches!(
+            validate_peer_bindings(&[RelayPeerBinding::new("client-a", [1; 32], [0; 32])]),
+            Err(RelayHostError::Configuration(message)) if message.contains("certificate pin")
+        ));
     }
 }
