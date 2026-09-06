@@ -70,6 +70,53 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         MotionEvent up=MotionEvent.obtain(now,now+10,MotionEvent.ACTION_UP,location[0],location[1],0);
         try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(up);}finally{down.recycle();up.recycle();}
     }
+    private void swipe(float x,float fromY,float toY)throws Exception{
+        until(STATUS+".inputReady",6000);
+        float[] location=new float[3];
+        getInstrumentation().runOnMainSync(()->{
+            int[] origin=new int[2];activity.video.getLocationOnScreen(origin);
+            float sx=activity.videoClip.getWidth()/(float)activity.visibleWidth;
+            float sy=activity.videoClip.getHeight()/(float)activity.visibleHeight;
+            location[0]=origin[0]+x*sx;location[1]=origin[1]+fromY*sy;location[2]=origin[1]+toY*sy;
+        });
+        long time=SystemClock.uptimeMillis();
+        MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,location[0],location[1],0);
+        MotionEvent move=MotionEvent.obtain(time,time+50,MotionEvent.ACTION_MOVE,location[0],location[2],0);
+        MotionEvent up=MotionEvent.obtain(time,time+100,MotionEvent.ACTION_UP,location[0],location[2],0);
+        try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(move);getInstrumentation().sendPointerSync(up);}
+        finally{down.recycle();move.recycle();up.recycle();}
+    }
+    private void interruptedTouch(boolean resize)throws Exception{
+        until(STATUS+".inputReady",6000);
+        int width=activity.visibleWidth,height=activity.visibleHeight;
+        long time=SystemClock.uptimeMillis();
+        getInstrumentation().runOnMainSync(()->{
+            MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,
+                30f*activity.videoClip.getWidth()/width,30f*activity.videoClip.getHeight()/height,0);
+            try{activity.video.dispatchTouchEvent(down);}finally{down.recycle();}
+        });
+        if(resize){
+            getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width-10,height-10,false));
+            awaitSourceSize(width-10,height-10);
+            getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width,height,false));
+            awaitSourceSize(width,height);
+        }else{
+            getInstrumentation().runOnMainSync(()->{
+                MotionEvent cancel=MotionEvent.obtain(time,SystemClock.uptimeMillis(),MotionEvent.ACTION_CANCEL,30,30,0);
+                try{activity.video.dispatchTouchEvent(cancel);}finally{cancel.recycle();}
+            });
+        }
+        getInstrumentation().runOnMainSync(()->{
+            MotionEvent up=MotionEvent.obtain(time,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,
+                30f*activity.videoClip.getWidth()/width,30f*activity.videoClip.getHeight()/height,0);
+            try{activity.video.dispatchTouchEvent(up);}finally{up.recycle();}
+        });
+        until(STATUS+".inputReady",6000);
+        SystemClock.sleep(300);
+        Bitmap unchanged=capture(resize?"stale-gesture":"cancelled-gesture");
+        assertTrue("Interrupted gesture must not click: resize="+resize,
+            Color.red(unchanged.getPixel(30,30))>160&&Color.green(unchanged.getPixel(30,30))<100);
+    }
     private Bitmap capture(String name)throws Exception{
         Bitmap full=Bitmap.createBitmap(Math.max(1,activity.video.getWidth()),Math.max(1,activity.video.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
         getInstrumentation().runOnMainSync(()->PixelCopy.request(activity.video,full,value->{result[0]=value;done.countDown();},new Handler(Looper.getMainLooper())));
@@ -110,12 +157,35 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             Bitmap observer=capture("observer");
             assertTrue("Observer touch cannot mutate Host",Color.red(observer.getPixel(30,30))>160&&Color.green(observer.getPixel(30,30))<100);
             click("takeover");until(STATUS+".controlMode==='control'",6000);
+            interruptedTouch(false);
+            interruptedTouch(true);
+            until(STATUS+".inputReady",6000);
+            swipe(30,20,80);
+            until(STATUS+".inputReady",6000);
+            SystemClock.sleep(500);
+            Bitmap swiped=capture("swipe-no-click");
+            assertTrue("A swipe must not click the button under its release point",
+                Color.red(swiped.getPixel(30,30))>160&&Color.green(swiped.getPixel(30,30))<100);
             touch(30,30);
             Bitmap after=null;
             long paintDeadline=SystemClock.elapsedRealtime()+5000;
             do { SystemClock.sleep(150); after=capture("after"); }
             while (Color.green(after.getPixel(30,30))<=160 && SystemClock.elapsedRealtime()<paintDeadline);
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
+            swipe(30,350,100);
+            long scrollDeadline=SystemClock.elapsedRealtime()+5000;
+            Bitmap scrolled;
+            do {SystemClock.sleep(100);scrolled=capture("scrolled");}
+            while(Color.blue(scrolled.getPixel(30,30))<160&&SystemClock.elapsedRealtime()<scrollDeadline);
+            assertTrue("Swipe exposes lower blue page content",Color.blue(scrolled.getPixel(30,30))>160
+                &&Color.red(scrolled.getPixel(30,30))<100&&Color.green(scrolled.getPixel(30,30))<100);
+            swipe(30,100,350);
+            long restoreDeadline=SystemClock.elapsedRealtime()+5000;
+            Bitmap restored;
+            do {SystemClock.sleep(100);restored=capture("scroll-restored");}
+            while(Color.green(restored.getPixel(30,30))<160&&SystemClock.elapsedRealtime()<restoreDeadline);
+            assertTrue("Reverse swipe restores the same changed button",Color.green(restored.getPixel(30,30))>160
+                &&Color.red(restored.getPixel(30,30))<100);
             touch(30,125);SystemClock.sleep(250);
             until(STATUS+".inputReady",6000);
             int emptyGlyphs=darkInputGlyphs(capture("text-before"));
@@ -162,6 +232,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 .put("textSubmitted",true).put("sessionId",new org.json.JSONTokener(session).nextValue());
             result.put("textPainted",true).put("inputGlyphsBefore",emptyGlyphs).put("inputGlyphsAfter",paintedGlyphs);
             result.put("displayedRevisionFenced",true);
+            result.put("swipeDoesNotClick",true).put("scrollPixels",true);
+            result.put("cancelledGestureIgnored",true).put("staleViewportGestureIgnored",true);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/result.json"))){output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }

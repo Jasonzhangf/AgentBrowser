@@ -77,6 +77,8 @@ assert(network.networkFrames && network.observerTouchIgnored && network.takeover
 assert(network.busyViewportCoalesced);
 assert(network.hostRejectionKeepsConnection);
 assert(network.displayedRevisionFenced);
+assert(network.swipeDoesNotClick && network.scrollPixels);
+assert(network.cancelledGestureIgnored && network.staleViewportGestureIgnored);
 assert(network.textPainted && network.inputGlyphsAfter > network.inputGlyphsBefore + 30);
 assert.equal(network.viewport.cssWidth, network.viewport.sourceWidth);
 assert.equal(network.viewport.cssHeight, network.viewport.sourceHeight);

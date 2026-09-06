@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut id = 0;
     let attached = status(call(&mut local, &mut id, Command::Attach { mode: Mode::Agent, viewport: None }, None).await);
     let navigated = status(call(&mut local, &mut id, Command::Navigate { url:
-        "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p>".into()
+        "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p><div style='height:1400px;background:blue'></div><script>window.maxScroll=0;window.addEventListener('scroll',()=>{window.maxScroll=Math.max(window.maxScroll,window.scrollY)});</script>".into()
     }, Some(identity(&attached))).await);
     let resized = status(call(&mut local, &mut id, Command::Resize { width:391,height:845 }, Some(identity(&navigated))).await);
     let reservation = std::net::TcpListener::bind((bind,0))?;
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if command == "quit" { break; }
         if command == "inspect" {
             let current = status(call(&mut local,&mut id,Command::Status {},None).await);
-            let result = call(&mut local,&mut id,Command::Evaluate { expression:"JSON.stringify({clicked:window.clicked||0,text:document.getElementById('field').value})".into() },Some(identity(&current))).await;
+            let result = call(&mut local,&mut id,Command::Evaluate { expression:"JSON.stringify({clicked:window.clicked||0,text:document.getElementById('field').value,scrollY:window.scrollY,maxScroll:window.maxScroll})".into() },Some(identity(&current))).await;
             println!("{}",serde_json::to_string(&result)?);
         } else { eprintln!("Expected inspect or quit"); }
     }

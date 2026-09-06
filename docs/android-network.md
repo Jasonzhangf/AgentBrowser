@@ -85,6 +85,15 @@ is the narrower real JVM/JNI/TLS regression; pass explicit `--library-dir` and
 subsequent status read using a private Host fixture; it does not prove Android
 UI or native display behavior.
 
+Android touch routing uses the platform movement threshold to distinguish a tap
+from a swipe. One completed swipe submits one atomic scroll; no operation is
+submitted while the finger moves. A cancelled or multi-pointer gesture is
+discarded, as is a gesture whose connection, control epoch, document or viewport
+changes before release. Inertial scrolling and multi-touch zoom are not yet
+implemented. Acceptance checks actual lower-page pixels, restoration of the
+same button, an independent Host scroll offset history, cancellation and a
+viewport change between press and release.
+
 This remains a direct prepaired WSS integration slice. UDP/Relay selection,
 production account enrollment, multiple-client viewport election, complete
 rotation/reconnect UX and milestone publication remain separate acceptance work.

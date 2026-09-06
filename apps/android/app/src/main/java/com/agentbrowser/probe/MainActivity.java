@@ -34,6 +34,9 @@ public final class MainActivity extends Activity {
     int codedWidth=360, codedHeight=640, visibleWidth=360, visibleHeight=640;
     WebView webView;
     SurfaceView video;
+    private NetworkSession.InputContext touchContext;
+    private float touchX,touchY;
+    private boolean touchMoved;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         probe = new MediaProbe(this);
@@ -129,15 +132,40 @@ public final class MainActivity extends Activity {
         return submitAccessUnit(frame.accessUnit(generation));
     }
     private boolean networkTouch(MotionEvent event) {
-        if (!networkSelected || !network.inputReady()) return networkSelected;
-        if (event.getActionMasked() != MotionEvent.ACTION_UP) return true;
-        if (!network.humanShown()) return true;
-        float sx = videoClip.getWidth() / (float) Math.max(1, visibleWidth);
-        float sy = videoClip.getHeight() / (float) Math.max(1, visibleHeight);
-        double x=event.getX()/sx,y=event.getY()/sy;
-        if(x<0||y<0||x>=visibleWidth||y>=visibleHeight)return true;
-        network.command(3, network.epoch(), x, y, 0, 0, "");
-        return true;
+        synchronized(network) {
+            int action=event.getActionMasked();
+            NetworkSession.InputContext current=network.inputContext();
+            if (!networkSelected || current==null || event.getPointerCount()!=1
+                    || action==MotionEvent.ACTION_CANCEL || action==MotionEvent.ACTION_POINTER_UP) {
+                touchContext=null;
+                return networkSelected;
+            }
+            float sx=videoClip.getWidth()/(float)Math.max(1,visibleWidth);
+            float sy=videoClip.getHeight()/(float)Math.max(1,visibleHeight);
+            double x=event.getX()/sx,y=event.getY()/sy;
+            if(sx<=0||sy<=0||x<0||y<0||x>=visibleWidth||y>=visibleHeight) {
+                touchContext=null;
+                return true;
+            }
+            if(action==MotionEvent.ACTION_DOWN) {
+                touchContext=current;touchX=event.getX();touchY=event.getY();touchMoved=false;
+                return true;
+            }
+            if(touchContext==null||!touchContext.equals(current)) {
+                touchContext=null;
+                return true;
+            }
+            int slop=android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+            touchMoved|=Math.hypot(event.getX()-touchX,event.getY()-touchY)>slop;
+            if(action!=MotionEvent.ACTION_UP)return true;
+            touchContext=null;
+            if(touchMoved) {
+                double dx=(touchX-event.getX())/sx,dy=(touchY-event.getY())/sy;
+                // One completed swipe is one atomic scroll; cancellation never clicks.
+                if(dx!=0||dy!=0)network.command(5,current.epoch(),touchX/sx,touchY/sy,dx,dy,"");
+            } else network.command(3,current.epoch(),x,y,0,0,"");
+            return true;
+        }
     }
     private String dispatch(ProbeCommand command) throws org.json.JSONException {
         if(command.op==ProbeCommand.Op.PLAY) {

@@ -37,6 +37,11 @@ final class NetworkSession {
         &&displayed.viewportRevision==host.optLong("viewport_revision",-1);}
     synchronized long epoch(){return shownEpoch;}
     synchronized boolean humanShown(){return shownMode.equals("control");}
+    record InputContext(long connection,long epoch,long document,long viewport) { }
+    synchronized InputContext inputContext(){
+        return inputReady()&&humanShown()
+            ?new InputContext(token,shownEpoch,displayed.documentRevision,displayed.viewportRevision):null;
+    }
     synchronized void declareViewport(int cssWidth,int cssHeight,boolean landscape){
         if(cssWidth<=0||cssHeight<=0||cssWidth>4096||cssHeight>4096||(long)cssWidth*cssHeight>4194304)
             throw new IllegalArgumentException("INVALID_VIEWPORT");
