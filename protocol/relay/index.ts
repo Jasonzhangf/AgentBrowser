@@ -1,4 +1,6 @@
 /** Relay ABI owner. Browser operations and page payloads are opaque here. */
+export const RELAY_PROTOCOL_VERSION = 2;
+
 export class RelayError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 400) {
     super(message);
@@ -54,13 +56,22 @@ export function snapshot(value: unknown): HostSnapshot {
 export type Channel = 'control' | 'media';
 export interface TunnelOffer {
   type: 'tunnel.offer';
+  version: 2;
   tunnelId: string;
+  hostId: string;
+  sessionId: string;
   peerDeviceId: string;
+  side: 0 | 1;
   expiresAt: number;
   channels: Record<Channel, {path: string; ticket: string}>;
 }
 
 /** Signature binds this connection challenge, endpoint, device and bearer digest. */
 export function authTranscript(nonce: string, path: string, deviceId: string, tokenDigest: string): Buffer {
-  return Buffer.from(JSON.stringify(['agentbrowser-relay-v1', nonce, path, deviceId, tokenDigest]));
+  return Buffer.from(JSON.stringify(['agentbrowser-relay-v2', nonce, path, deviceId, tokenDigest]));
+}
+
+/** Inner TunnelHello transcript owner. Relay never receives or verifies this payload. */
+export function tunnelHelloTranscript(fields: readonly unknown[]): Buffer {
+  return Buffer.from(JSON.stringify(['agentbrowser-relay-v2-tunnel-hello', ...fields]));
 }

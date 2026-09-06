@@ -61,28 +61,59 @@ Android local-file decoding acceptance is a separate candidate. Network frames
 displayed by 15T, mobile input, resize/rotation and complete reconnect UX remain
 whole-flow integration work before baseline, milestone and memory rebuild.
 
-## Relay v1 client adapter
+## Relay v2 client and Host adapter
 
 `relay` is an additional transport adapter within the same native connection
 owner. The existing direct `Connector`, media framing and Obscura Browser ABI
-remain unchanged. Relay v1 semantics are owned by `protocol/relay`; private
-Rust wire types validate that protocol, not a second browser protocol.
+remain unchanged. Relay v1 is explicitly rejected; there is no v1/v2 fallback.
+Relay v2 semantics are owned by `protocol/relay`; private Rust wire types
+validate that protocol, not a second browser protocol.
 
 `RelayClient` logs in, registers an Ed25519 device, reads the account-scoped
-directory and revokes its token. Credentials and signing keys remain in native
-memory. `RelayConnector` fences previous connection generations and opens
-separate authorized control/media WSS tunnels. HTTPS and WSS require the
-configured CA, reject plaintext/redirects, and expose bounded connection and
-request failures. No automatic retry or downgrade is introduced. Relay TLS
-protects the connection to Relay; this adapter does not claim endpoint-to-
-endpoint encryption or interpret browser operations and video bytes.
+directory and revokes its token. `RelayConnector` supports both client and Host
+control roles. A Host registers a Host object, publishes a complete
+session-bound `HostSnapshot`, receives side `1` offers and accepts the same
+control/media tunnel pair. A client opens a tunnel with an explicit
+`hostId`+`sessionId`; an offer that does not match either identity is rejected.
+The generation source is retained by each connection, so a connection made from
+a temporary connector still owns its fencing lifetime; a newer generation,
+revocation or connection drop closes old channels.
+
+Relay v2 uses separate authorized control/media WSS tunnels and no Relay
+transport certificate or peer public key in the offer. `peerDeviceId` is only a
+claim that must match the local `RelayPeerBinding`; it is not TOFU. Every
+control/media channel is then wrapped in inner rustls mutual TLS. The client
+pins the Host certificate and the Host pins the client certificate to the
+locally stored binding. After TLS, both sides exchange a signed `TunnelHello`
+whose transcript binds the TLS exporter, role, channel, tunnel ID, Host ID,
+session ID, local/peer device IDs and both certificate fingerprints. The Relay
+only sees outer TLS and inner TLS ciphertext; it never verifies or interprets
+the Browser ABI.
+
+`RelayHostConnection` and `apps/relay-host/` are thin network adapters. The
+Host adapter probes the existing Obscura endpoint through typed `Ready` and
+`Status`, publishes that session projection, refreshes the complete projection
+before its Relay TTL expires, decrypts a secure Relay tunnel, and forwards
+control text/media binary frames unchanged to the existing Obscura `/control`
+and `/media` endpoints. Relay snapshot revision is owned by the adapter and is
+independent of Obscura document revision. It does not read `host.sock`, run
+Browser operations, implement navigation, arbitrate Session/control state, or
+recreate the Browser ABI. Those remain Obscura endpoint/Host responsibilities.
+
+HTTPS and outer WSS require the configured CA, reject plaintext/redirects, and
+expose bounded connection and request failures. No automatic retry, silent
+downgrade, or fallback is introduced. Wrong peer/device keys, same-CA but
+unpinned certificates, role/channel/tunnel/session mismatches, replayed or
+expired offers, and mixed control/media tickets fail explicitly.
 
 The connection build stages `relay-acceptance` beside `connection-acceptance`.
 Admission executes both exact compiled consumers: the existing real Host path
 and a real HTTPS/WSS Relay fixture covering wrong CA, account isolation,
-directory, separate binary channels, token revocation and generation fencing.
+directory, Host publication, side-1 offers, separate binary channels, inner
+mTLS/TunnelHello, token revocation and generation fencing.
 Relay service sources, protocol and dependency lock are hashed as test inputs.
 The fixture requires the local Node/tsx runtime; these development consumers
-are not portable deployment artifacts. Client platform login UI, Host-side
-Relay publication, Browser ABI tunnel binding and device path selection remain
-integration work before complete M1 network acceptance.
+are not portable deployment artifacts. Client platform login UI, direct-path
+selection and full installed product replay remain integration work before
+complete M1 network acceptance. The Host adapter CLI is a thin bridge, not
+proof that an installed client has completed the end-to-end Browser flow.
