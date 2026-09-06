@@ -1,7 +1,7 @@
 // Real compiled-bundle install, launchd restart and Host attachment receipts.
 import {spawnSync} from 'node:child_process';
 import {createHash, randomUUID} from 'node:crypto';
-import {mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, copyFileSync, chmodSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync, copyFileSync, chmodSync} from 'node:fs';
 import {hostname, userInfo} from 'node:os';
 import {resolve} from 'node:path';
 import {createConnection} from 'node:net';
@@ -14,7 +14,7 @@ const now = () => new Date().toISOString();
 function run(program, args, log) {
   const result = spawnSync(program, args, {maxBuffer: 32 * 1024 * 1024, timeout: 120000});
   if (log) writeFileSync(log, Buffer.concat([result.stdout ?? Buffer.alloc(0), result.stderr ?? Buffer.alloc(0)]));
-  assert(!result.error && result.status === 0, `${program} failed: ${result.error ?? result.stderr}`);
+  assert(!result.error && result.status === 0, `${program} failed (${result.status}): ${result.error ?? result.stderr}; ${result.stdout}`);
   return result.stdout;
 }
 function persist(path, value) { writeFileSync(path, JSON.stringify(value, null, 2) + '\n', {flag: 'wx'}); }
@@ -62,7 +62,14 @@ const manager = (...args) => JSON.parse(run(`${installed}/host-service`, [...arg
 async function ready(previous) {
   let last;
   for (let attempt = 0; attempt < 100; attempt++) {
-    last = manager('status');
+    const result = spawnSync(`${installed}/host-service`, ['status', '--root', root], {encoding: 'utf8', timeout: 10000});
+    appendFileSync(`${directory}/readiness.jsonl`, JSON.stringify({at: now(), status: result.status,
+      stdout: result.stdout, stderr: result.stderr, error: result.error?.message}) + '\n');
+    assert(!result.error && [0, 1].includes(result.status), 'Host status process failed');
+    last = JSON.parse(result.stdout);
+    // The manager deliberately exits 1 for the dead PID between kickstart and
+    // replacement. Only that declared transient state may continue polling.
+    assert.equal(result.status, last.state === 'stale' ? 1 : 0, JSON.stringify(last));
     if (last.state === 'running') {
       assert.equal(last.protocol_version, 4);
       assert(Number.isSafeInteger(last.pid) && last.pid > 0);
