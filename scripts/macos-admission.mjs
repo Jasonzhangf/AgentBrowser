@@ -237,14 +237,14 @@ let pid: pid_t = ${pid}
 let point = CGPoint(x: ${target.x}, y: ${target.y})
 let source = CGEventSource(stateID: .hidSystemState)!
 let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
-move.postToPid(pid)
+move.post(tap: .cghidEventTap)
 let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)!
-down.postToPid(pid)
+down.post(tap: .cghidEventTap)
 let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!
-up.postToPid(pid)
+up.post(tap: .cghidEventTap)
 `;
   command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
@@ -368,10 +368,10 @@ event.location = point
 event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: ${delta})
 event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: ${delta})
 event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: ${delta * 65536})
-event.postToPid(${pid})
+event.post(tap: .cghidEventTap)
 `;
   command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(eventLogPath, JSON.stringify({pid, event: 'native_scroll', delta, screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync(eventLogPath, JSON.stringify({pid, event: 'native_scroll', delivery: 'hid_event_tap', delta, screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function captureWindow(path, full = true) {
