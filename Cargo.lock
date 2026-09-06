@@ -64,6 +64,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentbrowser-relay-host"
+version = "0.1.0"
+dependencies = [
+ "agentbrowser-connection",
+ "futures-util",
+ "rcgen 0.13.2",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "url",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -163,25 +182,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
-]
-
-[[package]]
-name = "agentbrowser-relay-host"
-version = "0.1.0"
-dependencies = [
- "agentbrowser-connection",
- "futures-util",
- "rcgen",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
- "url",
 ]
 
 [[package]]
