@@ -484,8 +484,8 @@ async function main() {
 }
 
 function mkdtempPath(prefix) {
-  const output = command('mktemp', ['-d', '-t', prefix]).toString().trim();
-  assert.match(output, /^\/tmp\//);
+  const output = command('mktemp', ['-d', `/tmp/${prefix}.XXXXXX`]).toString().trim();
+  assert.match(output, new RegExp(`^/tmp/${prefix}\\.`));
   return output;
 }
 
