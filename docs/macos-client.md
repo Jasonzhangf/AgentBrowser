@@ -98,6 +98,18 @@ The minimum Mac evidence records separately:
 6. Disconnect releases the native connection without stopping the Host, and a
    fresh connect creates a new generation instead of replaying old input.
 
+Formal AppSDK admission uses `scripts/macos-admission.mjs` on a committed owner
+candidate. It compiles the pinned module and its connection dependency, copies
+the exact zip into a private `/tmp` installation, launches only that extracted
+bundle, and records separate install and exact-PID restart receipts. The same
+installed entrypoint is driven through AppKit accessibility actions and native
+scroll events: connect, receive and display H.264, take over, navigate, click,
+enter text, scroll, release, inspect the Host only after release, disconnect,
+reconnect, then restart and reconnect again. Screenshots, fixture DOM evidence,
+process identities, artifact hashes, and raw command logs remain under the
+ignored task-local `evidence/` directory. The acceptance fixture and app
+processes are owned by the adapter; cleanup terminates only those exact PIDs.
+
 This is a Mac/client vertical slice. It is not Android+Mac same-session proof,
-Relay proof, route-selection proof, package installation proof, or full M1
-acceptance. Those remain integration-owner work.
+Relay proof, route-selection proof, final user/global package installation, or
+full M1 acceptance. Those remain integration-owner work.
