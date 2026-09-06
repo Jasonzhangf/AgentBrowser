@@ -48,7 +48,8 @@ OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fo
 The script uses `CARGO_BUILD_JOBS=2`, AppKit/WebKit/VideoToolbox from the
 installed macOS SDK, and emits `apps/macos/build/AgentBrowserMac.app`. It does
 not install a system app or restart a daemon; direct bundle launch is the
-module's local entrypoint.
+module's local entrypoint. For AppSDK consumers, the same build also emits the
+complete bundle as `generated/modules/macos-shell/lib/AgentBrowserMac.app.zip`.
 
 ```sh
 OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \

@@ -343,7 +343,7 @@
     {
       "active_artifact": "active/lib/macos-shell",
       "artifact_paths": [
-        "AgentBrowserMac.app"
+        "AgentBrowserMac.app.zip"
       ],
       "build": {
         "args": [
@@ -362,7 +362,8 @@
       ],
       "deployment_operations": [],
       "generated_outputs": [
-        "apps/macos/build/**"
+        "apps/macos/build/**",
+        "generated/modules/macos-shell/**"
       ],
       "module_id": "macos-shell",
       "owned_paths": [
