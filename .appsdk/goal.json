@@ -1,1 +1,10 @@
-{"goal_id":"goal-change-me","raw_request":"Describe the intended change before implementation.","understood_objective":"The objective will be restated and confirmed before admission.","acceptance_criteria":["The user-confirmed acceptance criteria are recorded before implementation."],"non_goals":[],"assumptions":[],"ambiguities":[],"questions":[],"status":"received","confirmed_by":null,"confirmed_at":null,"created_at":"2026-01-01T00:00:00Z"}
+{
+  "goal_id":"milestone-1",
+  "raw_request":"完成 AgentBrowser 第一个可用 milestone：Mac 本地运行 Agent 与 Obscura daemon，Android 和 Mac 客户端可持续连接、观察、接管及操作同一浏览器；完成两仓 main 交付、版本基线、安装产物及 AppSDK 项目 memory 重建。",
+  "understood_objective":"串行集成已验证的手机、Mac、Host、连接及 Relay 候选，完成手机优先的多端可用产品和真实网络验收，再建立版本基线与项目 memory。",
+  "acceptance_criteria":["Android 15T与Mac实际安装入口可用","观察、原子操作边界接管、导航、点击、滚动和中文输入","双端共享画面，旋转、键盘、重连保持文档及状态","本地、UDP/WebRTC、Tailscale及认证WSS Relay真实视频和操作回执","账号和设备目录及跨账号隔离","两仓正式admission和review、main远端回执、版本与可复现安装产物","M1基线和可检索的AppSDK项目memory"],
+  "non_goals":["Linux/iOS客户端交付","跨Host运行态迁移","HEVC和高性能优化","完整浏览器兼容性"],
+  "assumptions":[],"ambiguities":[],"questions":[],
+  "status":"confirmed","confirmed_by":"user-delegation-01a07079-6a5c-7071-a7d7-bcd1b3547ba8",
+  "confirmed_at":"2026-09-05T13:15:52Z","created_at":"2026-09-05T13:15:52Z"
+}

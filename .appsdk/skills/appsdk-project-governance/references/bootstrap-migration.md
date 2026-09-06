@@ -127,17 +127,44 @@ objects.
 inventory + immutable audit snapshot
 -> classify retained business source and Protected artifacts
 -> request exact reset/delete authority
--> remove only approved governance/runtime residue
--> appsdk prepare/init with current SDK
+-> clean non-main owner worktree
+-> appsdk reset-governance --discard-legacy
+-> old .appsdk audit/migration records and generated projection removed
+-> appsdk init with current SDK
 -> rebuild maps/goal/module/owner from current project truth
 -> appsdk guide compile
 -> appsdk guide init for the current task/domain
 -> appsdk verify
 ```
 
-Do not hand-edit version/hash/ReviewRecord to imitate migration. Do not retain
-two active governance roots. Historical snapshots stay evidence; runtime state
-may be zeroed only inside approved scope.
+The reset command is idempotent and preserves business source, runtime data,
+Active, and Protected by default. It removes stale audit/migration reports,
+control state, and rebuildable generated output. If old Active/Protected
+artifacts are also obsolete, name exact paths and authorize a separate
+cleanup; reset must not silently delete them. Do not hand-edit
+version/hash/ReviewRecord to imitate migration, and do not retain two active
+governance roots. The new reset record proves the reset operation only; it does
+not inherit old PASS, review, delivery, or freeze claims.
+
+### What to do with old reports and delivery output
+
+Use ownership and rebuildability, not age, to decide what is removable:
+
+| Class | Default action | Reason |
+| --- | --- | --- |
+| `.appsdk/records`, `.appsdk/transactions`, audit/migration reports | Inventory/snapshot if needed, then remove through reset | Old control truth must not leak into the new baseline. |
+| Declared `governance.generated_root`, module generated outputs | Remove through reset and regenerate | These are reproducible projections, not source or release truth. |
+| Failed transaction staging | Canonical abort/retry if current; otherwise reset | Manual deletion can hide ownership or partial publication. |
+| `active/`, `protected/`, runtime data, business source | Retain | They may be the only published or operational truth. |
+| `dist/`, `.deploy/`, `build/`, `tmp/`, custom reports/artifacts | Keep until exact disposable ownership is confirmed | AppSDK cannot infer that an external output is safe to delete. |
+
+The reset command reads the old project contract before removal and includes
+its declared generated root in the disposable set. It does not use a fixed
+project path or silently delete Active/Protected. For external outputs, the
+owner must name the exact path, establish that it is rebuildable, authorize
+cleanup, and record the result separately. Never preserve an old report by
+renaming it as a new record, and never make a new record by editing an old
+hash or receipt.
 
 ## Mid-development adoption
 

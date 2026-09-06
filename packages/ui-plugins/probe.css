@@ -1,0 +1,43 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #17241e; background: #f5f7f4; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 18px 22px 12px; }
+h1 { margin: 0; font-size: 25px; font-weight: 650; letter-spacing: -.02em; }
+p { margin: 8px 0 14px; line-height: 1.45; }
+.intro, footer p, .detail { color: #536257; font-size: 13px; }
+.status { display: flex; justify-content: space-between; gap: 12px; margin: 18px 0 12px; font-size: 15px; }
+.status span { font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: 10px; }
+button { min-height: 48px; padding: 10px 16px; border: 0; border-radius: 10px; font: inherit; font-size: 15px; font-weight: 600; background: #235d43; color: white; cursor: pointer; }
+.actions button { flex: 1; }
+button.secondary { background: #e1e9e2; color: #203c2c; }
+button:disabled { background: #e8ece8; color: #707970; cursor: default; }
+button:focus-visible, summary:focus-visible { outline: 3px solid #347454; outline-offset: 3px; }
+button:active:not(:disabled) { background: #183f2d; color: white; }
+details { margin-top: 12px; font-size: 13px; }
+summary { min-height: 44px; padding: 12px 0; cursor: pointer; }
+footer { border-top: 1px solid #d6dfd6; margin-top: 8px; padding-top: 4px; }
+.text-button { background: transparent; color: #235d43; padding-left: 0; min-height: 44px; font-size: 13px; }
+footer p { margin: 2px 0; }
+.error { color: #9e2525; overflow-wrap: anywhere; font-size: 13px; }
+.network { border-top: 1px solid #d6dfd6; margin-top: 14px; padding-top: 8px; }
+.network h2 { margin: 0; font-size: 15px; }
+.network .actions { margin-top: 8px; }
+.network .actions button { min-height: 42px; padding: 8px 10px; font-size: 13px; }
+.address-entry { display: flex; gap: 8px; margin-top: 8px; }
+.address-entry input { min-width: 0; flex: 1; border: 1px solid #cad6cc; border-radius: 8px; padding: 9px; font: inherit; }
+.address-entry button { min-height: 42px; padding: 8px 12px; font-size: 13px; }
+.text-entry { display: flex; gap: 8px; margin-top: 8px; }
+.text-entry input { min-width: 0; flex: 1; border: 1px solid #cad6cc; border-radius: 8px; padding: 9px; font: inherit; }
+.text-entry button { min-height: 42px; padding: 8px 12px; font-size: 13px; }
+::selection { background: #d3eadb; }
+.remote > h1, .remote > .intro, .remote > .status, .remote > .local-probe, .remote > details { display: none; }
+.remote .network { margin: 0; padding: 0; border: 0; }
+.remote .network h2 { display: none; }
+.remote .network .detail { margin: 0 0 6px; }
+.remote .network .actions { margin-top: 0; }
+.remote .network button { min-height: 40px; padding: 7px 8px; }
+.remote .address-entry { margin-top: 6px; }
+.remote .text-entry { margin-top: 6px; }
+body:has(.remote) { padding: 10px 14px; }
+body:has(.remote) footer { display: none; }
+@media (min-width: 600px) { body { padding: 16px 24px; } }
