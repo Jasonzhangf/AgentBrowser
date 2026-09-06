@@ -163,9 +163,60 @@ function typeAscii(text) {
   osa(uiScript(`keystroke "${escaped}"`));
 }
 
-function setAccessibilityValue(pid, description, value, logPath) {
-  const swift = `import ApplicationServices; import Foundation; let pid: pid_t = ${pid}; let text = ${JSON.stringify(value)}; let target = ${JSON.stringify(description)}; let app = AXUIElementCreateApplication(pid); func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? { var result: CFTypeRef?; let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result); return error == .success ? result : nil }; func find(_ element: AXUIElement) -> Bool { let role = value(element, kAXRoleAttribute) as? String; let description = value(element, kAXDescriptionAttribute) as? String; if role == kAXTextFieldRole && description == target { return AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef) == .success }; let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []; return children.contains(where: find) }; guard find(app) else { exit(2) }`;
+function focusAccessibilityTextField(pid, description, logPath) {
+  const swift = `
+import ApplicationServices
+import Foundation
+let pid: pid_t = ${pid}
+let target = ${JSON.stringify(description)}
+let app = AXUIElementCreateApplication(pid)
+func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var result: CFTypeRef?
+    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
+    return error == .success ? result : nil
+}
+func find(_ element: AXUIElement) -> AXUIElement? {
+    let role = value(element, kAXRoleAttribute) as? String
+    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute)].compactMap { $0 as? String }
+    if role == kAXTextFieldRole && labels.contains(target) { return element }
+    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    for child in children {
+        if let match = find(child) { return match }
+    }
+    return nil
+}
+guard let field = find(app) else { exit(2) }
+guard AXUIElementPerformAction(field, kAXPressAction as CFString) == .success else { exit(3) }
+guard AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else { exit(3) }
+`;
   command('swift', ['-e', swift], {log: logPath, timeout: 30_000});
+}
+
+function postUnicodeText(pid, text, logPath) {
+  const swift = `
+import CoreGraphics
+import Foundation
+let pid: pid_t = ${pid}
+let text = ${JSON.stringify(text)}
+let source = CGEventSource(stateID: .hidSystemState)!
+let units = Array(text.utf16)
+for start in stride(from: 0, to: units.count, by: 16) {
+    let chunk = Array(units[start..<min(start + 16, units.count)])
+    let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)!
+    chunk.withUnsafeBufferPointer { buffer in
+        down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
+    }
+    down.postToPid(pid)
+    let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)!
+    chunk.withUnsafeBufferPointer { buffer in
+        up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
+    }
+    up.postToPid(pid)
+    Thread.sleep(forTimeInterval: 0.002)
+}
+`;
+  command('swift', ['-e', swift], {timeout: 30_000});
+  writeFileSync(logPath, JSON.stringify({pid, text_length: text.length, input: 'native_unicode_key_events'}, null, 2) + '\n', {flag: 'wx'});
 }
 
 async function pressAccessibilityButton(pid, title, logPath) {
@@ -510,7 +561,9 @@ async function main() {
     await observeHostStatus('takeover', 2, 'human');
     const page = '<body style="margin:0;background:white"><h1 id="title" style="height:45px;margin:0">中文导航验收</h1><button id="target" style="display:block;width:180px;height:100px;background:red" onclick="window.clicked=(window.clicked||0)+1;this.style.background=\'lime\'">touch</button><input id="field" style="display:block;width:220px;height:50px"><div style="height:1400px;background:blue"></div><script>window.maxScroll=0;window.addEventListener(\'scroll\',()=>window.maxScroll=Math.max(window.maxScroll,window.scrollY));</script></body>';
     const url = `data:text/html,${encodeURIComponent(page)}`;
-    setAccessibilityValue(firstApp.pid, '远程页面地址', url, join(directory, 'address-set.log'));
+    focusAccessibilityTextField(firstApp.pid, '远程页面地址', join(directory, 'address-focus.log'));
+    postUnicodeText(firstApp.pid, url, join(directory, 'address-input.log'));
+    await sleep(500);
     await pressAccessibilityButton(firstApp.pid, '打开', join(directory, 'navigate.log'));
     await sleep(4_000);
     clickRelative(120, 105);
@@ -518,7 +571,9 @@ async function main() {
     clickRelative(120, 185);
     await sleep(400);
     const inputText = '你好，Mac 输入';
-    setAccessibilityValue(firstApp.pid, '输入到远程页面的文字', inputText, join(directory, 'input-set.log'));
+    focusAccessibilityTextField(firstApp.pid, '输入到远程页面的文字', join(directory, 'input-focus.log'));
+    postUnicodeText(firstApp.pid, inputText, join(directory, 'input-set.log'));
+    await sleep(400);
     await pressAccessibilityButton(firstApp.pid, '发送', join(directory, 'send-text.log'));
     await sleep(2_000);
     const rect = windowRect();
