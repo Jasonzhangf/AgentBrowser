@@ -158,24 +158,51 @@ func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
     let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
     return error == .success ? result : nil
 }
-func find(_ element: AXUIElement) -> AXUIElement? {
+func rectangle(_ element: AXUIElement, _ attribute: String) -> CGRect? {
+    guard let raw = value(element, attribute) else { return nil }
+    let axValue = raw as! AXValue
+    var point = CGPoint.zero
+    var size = CGSize.zero
+    if attribute == kAXPositionAttribute {
+        guard AXValueGetValue(axValue, .cgPoint, &point) else { return nil }
+        return CGRect(origin: point, size: .zero)
+    }
+    guard AXValueGetValue(axValue, .cgSize, &size) else { return nil }
+    return CGRect(origin: .zero, size: size)
+}
+func rect(_ element: AXUIElement) -> CGRect? {
+    guard let position = rectangle(element, kAXPositionAttribute),
+          let size = rectangle(element, kAXSizeAttribute) else { return nil }
+    return CGRect(origin: position.origin, size: size.size)
+}
+func findLabel(_ element: AXUIElement) -> AXUIElement? {
     let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }
     if labels.contains(target) { return element }
     let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
     for child in children {
-        if let match = find(child) { return match }
+        if let match = findLabel(child) { return match }
     }
     return nil
 }
-guard let surface = find(app) else { exit(2) }
-guard let positionValue = value(surface, kAXPositionAttribute),
-      let sizeValue = value(surface, kAXSizeAttribute) else { exit(3) }
-let position = positionValue as! AXValue
-let size = sizeValue as! AXValue
-var origin = CGPoint.zero
-var extent = CGSize.zero
-guard AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(size, .cgSize, &extent), extent.width > 0, extent.height > 0 else { exit(3) }
-print("{\\"x\\":\\(origin.x),\\"y\\":\\(origin.y),\\"width\\":\\(extent.width),\\"height\\":\\(extent.height)}")
+func findRole(_ element: AXUIElement, _ targetRole: String) -> AXUIElement? {
+    if (value(element, kAXRoleAttribute) as? String) == targetRole { return element }
+    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    for child in children {
+        if let match = findRole(child, targetRole) { return match }
+    }
+    return nil
+}
+if let surface = findLabel(app), let surfaceRect = rect(surface) {
+    print("{\\"source\\":\\"labelled_surface\\",\\"x\\":\\(surfaceRect.minX),\\"y\\":\\(surfaceRect.minY),\\"width\\":\\(surfaceRect.width),\\"height\\":\\(surfaceRect.height)}")
+    exit(0)
+}
+guard let splitGroup = findRole(app, "AXSplitGroup"),
+      let splitter = findRole(splitGroup, "AXSplitter"),
+      let groupRect = rect(splitGroup),
+      let splitterRect = rect(splitter) else { exit(2) }
+let leftWidth = splitterRect.minX - groupRect.minX
+guard leftWidth > 0, groupRect.height > 0 else { exit(3) }
+print("{\\"source\\":\\"split_group_left_of_splitter\\",\\"x\\":\\(groupRect.minX),\\"y\\":\\(groupRect.minY),\\"width\\":\\(leftWidth),\\"height\\":\\(groupRect.height)}")
 `;
   const output = command('swift', ['-e', swift], {timeout: 30_000}).toString().trim();
   const geometry = JSON.parse(output);
