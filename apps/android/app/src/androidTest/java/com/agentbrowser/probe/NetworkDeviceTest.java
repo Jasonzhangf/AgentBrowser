@@ -219,7 +219,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         imeEdit(committedInput.get(),connection->{assertTrue(connection.commitText("中文",1));assertTrue(connection.finishComposingText());});
         until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
         compositionCommitted=true;
-        until(STATUS+".inputReady",6000);
+        until(STATUS+".inputReady && !document.getElementById('send-text').disabled",6000);
         assertEquals("Committed text must be dispatched through an enabled UI button", "true",
             js("(()=>{const button=document.getElementById('send-text');if(button.disabled)return false;button.click();return true})()"));
         until(STATUS+".inputReady",6000);
