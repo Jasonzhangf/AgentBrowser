@@ -220,7 +220,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
         compositionCommitted=true;
         until(STATUS+".inputReady",6000);
-        click("send-text");
+        assertEquals("Committed text must be dispatched through an enabled UI button", "true",
+            js("(()=>{const button=document.getElementById('send-text');if(button.disabled)return false;button.click();return true})()"));
         until(STATUS+".inputReady",6000);
         long paintDeadline=SystemClock.elapsedRealtime()+5000;
         do{
