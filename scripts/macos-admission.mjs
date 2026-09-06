@@ -125,6 +125,10 @@ function uiScript(body) {
   return `tell application "System Events"\n  tell process "${appProcessName}"\n    set frontmost to true\n    ${body}\n  end tell\nend tell`;
 }
 
+function activateApp() {
+  osa('tell application id "com.agentbrowser.macos" to activate');
+}
+
 function windowRect() {
   const output = osaPoll(uiScript(`get {position, size} of window "${appWindowName}"`));
   if (output.status !== 0) return null;
@@ -244,11 +248,11 @@ let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorP
 up.post(tap: .cghidEventTap)
 `;
   command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'bundle_id', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
-  osa(uiScript('set frontmost to true'));
+  activateApp();
   const surface = videoSurfaceGeometry(pid, geometryLogPath);
   const target = pageScreenPoint(surface, viewport, x, y);
   postMouse(pid, target, eventLogPath);
@@ -356,7 +360,7 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
 }
 
 function postSurfaceScroll(pid, viewport, x, y, delta, geometryLogPath, eventLogPath) {
-  osa(uiScript('set frontmost to true'));
+  activateApp();
   const surface = videoSurfaceGeometry(pid, geometryLogPath);
   const target = pageScreenPoint(surface, viewport, x, y);
   const swift = `
