@@ -1,7 +1,7 @@
 //! JNI owns native handle lifetime and displayed-frame acknowledgement only.
 //! TLS, browser ABI and control arbitration stay in their existing owners.
-use std::{collections::{HashMap,VecDeque}, sync::{Arc, Mutex, OnceLock}, time::Duration};
-use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Failure, Input, Pairing, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
+use std::{collections::{HashMap,VecDeque}, net::IpAddr, sync::{Arc, Mutex, OnceLock}, time::Duration};
+use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Failure, Input, Pairing, WebRtcConfig, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
 use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
 
 mod account;
@@ -62,24 +62,81 @@ fn fail_command(env: &mut JNIEnv, failure: CommandFailure) {
     }
 }
 
+enum NativeTransport { Wss, WebRtc(IpAddr) }
+
+fn parse_webrtc_bind_ip(value: &str) -> Result<IpAddr> {
+    let ip = value.parse::<IpAddr>().map_err(|_| "Invalid WebRTC bind IP".to_string())?;
+    if ip.is_unspecified() || ip.is_multicast() {
+        return Err("Invalid WebRTC bind IP: unspecified or multicast".into());
+    }
+    Ok(ip)
+}
+
+fn pairing(env: &mut JNIEnv, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray) -> Result<Pairing> {
+    Ok(Pairing {
+        endpoint: env.get_string(&endpoint).map_err(error)?.into(),
+        server_ca_der: env.convert_byte_array(ca).map_err(error)?,
+        client_cert_der: env.convert_byte_array(cert).map_err(error)?,
+        client_key_pkcs8_der: env.convert_byte_array(key).map_err(error)?,
+    })
+}
+
+fn open_native(pairing: Pairing, transport: NativeTransport) -> Result<jlong> {
+    let mut connector = Connector::default();
+    let connection = match transport {
+        NativeTransport::Wss => runtime()?.block_on(connector.connect(pairing, None)).map_err(error)?,
+        NativeTransport::WebRtc(bind_ip) => runtime()?.block_on(connector.connect_webrtc_with_config(
+            pairing,
+            None,
+            WebRtcConfig { bind_ip },
+        )).map_err(error)?,
+    };
+    let mut registry = registry().lock().map_err(error)?;
+    if registry.sessions.len() >= 4 { return Err("Native connection capacity reached".into()); }
+    registry.next = registry.next.checked_add(1).filter(|id| *id <= i64::MAX as u64).ok_or("Native handle exhausted")?;
+    let id = registry.next;
+    registry.sessions.insert(id, Arc::new(Mutex::new(Session { _connector: connector, connection, pending: None, displayed: VecDeque::new() })));
+    Ok(id as jlong)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_open(
     mut env: JNIEnv, _: JClass, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray,
 ) -> jlong {
     let result = (|| -> Result<jlong> {
-        let pairing = Pairing { endpoint: env.get_string(&endpoint).map_err(error)?.into(),
-            server_ca_der: env.convert_byte_array(ca).map_err(error)?, client_cert_der: env.convert_byte_array(cert).map_err(error)?,
-            client_key_pkcs8_der: env.convert_byte_array(key).map_err(error)? };
-        let mut connector = Connector::default();
-        let connection = runtime()?.block_on(connector.connect(pairing, None)).map_err(error)?;
-        let mut registry = registry().lock().map_err(error)?;
-        if registry.sessions.len() >= 4 { return Err("Native connection capacity reached".into()); }
-        registry.next = registry.next.checked_add(1).filter(|id| *id <= i64::MAX as u64).ok_or("Native handle exhausted")?;
-        let id = registry.next;
-        registry.sessions.insert(id, Arc::new(Mutex::new(Session { _connector: connector, connection, pending: None, displayed: VecDeque::new() })));
-        Ok(id as jlong)
+        open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::Wss)
     })();
     match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_openWebRtc(
+    mut env: JNIEnv, _: JClass, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray, bind_ip: JString,
+) -> jlong {
+    let result = (|| -> Result<jlong> {
+        let bind_ip: String = env.get_string(&bind_ip).map_err(error)?.into();
+        let bind_ip = parse_webrtc_bind_ip(&bind_ip)?;
+        open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::WebRtc(bind_ip))
+    })();
+    match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_webrtc_bind_ip;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn bind_ip_accepts_literal_unicast_address() {
+        assert_eq!(parse_webrtc_bind_ip("100.66.1.82").unwrap(), IpAddr::V4(Ipv4Addr::new(100, 66, 1, 82)));
+    }
+
+    #[test]
+    fn bind_ip_rejects_invalid_unspecified_and_multicast_values() {
+        for value in ["not-an-ip", "0.0.0.0", "224.0.0.1", "::"] {
+            assert!(parse_webrtc_bind_ip(value).is_err(), "accepted {value}");
+        }
+    }
 }
 
 #[no_mangle]

@@ -26,10 +26,11 @@ final class NetworkSession {
     private boolean running,closed,framePending,commandPending;
     private NetworkFrame displayed;
     private JSONObject host;
-    private String state="idle",error,shownMode="observe";
+    private String state="idle",error,shownMode="observe",selectedTransport="";
     NetworkSession(Context context,FrameSink sink,Runnable release){this.context=context.getApplicationContext();this.sink=sink;this.release=release;}
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
+    synchronized String transport(){return selectedTransport;}
     synchronized boolean current(long value){return connected()&&token==value;}
     synchronized boolean inputReady(){return connected()&&!commandPending&&displayed!=null
         &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null&&!host.optBoolean("viewport_pending")
@@ -70,6 +71,7 @@ final class NetworkSession {
                 .put("renderedFrames",media.optInt("renderedFrames",0)).put("released",!active()&&handle==0&&media.optBoolean("released"))
                 .put("codec",media.optString("codec","")).put("error",error==null?JSONObject.NULL:error)
                 .put("source","network").put("connectionState",state).put("controlMode",mode).put("epoch",epoch)
+                .put("transport",selectedTransport)
                 .put("inputReady",inputReady()).put("pending",commandPending||framePending?"busy":JSONObject.NULL)
                 .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
@@ -78,11 +80,46 @@ final class NetworkSession {
             return value;
         }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_HOST_STATUS",invalid);}
     }
+
+    static NativeConnection.TransportConfig parseTransportConfig(String raw) {
+        if (raw == null || raw.isBlank()) throw new IllegalArgumentException("TRANSPORT_CONFIG_EMPTY");
+        try {
+            JSONObject value = new JSONObject(raw);
+            java.util.Iterator<String> keys = value.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                if (!key.equals("transport") && !key.equals("bind_ip"))
+                    throw new IllegalArgumentException("UNKNOWN_TRANSPORT_CONFIG_FIELD");
+            }
+            String transport = value.optString("transport", "");
+            return switch (transport) {
+                case "wss" -> {
+                    if (value.has("bind_ip")) throw new IllegalArgumentException("WSS_BIND_IP_FORBIDDEN");
+                    yield NativeConnection.TransportConfig.wss();
+                }
+                case "webrtc" -> {
+                    if (!value.has("bind_ip")) throw new IllegalArgumentException("WEBRTC_BIND_IP_REQUIRED");
+                    yield NativeConnection.TransportConfig.webRtc(value.getString("bind_ip"));
+                }
+                default -> throw new IllegalArgumentException("UNKNOWN_TRANSPORT");
+            };
+        } catch (org.json.JSONException invalid) {
+            throw new IllegalArgumentException("INVALID_TRANSPORT_CONFIG", invalid);
+        }
+    }
+
+    private NativeConnection.TransportConfig transportConfig() throws Exception {
+        File file = new File(context.getFilesDir(), "pairing/transport.json");
+        if (!file.exists()) return NativeConnection.TransportConfig.wss();
+        if (!file.isFile() || file.length() > 4096) throw new IllegalStateException("TRANSPORT_CONFIG_MISSING_OR_OVERSIZED");
+        return parseTransportConfig(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    }
+
     synchronized void connect(){
         if(closed)throw new IllegalStateException("HOST_INACTIVE");
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
         token=next(token);generation=next(generation);long expected=token;
-        state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";
+        state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";selectedTransport="";
         submittedViewport=null;
         worker.execute(()->open(expected));
     }
@@ -90,9 +127,10 @@ final class NetworkSession {
         long opened=0;
         try{
             NativeConnection.load();
-            opened=NativeConnection.open(new String(read("endpoint.txt"),StandardCharsets.UTF_8).trim(),read("ca.der"),read("client.der"),read("key.der"));
+            NativeConnection.TransportConfig config=transportConfig();
+            opened=NativeConnection.open(new String(read("endpoint.txt"),StandardCharsets.UTF_8).trim(),read("ca.der"),read("client.der"),read("key.der"),config);
             JSONObject status=new JSONObject(NativeConnection.command(opened,0,0,0,0,0,0,0,""));
-            synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";flushViewport();}
+            synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";selectedTransport=config.transport().name().toLowerCase(java.util.Locale.ROOT);flushViewport();}
             poll(expected);
         }catch(Exception failure){
             if(opened!=0){try{NativeConnection.close(opened);}catch(Exception close){failure.addSuppressed(close);}}

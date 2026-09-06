@@ -12,7 +12,8 @@ must rerun its actual APK build/install/restart/device path before review.
 
 ## Native boundary
 
-`NativeConnection` exposes open/frame/acknowledge/command/close. Keys load only
+`NativeConnection` exposes explicit WSS `open`, WebRTC `openWebRtc`,
+frame/acknowledge/command/close. Keys load only
 from the app-private pairing directory. No credentials or media bytes pass
 through WebView. JNI returns a bounded byte array directly to MediaCodec.
 The shared connection emits latest-only complete AU; Android admits one decode
@@ -87,6 +88,31 @@ the immutable frame. Java exposes those revisions only after native display
 and acknowledgement, and allows input only when they match the Host status.
 The device test observes this invariant during waits, including viewport changes.
 
+## Explicit Android WebRTC selection
+
+`NetworkSession` reads optional app-private `files/pairing/transport.json`.
+Missing file means the explicit WSS adapter for regression. WebRTC requires the
+following typed configuration:
+
+```json
+{"transport":"webrtc","bind_ip":"192.0.2.10"}
+```
+
+`bind_ip` must be a literal, non-unspecified, non-multicast IP selected by the
+platform. The native boundary passes it to
+`Connector::connect_webrtc_with_config`; a malformed address, failed signaling,
+failed UDP ICE, failed DataChannel capability/binding, or missing H.264 media
+is an error. There is no WSS fallback after WebRTC selection, and signaling
+success does not mark media ready.
+
+The app keeps the existing MediaCodec, displayed-frame acknowledgement and
+operation fences for both adapters. The independent source/JNI smoke is:
+`python3 packages/android-bridge/tests/run-webrtc-smoke.py --library-dir ...
+--fixture-bin ... --bind-ip ...`. It covers invalid configuration, a real
+WebRTC status/media boundary, release, and stale-handle fencing; it does not
+claim installed-device or 15T evidence until that entrypoint is run with the
+approved resource window.
+
 The network test also submits a stale takeover epoch and verifies that the
 reported rejection leaves the same Session connected with continuing frames,
 before exercising a valid takeover. `packages/android-bridge/tests/run-smoke.py`
@@ -105,7 +131,7 @@ implemented. Acceptance checks actual lower-page pixels, restoration of the
 same button, an independent Host scroll offset history, cancellation and a
 viewport change between press and release.
 
-This remains a direct prepaired WSS integration slice. UDP/Relay selection,
+WSS remains an explicit prepaired regression adapter. UDP/Relay selection,
 production account enrollment, multiple-client viewport election, complete
 reconnect UX and milestone publication remain separate acceptance work.
 No whole-flow PASS is inferred from a compiled library or previous local files.

@@ -8,6 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bin = PathBuf::from(std::env::var("OBSCURA_BIN_DIR")?);
     let bind: std::net::IpAddr = std::env::var("OBSCURA_ENDPOINT_BIND_IP")?.parse()?;
+    let enable_webrtc = std::env::var("OBSCURA_ENABLE_WEBRTC").as_deref() == Ok("1");
     let root = PathBuf::from(format!("/tmp/an-{}", uuid::Uuid::new_v4().simple()));
     std::fs::DirBuilder::new().mode(0o700).create(&root)?;
     let ca_key = rcgen::KeyPair::generate()?;
@@ -43,11 +44,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reservation = std::net::TcpListener::bind((bind,0))?;
     let address = reservation.local_addr()?; drop(reservation);
     std::fs::write(root.join("endpoint.txt"), format!("wss://{address}"))?;
-    let mut endpoint = tokio::process::Command::new(bin.join("obscura-endpoint"))
+    let mut endpoint_command = tokio::process::Command::new(bin.join("obscura-endpoint"));
+    endpoint_command
         .arg("--listen").arg(address.to_string()).arg("--host-dir").arg(root.join("host"))
         .arg("--socket-dir").arg(root.join("endpoint"))
         .arg("--server-cert").arg(root.join("server.der")).arg("--server-key").arg(root.join("server-key.der"))
-        .arg("--client-ca").arg(root.join("ca.der")).arg("--media-bin").arg(bin.join("obscura-media"))
+        .arg("--client-ca").arg(root.join("ca.der")).arg("--media-bin").arg(bin.join("obscura-media"));
+    if enable_webrtc {
+        endpoint_command.arg("--enable-webrtc").arg("--webrtc-bind-ip").arg(bind.to_string());
+    }
+    let mut endpoint = endpoint_command
         .stdout(Stdio::null()).stderr(Stdio::inherit()).kill_on_drop(true).spawn()?;
     wait(root.join("endpoint/encoded.sock")).await;
     println!("{}",serde_json::json!({"fixture":root,"endpoint":format!("wss://{address}"),"session":resized.session_id,"initialUrl":initial_url}));
