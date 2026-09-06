@@ -54,11 +54,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     while let Some(command) = input.next_line().await? {
         if command == "quit" { break; }
-        if command == "inspect" {
+        if command == "status" {
+            let current = status(call(&mut local,&mut id,Command::Status {},None).await);
+            println!("{}",serde_json::to_string(&current)?);
+        } else if command == "inspect" {
             let current = status(call(&mut local,&mut id,Command::Status {},None).await);
             let result = call(&mut local,&mut id,Command::Evaluate { expression:"JSON.stringify({clicked:window.clicked||0,text:document.getElementById('field').value,scrollY:window.scrollY,maxScroll:window.maxScroll})".into() },Some(identity(&current))).await;
             println!("{}",serde_json::to_string(&result)?);
-        } else { eprintln!("Expected inspect or quit"); }
+        } else { eprintln!("Expected status, inspect or quit"); }
     }
     endpoint.kill().await?; endpoint.wait().await?;
     host.kill().await?; host.wait().await?;

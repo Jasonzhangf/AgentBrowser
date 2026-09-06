@@ -57,6 +57,17 @@ never touches system trust, and owns its child processes and temporary directory
 `scripts/device-pairing.py` installs only into an absent private pairing directory
 and removes it only when its owner marker matches the fixture.
 
+Fixture `status` projects the Host's typed `SessionStatus` without an Agent
+operation. It remains available during human takeover to compare Session,
+attachment count, control and shared viewport revisions; it neither evaluates
+page JavaScript nor resumes Agent control. The regression
+`python3 packages/android-bridge/tests/fixture-status.py /path/to/device_fixture`
+uses the real Host, takes human control on a second connection, and verifies
+that repeated fixture status reads leave control, revisions and the Agent
+operation sequence unchanged. Set `OBSCURA_BIN_DIR` and
+`OBSCURA_ENDPOINT_BIND_IP=127.0.0.1`. This proves only the read-only fixture
+entrypoint; real Android and Mac display alignment still requires both clients.
+
 `scripts/network-replay.py` builds and installs both main and instrumentation
 APKs, compares each installed APK SHA-256 with its local artifact, then runs the
 current test. Every run uses a new `evidence/network/<run-id>` directory and
