@@ -11,6 +11,7 @@ const serial = process.env.ANDROID_SERIAL;
 assert(serial, 'ANDROID_SERIAL must identify the authorized device');
 assert(process.env.JAVA_HOME && process.env.ANDROID_HOME, 'JAVA_HOME and ANDROID_HOME required');
 assert(process.env.OBSCURA_PROTOCOL_ROOT && process.env.OBSCURA_BIN_DIR && process.env.OBSCURA_ENDPOINT_BIND_IP, 'Explicit real protocol/Host fixture required');
+assert(process.env.ACCOUNT_RELAY_BIND_HOST && process.env.ACCOUNT_RELAY_ADVERTISE_HOST, 'Explicit real account Relay fixture bind and advertise hosts required');
 const hash = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
 const now = () => new Date().toISOString();
 function command(program, args, log) {
@@ -99,6 +100,19 @@ const {maxScroll,...retainedDom}=dom.dom;
 assert.deepEqual(retainedDom, {clicked:1,text:'native-network-proof中文',scrollY:0});
 assert(Number.isFinite(maxScroll) && maxScroll>=240);
 assert.equal(network.sessionId,dom.session);
+process.env.ACCOUNT_EVIDENCE_DIR = `${directory}/account`;
+command('bash',['scripts/device.sh','account-replay'],`${directory}/account-blackbox.log`);
+const account = JSON.parse(readFileSync(`${directory}/account/summary.json`,'utf8'));
+assert.equal(account.serial,serial);
+assert.equal(account.model,'PLZ110');
+assert.equal(`sha256:${account.installedApkSha256['com.agentbrowser.probe']}`,apkHash);
+assert.equal(`sha256:${account.installedApkSha256['com.agentbrowser.probe.test']}`,hash(readFileSync('apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')));
+const accountResults = Object.fromEntries(account.scenarios.map(item => [item.scenario,item.result]));
+assert(accountResults.directory?.directoryOnline && accountResults.directory.directoryOffline && accountResults.directory.directoryExpired);
+assert(accountResults.directory.wrongCaRejected && accountResults.directory.wrongCredentialsRejected && accountResults.directory.deviceRegistered);
+assert(accountResults.directory.staleCallbacksFenced && accountResults.directory.closeReleasedHandle && accountResults.directory.closeFailureVisible);
+assert.equal(accountResults.directory.accountStateAfterCloseFailure,'error');
+assert(accountResults['revoke-failure']?.localLogout && accountResults['revoke-failure'].remoteRevokeUnconfirmed && accountResults['revoke-failure'].warningVisible);
 assert(annex.cropVerified && annex.generationRejected && annex.corruptDataRejected && annex.codedMismatchRejected && annex.surfaceRelease && annex.activityRelease && annex.inputLimitsRejected);
 assert(annex.changedPixels>1000 && annex.visibleWidth===391 && annex.visibleHeight===845);
 writeFileSync(`${directory}/annexb-result.json`,JSON.stringify(annex,null,2));
@@ -113,11 +127,12 @@ writeFileSync(`${directory}/device-result.json`, JSON.stringify(device,null,2));
 copyFileSync('evidence/frame-a.png', `${directory}/frame-a.png`);
 copyFileSync('evidence/frame-b.png', `${directory}/frame-b.png`);
 const blackTime = now();
+const accountTime = now();
 assert.equal(git('rev-parse','HEAD'),head);
 assert.equal(git('status','--porcelain'),'', 'Source drift during validation');
 assert.equal(hash(readFileSync(apk)), apkHash, 'Artifact drift during validation');
 const prefix = head.slice(0,12);
-const ids = {white:`whitebox-${prefix}`,install:`install-${prefix}`,restart:`restart-${prefix}`,black:`blackbox-${prefix}`};
+const ids = {white:`whitebox-${prefix}`,install:`install-${prefix}`,restart:`restart-${prefix}`,black:`blackbox-${prefix}`,account:`account-${prefix}`};
 function persist(path, value) { assert(!existsSync(path), `Refuse to overwrite ${path}`); writeFileSync(path,JSON.stringify(value,null,2)+'\n',{flag:'wx'}); }
 function evidence(id, phase, kind, time, producer, log, surface) {
   const record = {evidence_id:id,issue_id:issueId,experiment_id:`${issueId}-${prefix}`,phase,kind,
@@ -131,13 +146,14 @@ evidence(ids.white,'development_whitebox','gate',whiteTime,whiteProducer,`${dire
 evidence(ids.install,'deployment_install','install',installTime,deviceProducer,`${directory}/install.log`,'deployed_blackbox');
 evidence(ids.restart,'deployment_restart','restart',restartTime,deviceProducer,`${directory}/restart.log`,'deployed_blackbox');
 evidence(ids.black,'deployed_blackbox','sample_replay',blackTime,deviceProducer,`${directory}/blackbox.log`,'deployed_blackbox');
+evidence(ids.account,'deployed_blackbox','sample_replay',accountTime,deviceProducer,`${directory}/account-blackbox.log`,'deployed_blackbox');
 persist(candidatePath,{fix_candidate_id:`candidate-${prefix}`,issue_id:issueId,module_id:moduleId,
   worktree_id:git('rev-parse','--show-toplevel'),base_commit:base,head_commit:head,tree_hash:tree,
   diff_hash:hash(command('git',['diff','--binary',base,head])),design_id:'docs/android-probe.md',owner:identity,
   scope_hash:scopeHash,changed_paths:paths,verification_evidence_ids:Object.values(ids),created_at:candidateTime});
 persist(validationPath,{validation_id:`validation-${prefix}`,issue_id:issueId,module_id:moduleId,
   fix_candidate_id:`candidate-${prefix}`,candidate_commit:head,candidate_tree_hash:tree,artifact_hash:artifactHash,
-  whitebox_producer:whiteProducer,whitebox_evidence_ids:[ids.white],blackbox_evidence_ids:[ids.black],
+  whitebox_producer:whiteProducer,whitebox_evidence_ids:[ids.white],blackbox_evidence_ids:[ids.black,ids.account],
   deployment:{environment_id:environment,entrypoint,producer:deviceProducer,install_receipt_id:ids.install,restart_receipt_id:ids.restart,observed_at:now()},
   source_unchanged:true,result:'pass',created_at:now()});
 command('appsdk',['verify','--review-admission','--module',moduleId],`${directory}/admission.log`);

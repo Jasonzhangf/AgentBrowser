@@ -4,6 +4,8 @@ use std::{collections::{HashMap,VecDeque}, sync::{Arc, Mutex, OnceLock}, time::D
 use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Failure, Input, Pairing, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
 use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
 
+mod account;
+
 struct Session {
     // Retain the connector: dropping it fences its Connection.
     _connector: Connector,
@@ -18,7 +20,7 @@ static SESSIONS: OnceLock<Mutex<Registry>> = OnceLock::new();
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 type Result<T> = std::result::Result<T, String>;
 
-fn runtime() -> Result<&'static tokio::runtime::Runtime> {
+pub(crate) fn runtime() -> Result<&'static tokio::runtime::Runtime> {
     if let Some(runtime) = RUNTIME.get() { return Ok(runtime); }
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().map_err(error)?;
     // Concurrent first callers may construct an unused runtime; no sessions have
@@ -26,13 +28,13 @@ fn runtime() -> Result<&'static tokio::runtime::Runtime> {
     let _ = RUNTIME.set(runtime);
     Ok(RUNTIME.get().unwrap())
 }
-fn error(value: impl std::fmt::Display) -> String { value.to_string() }
+pub(crate) fn error(value: impl std::fmt::Display) -> String { value.to_string() }
 fn registry() -> &'static Mutex<Registry> { SESSIONS.get_or_init(Default::default) }
 fn session(handle: jlong) -> Result<Arc<Mutex<Session>>> {
     if handle <= 0 { return Err("Invalid native connection handle".into()); }
     registry().lock().map_err(error)?.sessions.get(&(handle as u64)).cloned().ok_or("Closed native connection handle".into())
 }
-fn fail(env: &mut JNIEnv, message: String) {
+pub(crate) fn fail(env: &mut JNIEnv, message: String) {
     // Preserve a pending JVM exception (for example allocation failure).
     if !env.exception_check().unwrap_or(true) { let _ = env.throw_new("java/lang/IllegalStateException", message); }
 }
