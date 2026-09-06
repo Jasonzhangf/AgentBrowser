@@ -41,7 +41,7 @@ Build the app bundle with the checked-out Browser ABI owner and this worktree's
 Cargo target:
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-form/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \
   scripts/build-macos.sh build
 ```
 
@@ -51,17 +51,35 @@ not install a system app or restart a daemon; direct bundle launch is the
 module's local entrypoint.
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-form/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \
   scripts/build-macos.sh run --pairing-dir /private/path/to/pairing
 ```
 
 ## Loopback verification
 
 Use the existing local `device_fixture` only to supply an isolated Host,
-endpoint and ephemeral certificates. Run it on `127.0.0.1` with binaries
-already validated by the Obscura owner, pass its printed fixture directory to
-`--pairing-dir`, and close that fixture through its own `quit` stdin command.
-Do not use a shared Host, Android device, or shared Cargo target.
+endpoint and ephemeral certificates. Build the fixture in this worktree and
+run it on `127.0.0.1` with Obscura binaries already validated by the Obscura
+owner:
+
+```sh
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \
+  cargo build --release --locked -p agentbrowser-android --example device_fixture \
+  --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\""
+OBSCURA_BIN_DIR=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation/target/release \
+OBSCURA_ENDPOINT_BIND_IP=127.0.0.1 \
+  target/release/examples/device_fixture
+```
+
+Pass its printed fixture directory to `--pairing-dir`, and close that fixture
+through its own `quit` stdin command. Do not use `m1-form/target`, a shared
+Host, Android device, or shared Cargo target.
+
+The bridge maps the shared UI `navigate` command directly to
+`Connection::navigate`; it does not create a second Host/navigation owner.
+Navigation returns the updated typed `SessionStatus`, and input remains
+blocked until a frame with the new document revision is displayed and
+acknowledged.
 
 The minimum Mac evidence records separately:
 
@@ -71,10 +89,13 @@ The minimum Mac evidence records separately:
 3. Loopback `connect` enters observe mode, receives a real Annex B access
    unit, decodes it through VideoToolbox, paints a frame, and acknowledges the
    ticket.
-4. After takeover, a typed click/text/scroll command uses the acknowledged
-   frame's document/viewport revisions; stale or unacknowledged input is
-   rejected.
-5. Disconnect releases the native connection without stopping the Host.
+4. After takeover, `navigate` uses `Connection::navigate`, then a typed
+   click/text/scroll command uses the newly acknowledged frame's
+   document/viewport revisions; stale or unacknowledged input is rejected.
+5. Chinese composition is committed as one input operation; composition
+   cancellation does not send partial text.
+6. Disconnect releases the native connection without stopping the Host, and a
+   fresh connect creates a new generation instead of replaying old input.
 
 This is a Mac/client vertical slice. It is not Android+Mac same-session proof,
 Relay proof, route-selection proof, package installation proof, or full M1
