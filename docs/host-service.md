@@ -141,6 +141,25 @@ consumable runtime bundle under `generated/modules/host-service/lib/` containing
 `host-service` and `host_service.py`. The Obscura binary remains an external
 engine artifact owned by Obscura and is not copied into this bundle.
 
+For formal installed-bundle admission on macOS, commit the complete candidate
+on its owner branch, select the validated AppSDK executable on `PATH`, and run:
+
+```sh
+OBSCURA_HOST_BINARY=/absolute/path/to/validated/obscura-host \
+  node scripts/host-service/validate-admission.mjs
+```
+
+This adapter compiles the module, copies and hashes the emitted runtime bundle,
+installs a unique private service configuration, and bootstraps the user's real
+launchd domain with that bundle. It attaches through the real Unix entrypoint,
+waits for the observer socket to close, checks that the daemon Session survives,
+then restarts the exact service and waits for a new PID and Session before
+reattaching. It boots out only its unique label and stops its owned runtime;
+configuration and raw receipts remain under the recorded evidence paths.
+This private acceptance installation does not replace the user's default Host
+service or establish full M1 acceptance. Existing admission records are preserved:
+the adapter refuses to overwrite a candidate/validation graph.
+
 ## Ownership and non-goals
 
 This module may change `scripts/host-service/**`, this document, and its
