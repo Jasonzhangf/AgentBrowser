@@ -54,6 +54,22 @@ export function snapshot(value: unknown): HostSnapshot {
 }
 
 export type Channel = 'control' | 'media';
+
+export const TUNNEL_REJECT_REASONS = ['UNKNOWN_PEER', 'CAPACITY'] as const;
+export type TunnelRejectReason = typeof TUNNEL_REJECT_REASONS[number];
+
+export function tunnelRejectReason(value: unknown): TunnelRejectReason {
+  const reason = text(value, 'reason', 64);
+  if (!TUNNEL_REJECT_REASONS.includes(reason as TunnelRejectReason)) {
+    throw new RelayError('INVALID_REJECT_REASON', 'Invalid tunnel rejection reason');
+  }
+  return reason as TunnelRejectReason;
+}
+
+export function hostRejectedTunnelReason(reason: TunnelRejectReason): `HOST_REJECTED_${TunnelRejectReason}` {
+  return `HOST_REJECTED_${reason}`;
+}
+
 export interface TunnelOffer {
   type: 'tunnel.offer';
   version: 2;
@@ -64,6 +80,18 @@ export interface TunnelOffer {
   side: 0 | 1;
   expiresAt: number;
   channels: Record<Channel, {path: string; ticket: string}>;
+}
+
+export interface TunnelReject {
+  type: 'tunnel.reject';
+  tunnelId: string;
+  reason: TunnelRejectReason;
+}
+
+export interface TunnelClosed {
+  type: 'tunnel.closed';
+  tunnelId: string;
+  reason: string;
 }
 
 /** Signature binds this connection challenge, endpoint, device and bearer digest. */

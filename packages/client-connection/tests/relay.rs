@@ -2,8 +2,8 @@ use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 use agentbrowser_connection::relay::{
     DeviceIdentity, HostSnapshot, RelayChannelKind, RelayClient, RelayConfig, RelayEndpoint,
-    RelayFailure, RelayNetwork, RelayPeerBinding, RelaySession, RelayTlsClientIdentity,
-    RelayTlsServerIdentity,
+    RelayFailure, RelayNetwork, RelayPeerBinding, RelayRejectReason, RelaySession,
+    RelayTlsClientIdentity, RelayTlsServerIdentity,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -374,6 +374,155 @@ async fn host_role_registers_publishes_and_consumes_side_one_offer() {
             .await
             .expect("Host media receive"),
         b"client-media"
+    );
+
+    drop(client_tunnel);
+    drop(client_connection);
+    drop(host_tunnel);
+    drop(host_connection);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds() {
+    let fixture = Fixture::start().await;
+    let ca_pem = std::fs::read(&fixture.info.ca_path).expect("fixture CA");
+    let mut pem = ca_pem.as_slice();
+    let ca_der = rustls_pemfile::certs(&mut pem)
+        .next()
+        .expect("fixture certificate")
+        .expect("parse fixture certificate")
+        .to_vec();
+    let config = RelayConfig::new(&fixture.info.origin, ca_der).expect("TLS config");
+    let alice = RelayClient::login(
+        config,
+        &fixture.info.alice.username,
+        &fixture.info.alice.password,
+    )
+    .await
+    .expect("Alice login");
+
+    let host_device = alice
+        .register_device("relay-reject-host", DeviceIdentity::generate())
+        .await
+        .expect("Host device registration");
+    let host = alice
+        .register_host(&host_device)
+        .await
+        .expect("Host registration");
+    let host_connection = alice
+        .connector()
+        .connect_host(&host)
+        .await
+        .expect("Host control connection");
+    host_connection
+        .publish(HostSnapshot {
+            incarnation: "reject-host-incarnation".into(),
+            revision: 1,
+            endpoints: vec![],
+            sessions: vec![RelaySession {
+                id: "reject-session".into(),
+            }],
+        })
+        .await
+        .expect("publish Host snapshot");
+
+    let client_device = alice
+        .register_device("relay-reject-client", DeviceIdentity::generate())
+        .await
+        .expect("client device registration");
+    let client_connection = alice
+        .connector()
+        .connect(&client_device)
+        .await
+        .expect("client control connection");
+    let host_id = host.id().to_owned();
+
+    let first_client_task = tokio::spawn(async move {
+        client_connection
+            .open_tunnel(&host_id, "reject-session")
+            .await
+    });
+    let first_offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives reject offer");
+    assert_eq!(first_offer.peer_device_id(), client_device.id());
+    host_connection
+        .reject_offer(first_offer, RelayRejectReason::UnknownPeer)
+        .await
+        .expect("Relay acknowledges unknown-peer rejection");
+    let first_result = first_client_task.await.expect("client rejection task");
+    match first_result {
+        Err(RelayFailure::Remote {
+            code, status: 409, ..
+        }) => {
+            assert_eq!(code, "HOST_REJECTED_UNKNOWN_PEER")
+        }
+        Err(error) => panic!("unexpected client rejection error: {error}"),
+        Ok(_) => panic!("client tunnel unexpectedly succeeded after rejection"),
+    }
+
+    let client_connection = alice
+        .connector()
+        .connect(&client_device)
+        .await
+        .expect("second client control connection");
+    let host_id_for_second = host.id().to_owned();
+    let second_client_task = tokio::spawn(async move {
+        client_connection
+            .open_tunnel(&host_id_for_second, "reject-session")
+            .await
+    });
+    let second_offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives capacity offer");
+    host_connection
+        .reject_offer(second_offer, RelayRejectReason::Capacity)
+        .await
+        .expect("Relay acknowledges capacity rejection");
+    assert!(matches!(
+        second_client_task.await.expect("client capacity task"),
+        Err(RelayFailure::Remote { ref code, status: 409, .. })
+            if code == "HOST_REJECTED_CAPACITY"
+    ));
+
+    let client_connection = alice
+        .connector()
+        .connect(&client_device)
+        .await
+        .expect("third client control connection");
+    let host_id_for_third = host.id().to_owned();
+    let third_client_task = tokio::spawn(async move {
+        let tunnel = client_connection
+            .open_tunnel(&host_id_for_third, "reject-session")
+            .await;
+        (client_connection, tunnel)
+    });
+    let third_offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives legal offer");
+    let host_tunnel = host_connection
+        .accept_offer(third_offer)
+        .await
+        .expect("Host accepts later tunnel");
+    let (client_connection, client_result) =
+        third_client_task.await.expect("client legal tunnel task");
+    let client_tunnel = client_result.expect("client accepts later tunnel");
+    host_tunnel
+        .control()
+        .send(b"rejection-isolated")
+        .await
+        .expect("Host sends on later tunnel");
+    assert_eq!(
+        client_tunnel
+            .control()
+            .recv()
+            .await
+            .expect("client receives later tunnel"),
+        b"rejection-isolated"
     );
 
     drop(client_tunnel);

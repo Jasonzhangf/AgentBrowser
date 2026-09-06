@@ -5,7 +5,7 @@
 //! semantics stay in their owning protocol/Host adapters.
 
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex as StdMutex,
@@ -56,6 +56,7 @@ const MAX_WIRE_MESSAGE: usize = 1024 * 1024;
 const MAX_CONTROL_PAYLOAD: usize = 64 * 1024;
 const MAX_MEDIA_PAYLOAD: usize = 1024 * 1024;
 const MAX_ID: usize = 128;
+const MAX_PENDING_OFFERS: usize = 128;
 const RELAY_PROTOCOL_VERSION: u64 = 2;
 const CLIENT_CONTROL_PATH: &str = "/v2/control/client";
 const TUNNEL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -93,6 +94,22 @@ pub enum RelayFailure {
     Limit(String),
     #[error("device identity belongs to another relay session")]
     IdentityMismatch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RelayRejectReason {
+    UnknownPeer,
+    Capacity,
+}
+
+impl RelayRejectReason {
+    fn closed_code(self) -> &'static str {
+        match self {
+            Self::UnknownPeer => "HOST_REJECTED_UNKNOWN_PEER",
+            Self::Capacity => "HOST_REJECTED_CAPACITY",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -548,6 +565,7 @@ impl RelayConnector {
             device: device.clone(),
             guard,
             control: Mutex::new(socket),
+            tunnel_open: Mutex::new(()),
         })
     }
 
@@ -580,6 +598,7 @@ impl RelayConnector {
                 sink: Mutex::new(sink),
                 stream: Mutex::new(stream),
             },
+            pending_offers: Mutex::new(VecDeque::new()),
             snapshot: Mutex::new(None),
         })
     }
@@ -629,6 +648,7 @@ pub struct RelayConnection {
     device: RegisteredDevice,
     guard: GenerationGuard,
     control: Mutex<Socket>,
+    tunnel_open: Mutex<()>,
 }
 
 impl RelayConnection {
@@ -641,6 +661,7 @@ impl RelayConnection {
     pub async fn open_tunnel(&self, host_id: &str, session_id: &str) -> Result<RelayTunnel> {
         validate_text(host_id, "host id", MAX_ID)?;
         validate_text(session_id, "session id", MAX_ID)?;
+        let _tunnel_open = self.tunnel_open.lock().await;
         self.guard.check()?;
         let offer = {
             let mut socket = self.control.lock().await;
@@ -675,8 +696,14 @@ impl RelayConnection {
                         break parse_tunnel_offer(&text, 0, host_id, Some(session_id))?
                     }
                     "tunnel.closed" => {
-                        let _: TunnelClosed = serde_json::from_str(&text)
-                            .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                        let closed = parse_tunnel_closed(&text)?;
+                        if is_host_rejection(&closed.reason) {
+                            return Err(RelayFailure::Remote {
+                                status: 409,
+                                code: closed.reason,
+                                message: "Host rejected Relay tunnel offer".into(),
+                            });
+                        }
                     }
                     "error" => return Err(parse_remote_error(&text, 400)?),
                     other => {
@@ -704,7 +731,49 @@ impl RelayConnection {
             offer.channels.media,
             0,
         );
-        let (control, media) = tokio::try_join!(control, media)?;
+        let mut channels = Box::pin(async move { tokio::try_join!(control, media) });
+        let (control, media) = loop {
+            self.guard.check()?;
+            tokio::select! {
+                biased;
+                message = async {
+                    let mut socket = self.control.lock().await;
+                    tokio::time::timeout(TUNNEL_TIMEOUT, next_message(&mut socket))
+                        .await
+                        .map_err(|_| RelayFailure::Transport("Relay control event timed out".into()))?
+                } => {
+                    let message = message?;
+                    let Message::Text(text) = message else {
+                        return Err(RelayFailure::Protocol("Relay control requires JSON messages".into()));
+                    };
+                    match message_type(&text)?.as_str() {
+                        "directory.snapshot" => {
+                            let directory = serde_json::from_str::<DirectoryEvent>(&text)
+                                .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                            let _ = parse_directory(DirectoryResponse { hosts: directory.hosts })?;
+                        }
+                        "tunnel.closed" => {
+                            let closed = parse_tunnel_closed(&text)?;
+                            if closed.tunnel_id == tunnel_id {
+                                self.guard.check()?;
+                                return Err(RelayFailure::Remote {
+                                    status: 409,
+                                    code: closed.reason,
+                                    message: "Relay tunnel closed before channels opened".into(),
+                                });
+                            }
+                        }
+                        "error" => return Err(parse_remote_error(&text, 400)?),
+                        other => {
+                            return Err(RelayFailure::Protocol(format!(
+                                "unexpected Relay control event: {other}"
+                            )))
+                        }
+                    }
+                }
+                result = &mut channels => break result?,
+            }
+        };
         Ok(RelayTunnel {
             tunnel_id,
             host_id: offer.host_id,
@@ -752,6 +821,7 @@ pub struct RelayHostConnection {
     device: RegisteredDevice,
     guard: GenerationGuard,
     control: RelayControlSocket,
+    pending_offers: Mutex<VecDeque<RelayTunnelOffer>>,
     snapshot: Mutex<Option<HostSnapshot>>,
 }
 
@@ -784,8 +854,28 @@ impl RelayHostConnection {
         Ok(())
     }
 
+    async fn parse_offer(&self, text: &str) -> Result<RelayTunnelOffer> {
+        let mut offer = parse_tunnel_offer(text, 1, &self.host_id, None)?;
+        offer.generation = self.generation;
+        let snapshot = self.snapshot.lock().await;
+        if snapshot.as_ref().is_none_or(|value| {
+            !value
+                .sessions
+                .iter()
+                .any(|session| session.id == offer.session_id)
+        }) {
+            return Err(RelayFailure::Protocol(
+                "Relay offered an unpublished Host session".into(),
+            ));
+        }
+        Ok(offer)
+    }
+
     pub async fn next_offer(&self) -> Result<RelayTunnelOffer> {
         self.guard.check()?;
+        if let Some(offer) = self.pending_offers.lock().await.pop_front() {
+            return Ok(offer);
+        }
         loop {
             let message = {
                 let mut stream = self.control.stream.lock().await;
@@ -822,23 +912,10 @@ impl RelayHostConnection {
                     })?;
                 }
                 "tunnel.offer" => {
-                    let offer = parse_tunnel_offer(&text, 1, &self.host_id, None)?;
-                    let snapshot = self.snapshot.lock().await;
-                    if snapshot.as_ref().is_none_or(|value| {
-                        !value
-                            .sessions
-                            .iter()
-                            .any(|session| session.id == offer.session_id)
-                    }) {
-                        return Err(RelayFailure::Protocol(
-                            "Relay offered an unpublished Host session".into(),
-                        ));
-                    }
-                    return Ok(offer);
+                    return self.parse_offer(&text).await;
                 }
                 "tunnel.closed" => {
-                    let _: TunnelClosed = serde_json::from_str(&text)
-                        .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                    let _ = parse_tunnel_closed(&text)?;
                 }
                 "error" => return Err(parse_remote_error(&text, 400)?),
                 other => {
@@ -848,6 +925,106 @@ impl RelayHostConnection {
                 }
             }
         }
+    }
+
+    /// Reject one pending offer and wait for Relay's matching close receipt.
+    /// The offer is consumed even when Relay rejects the request.
+    pub async fn reject_offer(
+        &self,
+        offer: RelayTunnelOffer,
+        reason: RelayRejectReason,
+    ) -> Result<()> {
+        self.guard.check()?;
+        if offer.generation != self.generation || offer.host_id != self.host_id {
+            return Err(RelayFailure::IdentityMismatch);
+        }
+        let expected = reason.closed_code();
+        {
+            let mut sink = self.control.sink.lock().await;
+            send_json_sink(
+                &mut sink,
+                &TunnelRejectRequest {
+                    kind: "tunnel.reject",
+                    tunnel_id: &offer.tunnel_id,
+                    reason,
+                },
+            )
+            .await?;
+        }
+        self.guard.check()?;
+        tokio::time::timeout(TUNNEL_TIMEOUT, async {
+            loop {
+                self.guard.check()?;
+                let message = {
+                    let mut stream = self.control.stream.lock().await;
+                    stream
+                        .next()
+                        .await
+                        .ok_or(RelayFailure::Closed)?
+                        .map_err(|error| RelayFailure::Transport(error.to_string()))?
+                };
+                let text = match message {
+                    Message::Ping(bytes) => {
+                        let mut sink = self.control.sink.lock().await;
+                        sink.send(Message::Pong(bytes))
+                            .await
+                            .map_err(|error| RelayFailure::Transport(error.to_string()))?;
+                        continue;
+                    }
+                    Message::Pong(_) => continue,
+                    Message::Close(_) => return Err(RelayFailure::Closed),
+                    Message::Binary(_) => {
+                        return Err(RelayFailure::Protocol(
+                            "Relay host control requires JSON messages".into(),
+                        ))
+                    }
+                    Message::Text(text) => text,
+                    _ => continue,
+                };
+                match message_type(&text)?.as_str() {
+                    "directory.snapshot" => {
+                        let directory = serde_json::from_str::<DirectoryEvent>(&text)
+                            .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                        let _ = parse_directory(DirectoryResponse {
+                            hosts: directory.hosts,
+                        })?;
+                    }
+                    "tunnel.offer" => {
+                        let next = self.parse_offer(&text).await?;
+                        let mut pending = self.pending_offers.lock().await;
+                        if pending.len() >= MAX_PENDING_OFFERS {
+                            return Err(RelayFailure::Limit(
+                                "pending Relay offer queue exceeded".into(),
+                            ));
+                        }
+                        pending.push_back(next);
+                    }
+                    "tunnel.closed" => {
+                        let closed = parse_tunnel_closed(&text)?;
+                        if closed.tunnel_id != offer.tunnel_id {
+                            continue;
+                        }
+                        self.guard.check()?;
+                        if closed.reason == expected {
+                            return Ok(());
+                        }
+                        return Err(RelayFailure::Remote {
+                            status: 409,
+                            code: closed.reason,
+                            message: "Relay tunnel closed before requested rejection".into(),
+                        });
+                    }
+                    "error" => return Err(parse_remote_error(&text, 400)?),
+                    other => {
+                        return Err(RelayFailure::Protocol(format!(
+                            "unexpected Relay host control event: {other}"
+                        )))
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|_| RelayFailure::Transport("tunnel rejection timed out".into()))?
     }
 
     pub async fn accept_offer(&self, offer: RelayTunnelOffer) -> Result<RelayTunnel> {
@@ -1870,6 +2047,20 @@ fn parse_remote_error(text: &str, status: u16) -> Result<RelayFailure> {
     })
 }
 
+fn parse_tunnel_closed(text: &str) -> Result<TunnelClosed> {
+    let closed: TunnelClosed = parse_typed(text, "tunnel.closed")?;
+    validate_text(&closed.tunnel_id, "tunnel id", MAX_ID)?;
+    validate_text(&closed.reason, "tunnel close reason", MAX_ID)?;
+    Ok(closed)
+}
+
+fn is_host_rejection(reason: &str) -> bool {
+    matches!(
+        reason,
+        "HOST_REJECTED_UNKNOWN_PEER" | "HOST_REJECTED_CAPACITY"
+    )
+}
+
 fn parse_tunnel_offer(
     text: &str,
     expected_side: u8,
@@ -1921,6 +2112,7 @@ fn parse_tunnel_offer(
         host_id: offer.host_id,
         session_id: offer.session_id,
         peer_device_id: offer.peer_device_id,
+        generation: 0,
         channels: offer.channels,
     })
 }
@@ -2210,6 +2402,15 @@ struct TunnelOpenRequest<'a> {
     session_id: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TunnelRejectRequest<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    tunnel_id: &'a str,
+    reason: RelayRejectReason,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireError {
@@ -2317,9 +2518,9 @@ struct TunnelClosed {
     #[serde(rename = "type")]
     _kind: String,
     #[serde(rename = "tunnelId")]
-    _tunnel_id: String,
+    tunnel_id: String,
     #[serde(rename = "reason")]
-    _reason: String,
+    reason: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -2363,6 +2564,7 @@ pub struct RelayTunnelOffer {
     host_id: String,
     session_id: String,
     peer_device_id: String,
+    generation: u64,
     channels: TunnelChannels,
 }
 

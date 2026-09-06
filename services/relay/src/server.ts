@@ -2,12 +2,12 @@ import {createServer, type ServerOptions} from 'node:https';
 import type {IncomingMessage, ServerResponse} from 'node:http';
 import {randomBytes, randomUUID, verify} from 'node:crypto';
 import {WebSocket, WebSocketServer} from 'ws';
-import {RELAY_PROTOCOL_VERSION, RelayError, authTranscript, object, snapshot, text, type HostSnapshot, type Channel, type TunnelOffer} from '../../../protocol/relay/index.js';
+import {RELAY_PROTOCOL_VERSION, RelayError, authTranscript, hostRejectedTunnelReason, object, snapshot, text, tunnelRejectReason, type HostSnapshot, type Channel, type TunnelOffer} from '../../../protocol/relay/index.js';
 import {RelayStore, digest, type Account, type Device} from './store.js';
 
 interface Peer {ws: WebSocket; account: Account; device: Device; token: string; hostId?: string; snapshot?: HostSnapshot; publishedAt?: number; expired?: boolean}
 interface Ticket {tunnel: Tunnel; side: 0 | 1; channel: Channel; expiresAt: number}
-interface Tunnel {id: string; hostId: string; sessionId: string; peers: [Peer, Peer]; sockets: Record<Channel, [WebSocket?, WebSocket?]>; expiresAt: number; tickets: Set<string>}
+interface Tunnel {id: string; hostId: string; sessionId: string; peers: [Peer, Peer]; sockets: Record<Channel, [WebSocket?, WebSocket?]>; expiresAt: number; tickets: Set<string>; phase: 'pending' | 'active'}
 
 export interface RelayOptions {
   store: RelayStore;
@@ -67,7 +67,7 @@ export function createRelayServer(options: RelayOptions) {
     if (!host.snapshot || host.expired || store.now() - host.publishedAt! >= directoryTtl || !host.snapshot.sessions.some(session => session.id === sessionId)) {
       throw new RelayError('SESSION_UNAVAILABLE', 'Host session is not published', 404);
     }
-    const tunnel: Tunnel = {id: randomUUID(), hostId: host.hostId!, sessionId, peers: [client, host], sockets: {control: [], media: []}, expiresAt: store.now() + ticketTtl, tickets: new Set()};
+    const tunnel: Tunnel = {id: randomUUID(), hostId: host.hostId!, sessionId, peers: [client, host], sockets: {control: [], media: []}, expiresAt: store.now() + ticketTtl, tickets: new Set(), phase: 'pending'};
     tunnels.set(tunnel.id, tunnel);
     for (const side of [0, 1] as const) {
       const channels = {} as TunnelOffer['channels'];
@@ -141,11 +141,20 @@ export function createRelayServer(options: RelayOptions) {
         if (!ticket || ticket.expiresAt <= store.now() || path !== `/v2/tunnel/${ticket.tunnel.id}/${ticket.channel}/${ticket.side}` || !ticket.tunnel.peers.every(validPeer)) {
           throw new RelayError('UNAUTHORIZED', 'Invalid tunnel ticket', 401);
         }
-        tickets.delete(key); ticket.tunnel.tickets.delete(key);
+        const tunnel = ticket.tunnel;
+        tickets.delete(key); tunnel.tickets.delete(key);
+        // Consuming any channel ticket starts acceptance; reject_offer is pending-only.
+        tunnel.phase = 'active';
         wss.handleUpgrade(req, socket, head, ws => {
-          const {tunnel, channel, side} = ticket;
+          if (tunnels.get(tunnel.id) !== tunnel) {
+            ws.close(1000, 'TUNNEL_CLOSED');
+            return;
+          }
+          const {channel, side} = ticket;
           const pair = tunnel.sockets[channel]; pair[side] = ws;
-          if (pair[0] && pair[1]) for (const endpoint of pair) send(endpoint!, {type: 'channel.ready', tunnelId: tunnel.id, channel});
+          if (pair[0] && pair[1]) {
+            for (const endpoint of pair) send(endpoint!, {type: 'channel.ready', tunnelId: tunnel.id, channel});
+          }
           ws.on('message', (raw, binary) => {
             const other = pair[side === 0 ? 1 : 0];
             try {
@@ -189,7 +198,7 @@ export function createRelayServer(options: RelayOptions) {
               clearTimeout(authTimeout); send(ws, {type: 'auth.ready', deviceId: device.id}); publishDirectory(account.id); return;
             }
             validPeer(peer);
-            const data = object(parsed, ['type', 'snapshot', 'peerDeviceId', 'data', 'hostId', 'sessionId']);
+            const data = object(parsed, ['type', 'snapshot', 'peerDeviceId', 'data', 'hostId', 'sessionId', 'tunnelId', 'reason']);
             switch (data.type) {
               case 'host.publish': {
                 object(parsed, ['type', 'snapshot']);
@@ -212,6 +221,24 @@ export function createRelayServer(options: RelayOptions) {
                 const host = hosts.get(text(data.hostId, 'hostId'));
                 if (!host || host.account.id !== peer.account.id || !validPeer(host)) throw new RelayError('HOST_UNAVAILABLE', 'Host unavailable', 404);
                 offerTunnel(peer, host, text(data.sessionId, 'sessionId')); break;
+              }
+              case 'tunnel.reject': {
+                object(parsed, ['type', 'tunnelId', 'reason']);
+                if (!peer.hostId) throw new RelayError('FORBIDDEN', 'Host required', 403);
+                const tunnelId = text(data.tunnelId, 'tunnel id');
+                const reason = tunnelRejectReason(data.reason);
+                const tunnel = tunnels.get(tunnelId);
+                if (!tunnel) throw new RelayError('TUNNEL_NOT_PENDING', 'Tunnel offer is no longer pending', 409);
+                if (tunnel.hostId !== peer.hostId || tunnel.peers[1] !== peer || tunnel.peers[1].device.id !== peer.device.id) {
+                  throw new RelayError('FORBIDDEN', 'Host does not own tunnel', 403);
+                }
+                if (tunnel.phase !== 'pending') throw new RelayError('TUNNEL_NOT_PENDING', 'Tunnel acceptance already started', 409);
+                if (tunnel.expiresAt <= store.now()) {
+                  closeTunnel(tunnel, 'PAIRING_TIMEOUT');
+                  break;
+                }
+                closeTunnel(tunnel, hostRejectedTunnelReason(reason));
+                break;
               }
               default: throw new RelayError('UNKNOWN_MESSAGE', 'Unknown control message');
             }

@@ -187,6 +187,11 @@ test('compiled CLI provisions account and serves real HTTPS entrypoint', {timeou
       const bytes = Buffer.from(`artifact-${name}`);
       pair[0]!.ws.send(bytes); assert.deepEqual(await pair[1]!.take('binary'), bytes);
     }
+    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'artifact-session'}));
+    const rejected = [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
+    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejected[1]!.tunnelId, reason: 'CAPACITY'}));
+    assert.equal((await client.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
+    assert.equal((await host.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
     assert.equal((await api(address, '/v2/token', 'DELETE', token)).status, 200);
     assert.equal((await client.take('tunnel.closed')).reason, 'UNAUTHORIZED');
   } finally {
@@ -241,5 +246,86 @@ test('tunnel tickets bind exact paths, expire, reject invalid frames and close o
     await api(base, '/v2/token', 'DELETE', token);
     await Promise.all(closures);
     assert.equal((await client.take('tunnel.closed')).reason, 'UNAUTHORIZED');
+  } finally { await relay.close(); store.close(); }
+});
+
+test('Host rejection is authenticated, typed, pending-only and tunnel-isolated', {timeout: 20000}, async () => {
+  const store = new RelayStore(':memory:');
+  const relay = createRelayServer({store, tls: {cert, key}});
+  const base = await relay.listen();
+  try {
+    await store.createAccount('alice', 'alice password long');
+    const token = (await store.login('alice', 'alice password long')).token;
+    const hostDevice = await enroll(base, token, 'host');
+    const otherHostDevice = await enroll(base, token, 'other-host');
+    const clientDevice = await enroll(base, token, 'client');
+    const hostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: hostDevice.id})).body.id;
+    const otherHostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: otherHostDevice.id})).body.id;
+    const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice);
+    const otherHost = await connect(base, `/v2/control/host/${otherHostId}`, otherHostDevice);
+    const client = await connect(base, '/v2/control/client', clientDevice);
+    await Promise.all([host.take('auth.ready'), otherHost.take('auth.ready'), client.take('auth.ready')]);
+    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'reject-host', revision: 1, endpoints: [], sessions: [{id: 'reject-session'}]}}));
+    while (!(await client.take('directory.snapshot')).hosts.some((item: {hostId: string}) => item.hostId === hostId)) {}
+
+    async function offer() {
+      client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'reject-session'}));
+      return [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
+    }
+    const rejectedUnknownPeer = await offer();
+    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejectedUnknownPeer[1]!.tunnelId, reason: 'UNKNOWN_PEER'}));
+    assert.equal((await client.take('tunnel.closed')).reason, 'HOST_REJECTED_UNKNOWN_PEER');
+    assert.equal((await host.take('tunnel.closed')).reason, 'HOST_REJECTED_UNKNOWN_PEER');
+
+    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: 'missing-tunnel', reason: 'CAPACITY'}));
+    assert.equal((await host.take('error')).code, 'TUNNEL_NOT_PENDING');
+
+    const rejectedCapacity = await offer();
+    otherHost.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejectedCapacity[1]!.tunnelId, reason: 'CAPACITY'}));
+    assert.equal((await otherHost.take('error')).code, 'FORBIDDEN');
+    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejectedCapacity[1]!.tunnelId, reason: 'CAPACITY'}));
+    assert.equal((await client.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
+    assert.equal((await host.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
+
+    const active = await offer();
+    function channel(offer: TunnelOffer, name: 'control' | 'media') {
+      return new Inbox(new WebSocket(base.replace('https:', 'wss:') + offer.channels[name].path, {ca: cert, headers: {authorization: `Bearer ${offer.channels[name].ticket}`}}));
+    }
+    const control = active.map(offer => channel(offer, 'control'));
+    const media = active.map(offer => channel(offer, 'media'));
+    await Promise.all([...control, ...media].map(item => item.take('channel.ready')));
+    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: active[1]!.tunnelId, reason: 'UNKNOWN_PEER'}));
+    assert.equal((await host.take('error')).code, 'TUNNEL_NOT_PENDING');
+    const payload = Buffer.from('established tunnel survives rejected request');
+    control[0]!.ws.send(payload);
+    assert.deepEqual(await control[1]!.take('binary'), payload);
+    control[0]!.ws.close();
+    await client.take('tunnel.closed');
+    await host.take('tunnel.closed');
+  } finally { await relay.close(); store.close(); }
+});
+
+test('expired tunnel rejection closes only expired pending tunnel', {timeout: 10000}, async () => {
+  let now = 0;
+  const store = new RelayStore(':memory:', {now: () => now});
+  const relay = createRelayServer({store, tls: {cert, key}, ticketTtlMs: 100, sweepMs: 60_000});
+  const base = await relay.listen();
+  try {
+    await store.createAccount('alice', 'alice password long');
+    const token = (await store.login('alice', 'alice password long')).token;
+    const hostDevice = await enroll(base, token, 'host');
+    const clientDevice = await enroll(base, token, 'client');
+    const hostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: hostDevice.id})).body.id;
+    const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice);
+    const client = await connect(base, '/v2/control/client', clientDevice);
+    await Promise.all([host.take('auth.ready'), client.take('auth.ready')]);
+    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'expired-host', revision: 1, endpoints: [], sessions: [{id: 'expired-session'}]}}));
+    while (!(await client.take('directory.snapshot')).hosts.some((item: {hostId: string}) => item.hostId === hostId)) {}
+    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'expired-session'}));
+    const offers = [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
+    now = 101;
+    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: offers[1]!.tunnelId, reason: 'CAPACITY'}));
+    assert.equal((await client.take('tunnel.closed')).reason, 'PAIRING_TIMEOUT');
+    assert.equal((await host.take('tunnel.closed')).reason, 'PAIRING_TIMEOUT');
   } finally { await relay.close(); store.close(); }
 });

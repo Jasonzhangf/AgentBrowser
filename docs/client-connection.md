@@ -110,8 +110,11 @@ validate that protocol, not a second browser protocol.
 directory and revokes its token. `RelayConnector` supports both client and Host
 control roles. A Host registers a Host object, publishes a complete
 session-bound `HostSnapshot`, receives side `1` offers and accepts the same
-control/media tunnel pair. A client opens a tunnel with an explicit
-`hostId`+`sessionId`; an offer that does not match either identity is rejected.
+control/media tunnel pair. A Host can instead consume an offer with
+`reject_offer(offer, RelayRejectReason::{UnknownPeer, Capacity})`; the method
+waits for Relay's matching `tunnel.closed` receipt before reporting success. A
+client opens a tunnel with an explicit `hostId`+`sessionId`; an offer that does
+not match either identity is rejected.
 The generation source is retained by each connection, so a connection made from
 a temporary connector still owns its fencing lifetime; a newer generation,
 revocation or connection drop closes old channels.
@@ -193,7 +196,10 @@ public `Connection` proof. `relay-connection-acceptance` is compiled from
 `agentbrowser-relay-host`, and real Obscura endpoint. It covers directory
 publication, wrong session and peer binding rejection, `Ready → Observe
 Attach → media`, H.264 delivery, observe/takeover/input/release, and
-generation-fenced reconnect. Admission executes both exact compiled Relay
+generation-fenced reconnect. The native Relay test also proves Host rejection
+receipts for both reasons, requester typed failures, pending/active fencing,
+foreign-Host rejection, and a later isolated tunnel. Admission executes both
+exact compiled Relay
 consumers, with the relay-host binary and Obscura binaries supplied as hashed
 external inputs.
 generation-fenced reconnect. The native Relay test also proves Host rejection

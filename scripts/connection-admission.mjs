@@ -42,7 +42,7 @@ assert(!existsSync(candidatePath) && !existsSync(validationPath), 'Preserve prio
 mkdirSync(directory, {recursive: true}); mkdirSync(records, {recursive: true});
 const identity = `${hostname()}/${userInfo().username}/${process.version}`;
 const environment = `${process.platform}/${process.arch}/${identity}`;
-const entrypoint = 'connection-acceptance:real_host_observe_input_and_reconnect,real_host_webrtc_observe_takeover_input_and_reconnect; relay-acceptance:authenticated_relay_directory_tunnel_isolated_and_generation_fenced; relay-connection-acceptance:real_relay_connection_uses_shared_pump_and_reconnects';
+const entrypoint = 'connection-acceptance:real_host_observe_input_and_reconnect,real_host_webrtc_observe_takeover_input_and_reconnect; relay-acceptance:authenticated_relay_directory_tunnel_isolated_and_generation_fenced,host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds; relay-connection-acceptance:real_relay_connection_uses_shared_pump_and_reconnects';
 const whiteProducer = {adapter: 'scripts/connection-admission.mjs:nextest', identity};
 const blackProducer = {adapter: 'scripts/connection-admission.mjs:compiled-consumer', identity};
 run('appsdk', ['compile-module', '--module', moduleId], `${directory}/compile.log`);
@@ -57,10 +57,12 @@ const whiteTime = now();
 const directReplay = run(`${output}/connection-acceptance`, ['--exact', 'real_host_observe_input_and_reconnect', '--nocapture'], `${directory}/blackbox.log`);
 const webrtcReplay = run(`${output}/webrtc-acceptance`, ['--exact', 'real_host_webrtc_observe_takeover_input_and_reconnect', '--nocapture'], `${directory}/webrtc-blackbox.log`);
 const relayReplay = run(`${output}/relay-acceptance`, ['--exact', 'authenticated_relay_directory_tunnel_isolated_and_generation_fenced', '--nocapture'], `${directory}/relay-blackbox.log`);
+const relayRejectReplay = run(`${output}/relay-acceptance`, ['--exact', 'host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds', '--nocapture'], `${directory}/relay-reject-blackbox.log`);
 const relayConnectionReplay = run(`${output}/relay-connection-acceptance`, ['--ignored', '--exact', 'real_relay_connection_uses_shared_pump_and_reconnects', '--nocapture'], `${directory}/relay-connection-blackbox.log`);
 assert.match(directReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Direct consumer must execute its real test');
 assert.match(webrtcReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'WebRTC consumer must execute its real test');
 assert.match(relayReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay consumer must execute its real test');
+assert.match(relayRejectReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay rejection consumer must execute its real test');
 assert.match(relayConnectionReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay Connection consumer must execute its real test');
 const blackTime = now();
 assert.equal(git('rev-parse', 'HEAD'), head);
@@ -76,7 +78,7 @@ function evidence(id, phase, producer, time, log) {
     phase, kind: phase === 'development_whitebox' ? 'gate' : 'sample_replay', source_commit: head,
     artifact_hash: artifact.artifact_hash, execution_surface: phase, environment_id: environment, entrypoint,
     scope: {module_id: moduleId, feature_id: moduleId, entrypoint}, producer, result: 'pass', created_at: time,
-    expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, ...artifactHashes, ...externalHashes, hash(readFileSync(log)), hash(readFileSync(`${directory}/webrtc-blackbox.log`)), hash(readFileSync(`${directory}/relay-blackbox.log`)), hash(readFileSync(`${directory}/relay-connection-blackbox.log`))],
+    expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, ...artifactHashes, ...externalHashes, hash(readFileSync(log)), hash(readFileSync(`${directory}/webrtc-blackbox.log`)), hash(readFileSync(`${directory}/relay-blackbox.log`)), hash(readFileSync(`${directory}/relay-reject-blackbox.log`)), hash(readFileSync(`${directory}/relay-connection-blackbox.log`))],
     scope_hash: scopeHash, raw_evidence: log});
 }
 evidence(ids.white, 'development_whitebox', whiteProducer, whiteTime, `${directory}/whitebox.log`);
