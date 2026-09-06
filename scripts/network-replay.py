@@ -62,14 +62,22 @@ with (evidence / "network-host.log").open("wb") as log:
         (evidence / "network-test.log").write_bytes(result.stdout)
         if b"OK (1 test)" not in result.stdout:
             raise RuntimeError(f"Network instrumentation failed; see {evidence / 'network-test.log'}")
+        instrumentation = json.loads(subprocess.check_output(
+            ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", "files/network-evidence/result.json"]
+        ))
+        required = ["keyboardVisible", "compositionStarted", "compositionSendDisabled", "compositionCancelled",
+                    "compositionCommitted", "unfinishedCompositionDropped", "disconnectCompositionCancelled",
+                    "imeTextEvidence", "imeTextPainted"]
+        if not all(instrumentation.get(flag) is True for flag in required):
+            raise RuntimeError(f"IME composition evidence incomplete: {instrumentation}")
         fixture.stdin.write(b"inspect\n"); fixture.stdin.flush()
         response = record(fixture, 10)
         dom = json.loads(response["result"]["value"])
-        if (dom.get("clicked") != 1 or dom.get("text") != "native-network-proof"
+        if (dom.get("clicked") != 1 or dom.get("text") != "native-network-proof中文"
                 or dom.get("scrollY") != 0 or dom.get("maxScroll", 0) < 240):
             raise RuntimeError(f"Host DOM mismatch: {dom}")
         (evidence / "network-dom.json").write_text(json.dumps({"session":ready["session"],"dom":dom},indent=2)+"\n")
-        for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png", "text-before.png", "text-after.png", "scrolled.png", "scroll-restored.png", "landscape.png", "portrait-restored.png"]:
+        for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png", "text-before.png", "text-after.png", "ime-text.png", "scrolled.png", "scroll-restored.png", "landscape.png", "portrait-restored.png"]:
             result = subprocess.run(["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", f"files/network-evidence/{name}"],
                                     stdout=subprocess.PIPE, check=True)
             if name == "result.json" and json.loads(result.stdout).get("runId") != run_id:

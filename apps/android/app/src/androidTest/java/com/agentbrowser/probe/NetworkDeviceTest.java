@@ -19,6 +19,13 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Shipped Cordis buttons -> JNI -> live Host -> native Surface pixels. */
 public class NetworkDeviceTest extends InstrumentationTestCase {
     private MainActivity activity;
+    private boolean imeVisible;
+    private boolean compositionStarted;
+    private boolean compositionSendDisabled;
+    private boolean compositionCancelled;
+    private boolean compositionCommitted;
+    private boolean disconnectCompositionCancelled;
+    private int chineseInkPixels;
     private String js(String script)throws Exception{
         CountDownLatch done=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->activity.webView.evaluateJavascript(script,value->{result.set(value);done.countDown();}));
@@ -145,6 +152,91 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         assertEquals("Rotation preserves takeover","\"control\"",js(STATUS+".controlMode"));
         assertTrue("Rotation preserves visible input",darkInputGlyphs(capture(landscape?"landscape":"portrait-restored"))>30);
     }
+    private void imeEdit(android.view.inputmethod.InputConnection input,
+            java.util.function.Consumer<android.view.inputmethod.InputConnection> edit)throws Exception{
+        Handler handler=input.getHandler();
+        assertNotNull("WebView IME handler",handler);
+        CountDownLatch done=new CountDownLatch(1);AtomicReference<Throwable> failure=new AtomicReference<>();
+        handler.post(()->{try{edit.accept(input);}catch(Throwable error){failure.set(error);}finally{done.countDown();}});
+        assertTrue("IME edit deadline",done.await(3,TimeUnit.SECONDS));
+        if(failure.get()!=null)throw new AssertionError("IME edit failed",failure.get());
+    }
+    private void keyboardArea()throws Exception{
+        int width=activity.visibleWidth,height=activity.visibleHeight;
+        String session=js(STATUS+".sessionId"),document=js(STATUS+".documentRevision");
+        js("document.getElementById('input-text').focus()");
+        getInstrumentation().runOnMainSync(()->{
+            activity.webView.requestFocus();
+            activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
+                .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        });
+        boolean[] visible={false},fits={false};
+        long deadline=SystemClock.elapsedRealtime()+8000;
+        do{
+            getInstrumentation().runOnMainSync(()->{
+                android.view.WindowInsets insets=activity.webView.getRootWindowInsets();
+                visible[0]=insets!=null&&insets.isVisible(android.view.WindowInsets.Type.ime());
+                if(visible[0]){
+                    int[] position=new int[2];activity.webView.getLocationOnScreen(position);
+                    int keyboardTop=activity.getWindow().getDecorView().getHeight()-insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                    fits[0]=position[1]+activity.webView.getHeight()<=keyboardTop&&activity.visibleHeight<height;
+                }
+            });
+            if(visible[0]&&fits[0])break;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        assertTrue("Real IME must be visible",visible[0]);
+        assertTrue("Keyboard must leave page and text controls visible",fits[0]);
+        imeVisible=visible[0];
+        until(STATUS+".inputReady",6000);
+        viewport();
+        assertEquals(session,js(STATUS+".sessionId"));assertEquals(document,js(STATUS+".documentRevision"));
+        AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
+        assertNotNull("Focused WebView input connection",input.get());
+        imeEdit(input.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
+        until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
+        compositionStarted=true;
+        compositionSendDisabled="true".equals(js("document.getElementById('send-text').disabled"));
+        assertTrue("Do not send unfinished composition",compositionSendDisabled);
+        click("send-text");
+        assertEquals("zhongwen",js("document.getElementById('input-text').value"));
+        js("document.getElementById('input-text').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+        until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
+        compositionCancelled=true;
+        assertEquals("true",js("document.getElementById('input-text').parentElement.dataset.compositionCancelled"));
+        js("document.getElementById('input-text').focus()");
+        getInstrumentation().runOnMainSync(()->{
+            activity.webView.requestFocus();
+            activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
+                .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        });
+        AtomicReference<android.view.inputmethod.InputConnection> committedInput=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->committedInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
+        assertNotNull("Focused WebView input connection after composition cancel",committedInput.get());
+        imeEdit(committedInput.get(),connection->{assertTrue(connection.commitText("中文",1));assertTrue(connection.finishComposingText());});
+        until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
+        compositionCommitted=true;
+        click("send-text");
+        until(STATUS+".inputReady",6000);
+        long paintDeadline=SystemClock.elapsedRealtime()+5000;
+        do{
+            SystemClock.sleep(100);
+            Bitmap painted=capture("ime-text");chineseInkPixels=0;
+            // Second CJK glyph extends beyond the two narrow missing-glyph boxes
+            // in the fixed fixture's input. DOM text alone cannot pass this check.
+            int left=130*painted.getWidth()/activity.visibleWidth,right=140*painted.getWidth()/activity.visibleWidth;
+            int top=104*painted.getHeight()/activity.visibleHeight,bottom=120*painted.getHeight()/activity.visibleHeight;
+            for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
+                int color=painted.getPixel(x,y);
+                if(Color.red(color)<80&&Color.green(color)<80&&Color.blue(color)<80)chineseInkPixels++;
+            }
+        }while(chineseInkPixels<=30&&SystemClock.elapsedRealtime()<paintDeadline);
+        assertTrue("Chinese text must paint beyond missing-glyph boxes: "+chineseInkPixels,chineseInkPixels>30);
+        getInstrumentation().runOnMainSync(()->activity.getWindow().getInsetsController().hide(android.view.WindowInsets.Type.ime()));
+        js("document.getElementById('input-text').blur()");
+        awaitSourceSize(width,height);
+    }
     private Bitmap capture(String name)throws Exception{
         Bitmap full=Bitmap.createBitmap(Math.max(1,activity.video.getWidth()),Math.max(1,activity.video.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
         getInstrumentation().runOnMainSync(()->PixelCopy.request(activity.video,full,value->{result[0]=value;done.countDown();},new Handler(Looper.getMainLooper())));
@@ -230,6 +322,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             JSONObject landscapeViewport=viewport();
             rotate(false);
             JSONObject portraitViewport=viewport();
+            keyboardArea();
             int width=viewport.getInt("cssWidth"),height=viewport.getInt("cssHeight");
             // Hold the session monitor so the status command cannot complete
             // before both declarations arrive. Only the latest should survive.
@@ -247,7 +340,20 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             SystemClock.sleep(700);click("release");until("document.body.innerText.includes('观察模式')",6000);
             Bitmap screenshot=getInstrumentation().getUiAutomation().takeScreenshot();assertNotNull(screenshot);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/screen.png"))){assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG,100,output));}
+            click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            js("document.getElementById('input-text').focus()");
+            AtomicReference<android.view.inputmethod.InputConnection> disconnectInput=new AtomicReference<>();
+            getInstrumentation().runOnMainSync(()->{
+                activity.webView.requestFocus();
+                disconnectInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo()));
+            });
+            assertNotNull("Focused WebView input connection before disconnect",disconnectInput.get());
+            imeEdit(disconnectInput.get(),connection->assertTrue(connection.setComposingText("disconnect-me",1)));
+            until("document.getElementById('input-text').value==='disconnect-me' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
+            assertEquals("true",js("document.getElementById('send-text').disabled"));
             click("disconnect");until(STATUS+".released",6000);
+            until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
+            disconnectCompositionCancelled=true;
             long frames=activity.annex.snapshot().getLong("renderedFrames");SystemClock.sleep(500);
             assertEquals("No stale decoder callback after disconnect",frames,activity.annex.snapshot().getLong("renderedFrames"));
             click("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
@@ -263,6 +369,12 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 .put("reconnectPreservesDocument",true).put("backgroundRelease",true).put("staleCallbacksFenced",true)
                 .put("textSubmitted",true).put("sessionId",new org.json.JSONTokener(session).nextValue());
             result.put("textPainted",true).put("inputGlyphsBefore",emptyGlyphs).put("inputGlyphsAfter",paintedGlyphs);
+            result.put("keyboardVisible",imeVisible).put("compositionStarted",compositionStarted)
+                .put("compositionSendDisabled",compositionSendDisabled).put("compositionCancelled",compositionCancelled)
+                .put("compositionCommitted",compositionCommitted).put("unfinishedCompositionDropped",compositionCancelled&&compositionSendDisabled)
+                .put("disconnectCompositionCancelled",disconnectCompositionCancelled)
+                .put("imeTextEvidence",new File(activity.getFilesDir(),"network-evidence/ime-text.png").isFile())
+                .put("imeTextPainted",chineseInkPixels>30).put("chineseInkPixels",chineseInkPixels);
             result.put("displayedRevisionFenced",true);
             result.put("swipeDoesNotClick",true).put("scrollPixels",true);
             result.put("cancelledGestureIgnored",true).put("staleViewportGestureIgnored",true);

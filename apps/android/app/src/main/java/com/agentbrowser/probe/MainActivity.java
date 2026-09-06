@@ -46,8 +46,9 @@ public final class MainActivity extends Activity {
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.rgb(245,247,244));
         layout.setOnApplyWindowInsetsListener((view, insets) -> {
-            android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            android.graphics.Insets occupied = insets.getInsets(
+                android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.ime());
+            view.setPadding(occupied.left, occupied.top, occupied.right, occupied.bottom);
             return insets;
         });
         stage = new FrameLayout(this);

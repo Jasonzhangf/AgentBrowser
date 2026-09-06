@@ -80,6 +80,11 @@ assert(network.displayedRevisionFenced);
 assert(network.swipeDoesNotClick && network.scrollPixels);
 assert(network.cancelledGestureIgnored && network.staleViewportGestureIgnored);
 assert(network.rotationPreservesState);
+assert(network.keyboardVisible && network.compositionStarted && network.compositionSendDisabled);
+assert(network.compositionCancelled && network.compositionCommitted && network.unfinishedCompositionDropped);
+assert(network.disconnectCompositionCancelled);
+assert(network.imeTextEvidence && network.imeTextPainted && network.chineseInkPixels > 30);
+assert(existsSync(`${directory}/network/network-ime-text.png`));
 for(const view of [network.landscapeViewport,network.portraitViewport]) {
   assert.equal(view.cssWidth,view.sourceWidth);
   assert.equal(view.cssHeight,view.sourceHeight);
@@ -90,7 +95,7 @@ assert(network.textPainted && network.inputGlyphsAfter > network.inputGlyphsBefo
 assert.equal(network.viewport.cssWidth, network.viewport.sourceWidth);
 assert.equal(network.viewport.cssHeight, network.viewport.sourceHeight);
 const {maxScroll,...retainedDom}=dom.dom;
-assert.deepEqual(retainedDom, {clicked:1,text:'native-network-proof',scrollY:0});
+assert.deepEqual(retainedDom, {clicked:1,text:'native-network-proof中文',scrollY:0});
 assert(Number.isFinite(maxScroll) && maxScroll>=240);
 assert.equal(network.sessionId,dom.session);
 assert(annex.cropVerified && annex.generationRejected && annex.corruptDataRejected && annex.codedMismatchRejected && annex.surfaceRelease && annex.activityRelease && annex.inputLimitsRejected);
