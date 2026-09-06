@@ -168,8 +168,10 @@ func find(_ element: AXUIElement) -> AXUIElement? {
     return nil
 }
 guard let surface = find(app) else { exit(2) }
-guard let position = value(surface, kAXPositionAttribute) as? AXValue,
-      let size = value(surface, kAXSizeAttribute) as? AXValue else { exit(3) }
+guard let positionValue = value(surface, kAXPositionAttribute),
+      let sizeValue = value(surface, kAXSizeAttribute) else { exit(3) }
+let position = positionValue as! AXValue
+let size = sizeValue as! AXValue
 var origin = CGPoint.zero
 var extent = CGSize.zero
 guard AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(size, .cgSize, &extent), extent.width > 0, extent.height > 0 else { exit(3) }
