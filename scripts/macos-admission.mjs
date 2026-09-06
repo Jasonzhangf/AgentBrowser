@@ -167,9 +167,22 @@ function setAccessibilityValue(pid, description, value, logPath) {
   command('swift', ['-e', swift], {log: logPath, timeout: 30_000});
 }
 
-function pressAccessibilityButton(pid, title, logPath) {
+async function pressAccessibilityButton(pid, title, logPath) {
   const swift = `import ApplicationServices; import Foundation; let pid: pid_t = ${pid}; let target = ${JSON.stringify(title)}; let app = AXUIElementCreateApplication(pid); func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? { var result: CFTypeRef?; let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result); return error == .success ? result : nil }; func find(_ element: AXUIElement) -> Bool { let role = value(element, kAXRoleAttribute) as? String; let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }; if role == kAXButtonRole && labels.contains(target) { return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success }; let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []; return children.contains(where: find) }; guard find(app) else { exit(2) }`;
-  command('swift', ['-e', swift], {log: logPath, timeout: 30_000});
+  let lastOutput = Buffer.alloc(0);
+  let failures = [];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const result = spawnSync('swift', ['-e', swift], {cwd: root, encoding: 'buffer', maxBuffer: 8 * 1024 * 1024, timeout: 30_000});
+    const output = Buffer.concat([result.stdout ?? Buffer.alloc(0), result.stderr ?? Buffer.alloc(0)]);
+    failures.push({attempt, status: result.status, error: result.error?.message ?? null, output: output.toString()});
+    if (!result.error && result.status === 0) {
+      writeFileSync(logPath, JSON.stringify({target: title, attempts: failures.length, output: output.toString()}, null, 2) + '\n');
+      return;
+    }
+    await sleep(250);
+  }
+  writeFileSync(logPath, JSON.stringify({target: title, attempts: failures.length, failures}, null, 2) + '\n');
+  assert.fail(`AX button did not become available: ${title}`);
 }
 
 function postScroll(pid, x, y, delta, logPath) {
@@ -360,17 +373,17 @@ async function main() {
     await waitForWindow(firstApp);
     await sleep(1_500);
     screenshots.push(captureWindow(join(directory, 'waiting.png'), false));
-    pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
+    await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
     await sleep(4_000);
     const connected = captureWindow(join(directory, 'connected.png'), false);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
-    pressAccessibilityButton(firstApp.pid, '接管页面', join(directory, 'takeover.log'));
+    await pressAccessibilityButton(firstApp.pid, '接管页面', join(directory, 'takeover.log'));
     await sleep(1_000);
     const page = '<body style="margin:0;background:white"><h1 id="title" style="height:45px;margin:0">中文导航验收</h1><button id="target" style="display:block;width:180px;height:100px;background:red" onclick="window.clicked=(window.clicked||0)+1;this.style.background=\'lime\'">touch</button><input id="field" style="display:block;width:220px;height:50px"><div style="height:1400px;background:blue"></div><script>window.maxScroll=0;window.addEventListener(\'scroll\',()=>window.maxScroll=Math.max(window.maxScroll,window.scrollY));</script></body>';
     const url = `data:text/html,${encodeURIComponent(page)}`;
     setAccessibilityValue(firstApp.pid, '远程页面地址', url, join(directory, 'address-set.log'));
-    pressAccessibilityButton(firstApp.pid, '打开', join(directory, 'navigate.log'));
+    await pressAccessibilityButton(firstApp.pid, '打开', join(directory, 'navigate.log'));
     await sleep(4_000);
     clickRelative(120, 105);
     await sleep(1_000);
@@ -378,7 +391,7 @@ async function main() {
     await sleep(400);
     const inputText = '你好，Mac 输入';
     setAccessibilityValue(firstApp.pid, '输入到远程页面的文字', inputText, join(directory, 'input-set.log'));
-    pressAccessibilityButton(firstApp.pid, '发送', join(directory, 'send-text.log'));
+    await pressAccessibilityButton(firstApp.pid, '发送', join(directory, 'send-text.log'));
     await sleep(2_000);
     const rect = windowRect();
     assert(rect, 'AppKit window disappeared before scroll');
@@ -386,21 +399,21 @@ async function main() {
     postScroll(firstApp.pid, scrollPoint.x, scrollPoint.y, -20, join(directory, 'scroll.log'));
     await sleep(2_000);
     screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), true));
-    pressAccessibilityButton(firstApp.pid, '返回观察', join(directory, 'release.log'));
+    await pressAccessibilityButton(firstApp.pid, '返回观察', join(directory, 'release.log'));
     await sleep(2_000);
     const inspection = fixtureResponseValue(await fixture.request('inspect'));
     assert.deepEqual({title: inspection.title, clicked: inspection.clicked, text: inspection.text},
       {title: '中文导航验收', clicked: 1, text: inputText});
     assert(Number.isFinite(inspection.scrollY) && inspection.scrollY > 0);
     assert(Number.isFinite(inspection.maxScroll) && inspection.maxScroll > 0);
-    pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect.log'));
+    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect.log'));
     await sleep(1_500);
     const reconnectStart = now();
-    pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'reconnect.log'));
+    await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'reconnect.log'));
     await sleep(4_000);
     screenshots.push(captureWindow(join(directory, 'reconnect.png'), false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Reconnect produced no displayed frame');
-    pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
+    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
     await sleep(1_000);
     reconnect = {at: reconnectStart, app_pid: firstApp.pid, fixture_session: fixtureInfo.session,
       displayed_screenshot: screenshots.at(-1), disconnected_before_reconnect: true};
@@ -409,11 +422,11 @@ async function main() {
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
     const secondApp = launchApp('app-restarted');
     await waitForWindow(secondApp);
-    pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
+    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
     await sleep(4_000);
     screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
-    pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'restart-disconnect.log'));
+    await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'restart-disconnect.log'));
     await sleep(1_000);
     const secondExit = await terminateOwned(secondApp, installedExecutable, join(directory, 'second-app-exit.json'));
     restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
