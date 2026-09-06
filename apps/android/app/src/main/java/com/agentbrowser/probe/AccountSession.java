@@ -23,12 +23,14 @@ final class AccountSession {
     private boolean closed;
     private String state = "signed_out";
     private String error;
+    private String cleanupError;
     private JSONObject nativeState = emptyNativeState();
 
     AccountSession(Context context) { this.context = context.getApplicationContext(); }
 
     synchronized JSONObject request(JSONObject command) throws Exception {
         String op = command.optString("op", "");
+        if (!"account_status".equals(op) && closed) throw new IllegalStateException("ACCOUNT_SESSION_CLOSED");
         switch (op) {
             case "account_status" -> require(command, "op");
             case "account_login" -> login(command);
@@ -48,8 +50,15 @@ final class AccountSession {
         generation = next(generation);
         long old = handle;
         handle = 0;
-        if (old != 0) {
-            try { NativeAccount.close(old); } catch (RuntimeException ignored) { }
+        RuntimeException cleanupFailure = old == 0 ? null : closeNative(old);
+        nativeState = emptyNativeState();
+        if (cleanupFailure == null) {
+            state = "signed_out";
+            error = null;
+        } else {
+            state = "error";
+            error = null;
+            recordCleanupFailure("ACCOUNT_NATIVE_CLOSE_FAILED", cleanupFailure);
         }
         worker.shutdownNow();
     }
@@ -71,8 +80,11 @@ final class AccountSession {
         nativeState = emptyNativeState();
         long old = handle;
         handle = 0;
-        if (old != 0) {
-            try { NativeAccount.close(old); } catch (RuntimeException ignored) { }
+        RuntimeException cleanupFailure = old == 0 ? null : closeNative(old);
+        if (cleanupFailure != null) {
+            state = "error";
+            recordCleanupFailure("ACCOUNT_NATIVE_CLOSE_FAILED", cleanupFailure);
+            return;
         }
         worker.execute(() -> login(expected, origin, ca, username, password));
     }
@@ -85,7 +97,8 @@ final class AccountSession {
             JSONObject value = new JSONObject(NativeAccount.status(opened));
             synchronized (this) {
                 if (closed || generation != expected) {
-                    closeNative(opened);
+                    RuntimeException cleanupFailure = closeNative(opened);
+                    if (cleanupFailure != null) recordCleanupFailure("ACCOUNT_NATIVE_CLOSE_FAILED", cleanupFailure);
                     return;
                 }
                 handle = opened;
@@ -94,8 +107,9 @@ final class AccountSession {
                 error = null;
             }
         } catch (Exception failure) {
-            if (opened != 0) closeNative(opened);
+            RuntimeException cleanupFailure = opened == 0 ? null : closeNative(opened);
             synchronized (this) {
+                if (cleanupFailure != null) recordCleanupFailure("ACCOUNT_NATIVE_CLOSE_FAILED", cleanupFailure);
                 if (closed || generation != expected) return;
                 state = "error";
                 error = failure.toString();
@@ -167,6 +181,7 @@ final class AccountSession {
         if (pending() && handle == 0) {
             generation = next(generation);
             state = "signed_out";
+            nativeState = emptyNativeState();
             error = null;
             return;
         }
@@ -193,8 +208,9 @@ final class AccountSession {
                     error = null;
                 }
             } catch (Exception failure) {
-                closeNative(current);
+                RuntimeException cleanupFailure = closeNative(current);
                 synchronized (this) {
+                    if (cleanupFailure != null) recordCleanupFailure("ACCOUNT_NATIVE_CLOSE_FAILED", cleanupFailure);
                     if (closed || generation != expected || handle != 0) return;
                     state = "signed_out";
                     nativeState = emptyNativeState();
@@ -220,13 +236,16 @@ final class AccountSession {
 
     private synchronized JSONObject snapshot() {
         try {
+            refreshNativeState();
             JSONObject value = new JSONObject(nativeState.toString());
             String shownState = state;
             if ((state.equals("authenticated") || state.equals("error")) && expired()) shownState = "expired";
             value.put("accountState", shownState);
             value.put("generation", generation);
             value.put("pending", pending());
-            value.put("error", error == null ? JSONObject.NULL : error);
+            String visibleError = error;
+            if (cleanupError != null) visibleError = visibleError == null ? cleanupError : visibleError + "; " + cleanupError;
+            value.put("error", visibleError == null ? JSONObject.NULL : visibleError);
             if (!value.has("hosts")) value.put("hosts", new JSONArray());
             return value;
         } catch (org.json.JSONException invalid) {
@@ -253,8 +272,29 @@ final class AccountSession {
         return value + 1;
     }
 
-    private static void closeNative(long value) {
-        try { NativeAccount.close(value); } catch (RuntimeException ignored) { }
+    private void refreshNativeState() {
+        if (closed || handle == 0 || pending()) return;
+        try {
+            nativeState = new JSONObject(NativeAccount.status(handle));
+        } catch (Exception failure) {
+            nativeState = emptyNativeState();
+            state = "error";
+            error = "ACCOUNT_NATIVE_STATUS_FAILED: " + failure;
+        }
+    }
+
+    private void recordCleanupFailure(String code, RuntimeException failure) {
+        String value = code + ": " + failure;
+        cleanupError = cleanupError == null ? value : cleanupError + "; " + value;
+    }
+
+    private static RuntimeException closeNative(long value) {
+        try {
+            NativeAccount.close(value);
+            return null;
+        } catch (RuntimeException failure) {
+            return failure;
+        }
     }
 
     private static void require(JSONObject value, String... allowed) throws Exception {
