@@ -396,14 +396,13 @@ fn start_host_adapter(
         ))
         .args(["--inner-client-ca"])
         .arg(write_inner_file(&inner.ca_der, replay_temp, "inner-ca.der"))
-        .args([
-            "--peer-device-id",
-            client_device.id(),
-            "--peer-auth-public-key",
-        ])
-        .arg(hex(&client_public_key))
-        .args(["--peer-cert-sha256"])
-        .arg(hex(&fingerprint(&inner.client_cert_der)))
+        .args(["--peer-bindings"])
+        .arg(write_peer_bindings(
+            client_device,
+            client_public_key,
+            fingerprint(&inner.client_cert_der),
+            replay_temp,
+        ))
         .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -416,6 +415,21 @@ fn start_host_adapter(
 
 fn write_inner_file(bytes: &[u8], replay_temp: &ReplayTempDir, name: &str) -> PathBuf {
     replay_temp.write(&format!("relay-connection-{name}"), bytes)
+}
+
+fn write_peer_bindings(
+    client_device: &agentbrowser_connection::relay::RegisteredDevice,
+    client_public_key: [u8; 32],
+    client_certificate_sha256: [u8; 32],
+    replay_temp: &ReplayTempDir,
+) -> PathBuf {
+    let bindings = serde_json::json!([{
+        "relay_device_id": client_device.id(),
+        "auth_public_key": hex(&client_public_key),
+        "certificate_sha256": hex(&client_certificate_sha256),
+    }]);
+    let bytes = serde_json::to_vec(&bindings).expect("serialize Relay peer bindings");
+    replay_temp.write("relay-peer-bindings.json", &bytes)
 }
 
 async fn stop_child(mut child: Child) {
