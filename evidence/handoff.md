@@ -102,6 +102,8 @@ fixture exec session: 81729
 
 未验证：scroll loopback、Android+Mac 同 Session、中文 IME、横竖屏同步、Relay/UDP/选路、断网重连、系统安装身份及正式双端验收。
 
+资源清理：最终 candidate app 通过显式 PID 终止；独立 fixture 通过自身 `quit` stdin 退出，exit code 0。teardown 期间 fixture 打印 peer EOF / `Host media ended without Closed`，但无残留 `device_fixture`、55130 endpoint 或 Mac app/bridge 进程；共享 Host 未操作。
+
 ## AppSDK / Collab 状态
 
 - 已按要求尝试官方 `appsdk init .`；Collab 返回 `collab peer bootstrap pending: no live tmux pane`，未伪造 identity/claim。
@@ -111,12 +113,11 @@ fixture exec session: 81729
 
 ## Review / Git
 
-- AGY review：待完成；必须以当前 candidate commit 和 base 重新执行，只读 controller 结果为准。
-- candidate commit：待创建。
+- AGY review：PASS；controller task `m1-luna-mac-bffdb90`，commit `bffdb90`，base `5d1d288`，`findings=[]`，`outcomeReason=controller_no_blocking_findings`。
+- candidate implementation commit：`bffdb90`。
 - 未 merge、未 push、未改 main、未清理旧 worktree。
 
 ## 主线程下一步
 
 1. 审计并决定如何在不掩盖 base `INVALID_SDK_MIGRATION_RECORD` 的前提下接纳本切片的 AppSDK 接线。
-2. 对精确 candidate commit 执行 AGY Review；若出现 P0/P1，仅修复本 Mac scope 后重跑受影响验证和 review。
-3. 主线程负责 merge、main verification、共享 Host/设备资源调度及后续双端验收。
+2. 主线程负责 merge、main verification、共享 Host/设备资源调度及后续双端验收。
