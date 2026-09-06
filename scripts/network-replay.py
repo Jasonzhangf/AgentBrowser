@@ -68,7 +68,7 @@ with (evidence / "network-host.log").open("wb") as log:
         if dom != {"clicked": 1, "text": "native-network-proof"}:
             raise RuntimeError(f"Host DOM mismatch: {dom}")
         (evidence / "network-dom.json").write_text(json.dumps({"session":ready["session"],"dom":dom},indent=2)+"\n")
-        for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png"]:
+        for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png", "text-before.png", "text-after.png"]:
             result = subprocess.run(["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", f"files/network-evidence/{name}"],
                                     stdout=subprocess.PIPE, check=True)
             if name == "result.json" and json.loads(result.stdout).get("runId") != run_id:

@@ -12,6 +12,7 @@ export interface ProbeSnapshot {
   pending?: string | null; networkConfigured?: boolean; sessionId?: string;
   inputReady?: boolean;
   epoch?: number; documentRevision?: number; viewportRevision?: number; displayedPtsUs?: number; displayedTicket?: number;
+  displayedDocumentRevision?: number; displayedViewportRevision?: number;
 }
 export interface NativePort { request(command: ProbeCommand): ProbeSnapshot }
 export function parseSnapshot(raw: string): ProbeSnapshot {
@@ -33,6 +34,8 @@ export function parseSnapshot(raw: string): ProbeSnapshot {
       || !(value.viewportRevision === undefined || Number.isSafeInteger(value.viewportRevision))
       || !(value.displayedPtsUs === undefined || Number.isSafeInteger(value.displayedPtsUs))
       || !(value.displayedTicket === undefined || Number.isSafeInteger(value.displayedTicket))
+      || !(value.displayedDocumentRevision === undefined || Number.isSafeInteger(value.displayedDocumentRevision))
+      || !(value.displayedViewportRevision === undefined || Number.isSafeInteger(value.displayedViewportRevision))
       || !(value.error === null || typeof value.error === 'string')) throw new Error('INVALID_NATIVE_RESPONSE');
   return value;
 }

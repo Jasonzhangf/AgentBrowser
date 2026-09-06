@@ -26,11 +26,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     }
     private void until(String script,long timeout)throws Exception{
         long end=SystemClock.elapsedRealtime()+timeout;
-        do{if("true".equals(js(script)))return;SystemClock.sleep(50);}while(SystemClock.elapsedRealtime()<end);
+        do{assertDisplayedRevision();if("true".equals(js(script)))return;SystemClock.sleep(50);}while(SystemClock.elapsedRealtime()<end);
         fail("Condition: "+script+"\nstatus="+js("JSON.stringify("+STATUS+")")+"\n"+js("document.body.innerText"));
     }
     private void click(String id)throws Exception{js("document.getElementById('"+id+"').click()");}
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
+    private void assertDisplayedRevision() throws Exception {
+        assertEquals("Input requires the actually displayed Host revisions", "true", js("(s=>!s.inputReady||(s.documentRevision===s.displayedDocumentRevision&&s.viewportRevision===s.displayedViewportRevision))("+STATUS+")"));
+    }
     private JSONObject viewport() throws Exception {
         int[] size=new int[4];
         getInstrumentation().runOnMainSync(()->{
@@ -47,6 +50,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         long deadline=SystemClock.elapsedRealtime()+6000;
         boolean[] matched={false};
         do {
+            assertDisplayedRevision();
             getInstrumentation().runOnMainSync(()->matched[0]=activity.visibleWidth==width&&activity.visibleHeight==height);
             if(matched[0]){until(STATUS+".inputReady",6000);return;}
             SystemClock.sleep(50);
@@ -75,6 +79,17 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         try(var output=new FileOutputStream(new File(directory,name+".png"))){assertTrue(image.compress(Bitmap.CompressFormat.PNG,100,output));}
         return image;
     }
+    private int darkInputGlyphs(Bitmap image) {
+        int count=0;
+        // Interior CSS coordinates exclude the input border and focus outline.
+        int left=5*image.getWidth()/activity.visibleWidth,right=195*image.getWidth()/activity.visibleWidth;
+        int top=104*image.getHeight()/activity.visibleHeight,bottom=134*image.getHeight()/activity.visibleHeight;
+        for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
+            int color=image.getPixel(x,y);
+            if(Color.red(color)<80&&Color.green(color)<80&&Color.blue(color)<80)count++;
+        }
+        return count;
+    }
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
@@ -97,9 +112,16 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
             touch(30,125);SystemClock.sleep(250);
             until(STATUS+".inputReady",6000);
+            int emptyGlyphs=darkInputGlyphs(capture("text-before"));
             String accepted=js("(()=>{const s="+STATUS+";return !JSON.parse(ProbeNative.request(JSON.stringify({op:'input_text',epoch:s.epoch,text:'native-network-proof'}))).rejection})()");
             assertEquals("true",accepted);
             until(STATUS+".inputReady",6000);
+            long textDeadline=SystemClock.elapsedRealtime()+5000;
+            int paintedGlyphs;
+            do {SystemClock.sleep(100);paintedGlyphs=darkInputGlyphs(capture("text-after"));}
+            while(paintedGlyphs<=emptyGlyphs+30&&SystemClock.elapsedRealtime()<textDeadline);
+            assertTrue("Entered text must paint in the native Surface: before="+emptyGlyphs+", after="+paintedGlyphs,
+                paintedGlyphs>emptyGlyphs+30);
             int width=viewport.getInt("cssWidth"),height=viewport.getInt("cssHeight");
             // Hold the session monitor so the status command cannot complete
             // before both declarations arrive. Only the latest should survive.
@@ -131,6 +153,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 .put("busyViewportCoalesced",true)
                 .put("reconnectPreservesDocument",true).put("backgroundRelease",true).put("staleCallbacksFenced",true)
                 .put("textSubmitted",true).put("sessionId",new org.json.JSONTokener(session).nextValue());
+            result.put("textPainted",true).put("inputGlyphsBefore",emptyGlyphs).put("inputGlyphsAfter",paintedGlyphs);
+            result.put("displayedRevisionFenced",true);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/result.json"))){output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }

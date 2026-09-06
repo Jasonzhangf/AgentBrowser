@@ -72,11 +72,12 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_frame(mut en
             VideoPacket::Closed { .. } => Err("Host media closed".into()),
             VideoPacket::AccessUnit { source, pts_us, coded_width, coded_height, .. } => {
                 if video.bytes.len() > 1024 * 1024 { return Err("Access unit exceeds Android decoder 1MiB limit".into()); }
-                if source.sequence > i64::MAX as u64 || *pts_us > i64::MAX as u64 { return Err("Native frame identity overflow".into()); }
+                if [source.sequence, *pts_us, source.document_revision, source.viewport_revision].iter().any(|value| *value > i64::MAX as u64) { return Err("Native frame identity overflow".into()); }
                 let bytes = env.byte_array_from_slice(&video.bytes).map_err(error)?;
-                let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJ)V", &[
+                let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJJJ)V", &[
                     JValue::Object(&JObject::from(bytes)), JValue::Int(*coded_width as i32), JValue::Int(*coded_height as i32),
                     JValue::Int(source.width as i32), JValue::Int(source.height as i32), JValue::Long(*pts_us as i64), JValue::Long(source.sequence as i64),
+                    JValue::Long(source.document_revision as i64), JValue::Long(source.viewport_revision as i64),
                 ]).map_err(error)?;
                 session.pending = Some((source.sequence, DisplayedFrame { generation: session.connection.generation,
                     session_id: source.session_id.clone(), document_revision: source.document_revision, viewport_revision: source.viewport_revision }));

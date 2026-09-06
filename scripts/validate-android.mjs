@@ -75,6 +75,8 @@ assert.equal(network.runId, installedNetwork.runId);
 assert.equal(`sha256:${installedNetwork.sha256['com.agentbrowser.probe']}`, apkHash);
 assert(network.networkFrames && network.observerTouchIgnored && network.takeoverPixels && network.reconnectPreservesDocument && network.backgroundRelease && network.staleCallbacksFenced);
 assert(network.busyViewportCoalesced);
+assert(network.displayedRevisionFenced);
+assert(network.textPainted && network.inputGlyphsAfter > network.inputGlyphsBefore + 30);
 assert.equal(network.viewport.cssWidth, network.viewport.sourceWidth);
 assert.equal(network.viewport.cssHeight, network.viewport.sourceHeight);
 assert.deepEqual(dom.dom, {clicked:1,text:'native-network-proof'});

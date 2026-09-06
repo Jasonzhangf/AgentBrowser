@@ -31,8 +31,10 @@ final class NetworkSession {
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized boolean current(long value){return connected()&&token==value;}
-    synchronized boolean inputReady(){return connected()&&!framePending&&!commandPending&&displayed!=null
-        &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null&&!host.optBoolean("viewport_pending");}
+    synchronized boolean inputReady(){return connected()&&!commandPending&&displayed!=null
+        &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null&&!host.optBoolean("viewport_pending")
+        &&displayed.documentRevision==host.optLong("document_revision",-1)
+        &&displayed.viewportRevision==host.optLong("viewport_revision",-1);}
     synchronized long epoch(){return shownEpoch;}
     synchronized boolean humanShown(){return shownMode.equals("control");}
     synchronized void declareViewport(int cssWidth,int cssHeight,boolean landscape){
@@ -66,7 +68,8 @@ final class NetworkSession {
                 .put("inputReady",inputReady()).put("pending",commandPending||framePending?"busy":JSONObject.NULL)
                 .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
-            if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket);
+            if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
+                .put("displayedDocumentRevision",displayed.documentRevision).put("displayedViewportRevision",displayed.viewportRevision);
             return value;
         }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_HOST_STATUS",invalid);}
     }

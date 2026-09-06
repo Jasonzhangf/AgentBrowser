@@ -60,8 +60,15 @@ Failures retain their own logs and cannot reuse another run's PASS or images.
 Acceptance exercises real Surface touches, observer denial, takeover, input
 focus without automatic fixture focus, busy declaration coalescing, restored
 stage dimensions, reconnect state preservation and background resource release.
-DOM text proves input state only; visible input text painting needs its own
-pixel acceptance and is not claimed by this test.
+DOM text proves input state only. The test separately requires dark text glyphs
+to appear inside the native input Surface after typing, excluding its border
+and focus outline; before/after images are retained. The old Host fails this
+check even though its DOM value changes. A passing run must prove both.
+
+JNI carries document and viewport revisions from the actual media source into
+the immutable frame. Java exposes those revisions only after native display
+and acknowledgement, and allows input only when they match the Host status.
+The device test observes this invariant during waits, including viewport changes.
 
 This remains a direct prepaired WSS integration slice. UDP/Relay selection,
 production account enrollment, multiple-client viewport election, complete
