@@ -246,9 +246,6 @@ async fn execute(socket: &mut Socket, id: &mut u64, action: Action, generation: 
             if current.viewport_pending {
                 return Err(Failure::Host { code: "VIEWPORT_PENDING".into(), message: "Viewport layout is pending".into() });
             }
-            if current.viewport_revision != frame.viewport_revision || current.document_revision != frame.document_revision {
-                return Err(Failure::Protocol("Input belongs to an undisplayed revision".into()));
-            }
             let command = match input {
                 Input::Click { x, y } => Command::Click { x, y },
                 Input::Text(text) => Command::InputText { text },
