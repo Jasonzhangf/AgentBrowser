@@ -1,9 +1,12 @@
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 use agentbrowser_connection::relay::{
-    DeviceIdentity, RelayChannelKind, RelayClient, RelayConfig, RelayFailure,
+    DeviceIdentity, HostSnapshot, RelayChannelKind, RelayClient, RelayConfig, RelayEndpoint,
+    RelayFailure, RelayNetwork, RelayPeerBinding, RelaySession, RelayTlsClientIdentity,
+    RelayTlsServerIdentity,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
@@ -152,12 +155,14 @@ async fn authenticated_relay_directory_tunnel_isolated_and_generation_fenced() {
         .expect("second control");
     assert_eq!(second.generation(), 2);
     assert!(matches!(
-        first.open_tunnel(&fixture.info.host_id).await,
+        first
+            .open_tunnel(&fixture.info.host_id, "fixture-session")
+            .await,
         Err(RelayFailure::Superseded)
     ));
 
     let tunnel = second
-        .open_tunnel(&fixture.info.host_id)
+        .open_tunnel(&fixture.info.host_id, "fixture-session")
         .await
         .expect("authorized tunnel");
     assert_eq!(tunnel.peer_device_id(), fixture.info.host_device_id);
@@ -205,7 +210,10 @@ async fn authenticated_relay_directory_tunnel_isolated_and_generation_fenced() {
         .connect(&bob_device)
         .await
         .expect("Bob control");
-    let cross_account = match bob_connection.open_tunnel(&fixture.info.host_id).await {
+    let cross_account = match bob_connection
+        .open_tunnel(&fixture.info.host_id, "fixture-session")
+        .await
+    {
         Ok(_) => panic!("cross-account tunnel unexpectedly opened"),
         Err(error) => error,
     };
@@ -216,7 +224,9 @@ async fn authenticated_relay_directory_tunnel_isolated_and_generation_fenced() {
 
     alice.revoke().await.expect("Alice token revocation");
     assert!(matches!(
-        second.open_tunnel(&fixture.info.host_id).await,
+        second
+            .open_tunnel(&fixture.info.host_id, "fixture-session")
+            .await,
         Err(RelayFailure::Revoked)
     ));
     assert!(matches!(
@@ -228,5 +238,410 @@ async fn authenticated_relay_directory_tunnel_isolated_and_generation_fenced() {
     drop(tunnel);
     drop(second);
     drop(first);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_role_registers_publishes_and_consumes_side_one_offer() {
+    let fixture = Fixture::start().await;
+    let ca_pem = std::fs::read(&fixture.info.ca_path).expect("fixture CA");
+    let mut pem = ca_pem.as_slice();
+    let ca_der = rustls_pemfile::certs(&mut pem)
+        .next()
+        .expect("fixture certificate")
+        .expect("parse fixture certificate")
+        .to_vec();
+    let config = RelayConfig::new(&fixture.info.origin, ca_der).expect("TLS config");
+    let alice = RelayClient::login(
+        config,
+        &fixture.info.alice.username,
+        &fixture.info.alice.password,
+    )
+    .await
+    .expect("Alice login");
+
+    let host_device = alice
+        .register_device("relay-host", DeviceIdentity::generate())
+        .await
+        .expect("Host device registration");
+    let host = alice
+        .register_host(&host_device)
+        .await
+        .expect("Host registration");
+    let host_connection = Arc::new(
+        alice
+            .connector()
+            .connect_host(&host)
+            .await
+            .expect("Host control connection"),
+    );
+    host_connection
+        .publish(HostSnapshot {
+            incarnation: "host-incarnation".into(),
+            revision: 1,
+            endpoints: vec![RelayEndpoint {
+                network: RelayNetwork::Tailscale,
+                url: "wss://100.64.0.10:9443".into(),
+            }],
+            sessions: vec![RelaySession {
+                id: "host-session".into(),
+            }],
+        })
+        .await
+        .expect("publish Host snapshot");
+    let waiting_host = Arc::clone(&host_connection);
+    let waiter = tokio::spawn(async move { waiting_host.next_offer().await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        host_connection.publish(HostSnapshot {
+            incarnation: "host-incarnation".into(),
+            revision: 2,
+            endpoints: vec![],
+            sessions: vec![RelaySession {
+                id: "host-session".into(),
+            }],
+        }),
+    )
+    .await
+    .expect("Host publish must not wait for control reads")
+    .expect("republish Host snapshot");
+    waiter.abort();
+
+    let client_device = alice
+        .register_device("relay-client", DeviceIdentity::generate())
+        .await
+        .expect("Client device registration");
+    let client_connection = alice
+        .connector()
+        .connect(&client_device)
+        .await
+        .expect("Client control connection");
+    let directory = alice.list_directory().await.expect("directory");
+    let published = directory
+        .iter()
+        .find(|entry| entry.host_id == host.id())
+        .expect("published Host in directory");
+    assert_eq!(published.device_id, host.device_id());
+    assert_eq!(published.snapshot.sessions[0].id, "host-session");
+
+    let client_task = tokio::spawn({
+        let client_connection = client_connection;
+        let host_id = host.id().to_owned();
+        async move {
+            let tunnel = client_connection
+                .open_tunnel(&host_id, "host-session")
+                .await;
+            (client_connection, tunnel)
+        }
+    });
+    let offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives side=1 offer");
+    assert_eq!(offer.peer_device_id(), client_device.id());
+    let host_tunnel = host_connection
+        .accept_offer(offer)
+        .await
+        .expect("Host accepts side=1 offer");
+    let (client_connection, client_tunnel) = client_task.await.expect("client tunnel task");
+    let client_tunnel = client_tunnel.expect("client tunnel");
+    assert_eq!(host_tunnel.peer_device_id(), client_device.id());
+    assert_eq!(client_tunnel.peer_device_id(), host_device.id());
+
+    host_tunnel
+        .control()
+        .send(b"host-control")
+        .await
+        .expect("Host control send");
+    assert_eq!(
+        client_tunnel
+            .control()
+            .recv()
+            .await
+            .expect("client control receive"),
+        b"host-control"
+    );
+    client_tunnel
+        .media()
+        .send(b"client-media")
+        .await
+        .expect("client media send");
+    assert_eq!(
+        host_tunnel
+            .media()
+            .recv()
+            .await
+            .expect("Host media receive"),
+        b"client-media"
+    );
+
+    drop(client_tunnel);
+    drop(client_connection);
+    drop(host_tunnel);
+    drop(host_connection);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secure_relay_tunnel_binds_inner_mtls_and_tunnel_hello() {
+    let fixture = Fixture::start().await;
+    let ca_pem = std::fs::read(&fixture.info.ca_path).expect("fixture CA");
+    let mut pem = ca_pem.as_slice();
+    let relay_ca_der = rustls_pemfile::certs(&mut pem)
+        .next()
+        .expect("fixture certificate")
+        .expect("parse fixture certificate")
+        .to_vec();
+    let relay_config = RelayConfig::new(&fixture.info.origin, relay_ca_der).expect("TLS config");
+    let alice = RelayClient::login(
+        relay_config,
+        &fixture.info.alice.username,
+        &fixture.info.alice.password,
+    )
+    .await
+    .expect("Alice login");
+
+    let ca_key = rcgen::KeyPair::generate().expect("inner CA key");
+    let mut ca_params = rcgen::CertificateParams::new(vec![]).expect("inner CA params");
+    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let ca = ca_params
+        .self_signed(&ca_key)
+        .expect("inner CA certificate");
+    let server_key = rcgen::KeyPair::generate().expect("inner server key");
+    let server = rcgen::CertificateParams::new(vec!["localhost".into()])
+        .expect("inner server params")
+        .signed_by(&server_key, &ca, &ca_key)
+        .expect("inner server certificate");
+    let client_key = rcgen::KeyPair::generate().expect("inner client key");
+    let mut client_params = rcgen::CertificateParams::new(vec![]).expect("inner client params");
+    client_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+    let client = client_params
+        .signed_by(&client_key, &ca, &ca_key)
+        .expect("inner client certificate");
+    let fingerprint = |bytes: &[u8]| {
+        let digest = Sha256::digest(bytes);
+        let mut output = [0u8; 32];
+        output.copy_from_slice(&digest);
+        output
+    };
+    let server_der = server.der().to_vec();
+    let client_der = client.der().to_vec();
+
+    let host_identity = DeviceIdentity::generate();
+    let host_auth_public_key = host_identity.public_key_bytes();
+    let host_device = alice
+        .register_device("secure-relay-host", host_identity)
+        .await
+        .expect("Host device registration");
+    let host = alice
+        .register_host(&host_device)
+        .await
+        .expect("Host registration");
+    let host_connection = alice
+        .connector()
+        .connect_host(&host)
+        .await
+        .expect("Host control connection");
+    host_connection
+        .publish(HostSnapshot {
+            incarnation: "secure-host-incarnation".into(),
+            revision: 1,
+            endpoints: vec![RelayEndpoint {
+                network: RelayNetwork::Tailscale,
+                url: "wss://100.64.0.10:9443".into(),
+            }],
+            sessions: vec![RelaySession {
+                id: "secure-host-session".into(),
+            }],
+        })
+        .await
+        .expect("publish Host snapshot");
+
+    let client_identity = DeviceIdentity::generate();
+    let client_auth_public_key = client_identity.public_key_bytes();
+    let client_device = alice
+        .register_device("secure-relay-client", client_identity)
+        .await
+        .expect("Client device registration");
+    let client_connection = alice
+        .connector()
+        .connect(&client_device)
+        .await
+        .expect("Client control connection");
+    let host_binding = RelayPeerBinding::new(
+        host_device.id(),
+        host_auth_public_key,
+        fingerprint(&server_der),
+    );
+    let client_binding = RelayPeerBinding::new(
+        client_device.id(),
+        client_auth_public_key,
+        fingerprint(&client_der),
+    );
+    let client_tls = RelayTlsClientIdentity::new(
+        "localhost",
+        ca.der().to_vec(),
+        client_der.clone(),
+        client_key.serialize_der(),
+    );
+    let server_tls = RelayTlsServerIdentity::new(
+        server_der.clone(),
+        server_key.serialize_der(),
+        ca.der().to_vec(),
+    );
+
+    let host_id = host.id().to_owned();
+    let client_task = tokio::spawn({
+        let client_tls = client_tls.clone();
+        async move {
+            let tunnel = client_connection
+                .open_secure_tunnel(&host_id, "secure-host-session", host_binding, client_tls)
+                .await;
+            (client_connection, tunnel)
+        }
+    });
+    let offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives secure offer");
+    let host_tunnel = host_connection
+        .accept_secure_offer(offer, client_binding, server_tls.clone())
+        .await
+        .expect("Host accepts secure offer");
+    let (client_connection, client_result) = client_task.await.expect("client task");
+    let client_tunnel = client_result.expect("client secure tunnel");
+    assert_eq!(client_tunnel.host_id(), host.id());
+    assert_eq!(client_tunnel.session_id(), "secure-host-session");
+
+    host_tunnel
+        .control()
+        .send(b"secure-control")
+        .await
+        .expect("secure control send");
+    assert_eq!(
+        client_tunnel
+            .control()
+            .recv()
+            .await
+            .expect("secure control receive"),
+        b"secure-control"
+    );
+    client_tunnel
+        .media()
+        .send(b"secure-media")
+        .await
+        .expect("secure media send");
+    assert_eq!(
+        host_tunnel
+            .media()
+            .recv()
+            .await
+            .expect("secure media receive"),
+        b"secure-media"
+    );
+
+    drop(client_tunnel);
+    drop(host_tunnel);
+
+    let wrong_host_key =
+        RelayPeerBinding::new(host_device.id(), [0u8; 32], fingerprint(&server_der));
+    let host_id = host.id().to_owned();
+    let mut wrong_key_task = tokio::spawn({
+        let client_tls = client_tls.clone();
+        async move {
+            let result = client_connection
+                .open_secure_tunnel(&host_id, "secure-host-session", wrong_host_key, client_tls)
+                .await;
+            (client_connection, result)
+        }
+    });
+    let wrong_key_offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives wrong-key offer");
+    let mut wrong_key_host_handshake = Box::pin(host_connection.accept_secure_offer(
+        wrong_key_offer,
+        RelayPeerBinding::new(
+            client_device.id(),
+            client_auth_public_key,
+            fingerprint(&client_der),
+        ),
+        server_tls.clone(),
+    ));
+    let (client_connection, wrong_key_result) = tokio::time::timeout(
+        Duration::from_secs(5),
+        async {
+            tokio::select! {
+                result = &mut wrong_key_task => result.expect("wrong-key task"),
+                _ = &mut wrong_key_host_handshake => (&mut wrong_key_task).await.expect("wrong-key task after host"),
+            }
+        },
+    )
+    .await
+    .expect("wrong-key handshake timeout");
+    drop(wrong_key_host_handshake);
+    assert!(matches!(
+        wrong_key_result,
+        Err(RelayFailure::IdentityMismatch)
+    ));
+
+    let alternate_server_key = rcgen::KeyPair::generate().expect("alternate server key");
+    let alternate_server = rcgen::CertificateParams::new(vec!["localhost".into()])
+        .expect("alternate server params")
+        .signed_by(&alternate_server_key, &ca, &ca_key)
+        .expect("alternate server certificate");
+    let alternate_server_tls = RelayTlsServerIdentity::new(
+        alternate_server.der().to_vec(),
+        alternate_server_key.serialize_der(),
+        ca.der().to_vec(),
+    );
+    let host_binding = RelayPeerBinding::new(
+        host_device.id(),
+        host_auth_public_key,
+        fingerprint(&server_der),
+    );
+    let host_id = host.id().to_owned();
+    let mut unpinned_task = tokio::spawn({
+        let client_tls = client_tls.clone();
+        async move {
+            let result = client_connection
+                .open_secure_tunnel(&host_id, "secure-host-session", host_binding, client_tls)
+                .await;
+            (client_connection, result)
+        }
+    });
+    let unpinned_offer = host_connection
+        .next_offer()
+        .await
+        .expect("Host receives unpinned-certificate offer");
+    let mut unpinned_host_handshake = Box::pin(host_connection.accept_secure_offer(
+        unpinned_offer,
+        RelayPeerBinding::new(
+            client_device.id(),
+            client_auth_public_key,
+            fingerprint(&client_der),
+        ),
+        alternate_server_tls,
+    ));
+    let (client_connection, unpinned_result) = tokio::time::timeout(
+        Duration::from_secs(5),
+        async {
+            tokio::select! {
+                result = &mut unpinned_task => result.expect("unpinned-certificate task"),
+                _ = &mut unpinned_host_handshake => (&mut unpinned_task).await.expect("unpinned-certificate task after host"),
+            }
+        },
+    )
+    .await
+    .expect("unpinned-certificate handshake timeout");
+    drop(unpinned_host_handshake);
+    assert!(matches!(
+        unpinned_result,
+        Err(RelayFailure::IdentityMismatch)
+    ));
+
+    drop(client_connection);
+    drop(host_connection);
     fixture.shutdown().await;
 }

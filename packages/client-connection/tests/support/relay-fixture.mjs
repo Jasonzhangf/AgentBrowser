@@ -90,7 +90,7 @@ async function pairTunnel(offer) {
 }
 
 async function startHost() {
-  hostControl = await connect(`${wsOrigin}/v1/control/host/${host.id}`);
+  hostControl = await connect(`${wsOrigin}/v2/control/host/${host.id}`);
   sockets.push(hostControl);
   return new Promise((resolveReady, reject) => {
     let ready = false;
@@ -101,7 +101,7 @@ async function startHost() {
       if (message.type === 'auth.challenge') {
         const signature = sign(
           null,
-          authTranscript(message.nonce, `/v1/control/host/${host.id}`, hostDevice.id, digest(hostLogin.token)),
+          authTranscript(message.nonce, `/v2/control/host/${host.id}`, hostDevice.id, digest(hostLogin.token)),
           hostKeys.privateKey,
         ).toString('base64url');
         hostControl.send(JSON.stringify({
