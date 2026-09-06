@@ -16,5 +16,10 @@
     "owned_paths": ["services/relay/**", "protocol/relay/**"],
     "forbidden_paths": ["active/lib/**", "protected/**", "generated/**"],
     "verification_gates": ["relay-tls-wss"]
+  }, {
+    "module_id":"macos-shell","status":"contract_bound","owner":"macos-shell",
+    "owned_paths":["apps/macos/**","scripts/build-macos.sh","scripts/build-macos-ui.mjs","docs/macos-client.md"],
+    "forbidden_paths":["active/lib/**","protected/**","generated/**","apps/android/**","packages/android-bridge/**"],
+    "verification_gates":["macos-native-h264"]
   }]
 }
