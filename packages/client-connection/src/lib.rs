@@ -4,6 +4,7 @@ pub use obscura_host_protocol as protocol;
 pub mod relay;
 mod media;
 pub use media::{decode_video, MediaSequence, Video};
+mod relay_backend;
 mod transport;
 pub use transport::{Connection, Connector, DisplayedFrame, Input, Pairing};
 mod webrtc;

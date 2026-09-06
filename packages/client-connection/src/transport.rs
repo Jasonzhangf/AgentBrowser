@@ -4,6 +4,7 @@ use crate::{
         Command, Mode, Operation, Request, Response, ResultValue, SessionStatus,
         ViewportDeclaration,
     },
+    relay_backend::RelayBackend,
     webrtc::{WebRtcBackend, WebRtcConfig},
     Failure, MediaSequence, Video,
 };
@@ -162,7 +163,7 @@ impl Connection {
 fn transport(error: impl std::fmt::Display) -> Failure {
     Failure::Transport(error.to_string())
 }
-fn status(value: ResultValue) -> Result<SessionStatus, Failure> {
+pub(crate) fn status(value: ResultValue) -> Result<SessionStatus, Failure> {
     match value {
         ResultValue::Status(status) => Ok(status),
         _ => Err(Failure::Protocol("Expected status".into())),
@@ -222,6 +223,34 @@ impl Connector {
         Ok(spawn_connection(
             generation,
             bootstrap.status,
+            backend,
+            id,
+            self.generation.subscribe(),
+        ))
+    }
+
+    /// Connect an authenticated Relay v2 tunnel through the same browser
+    /// action and media pump used by direct and WebRTC backends.
+    pub async fn connect_relay(
+        &mut self,
+        relay: crate::relay::RelayClient,
+        device: crate::relay::RegisteredDevice,
+        host_id: &str,
+        session_id: &str,
+        peer: crate::relay::RelayPeerBinding,
+        tls: crate::relay::RelayTlsClientIdentity,
+        viewport: Option<ViewportDeclaration>,
+    ) -> Result<Connection, Failure> {
+        let generation = self.begin_generation()?;
+        let (backend, initial_status, id) = tokio::time::timeout(
+            Duration::from_secs(60),
+            RelayBackend::connect(relay, device, host_id, session_id, peer, tls, viewport),
+        )
+        .await
+        .map_err(transport)??;
+        Ok(spawn_connection(
+            generation,
+            initial_status,
             backend,
             id,
             self.generation.subscribe(),
@@ -511,7 +540,7 @@ async fn direct_request(socket: &mut Socket, request: Request) -> Result<Respons
     .map_err(transport)?
 }
 
-fn response_value(request_id: u64, response: Response) -> Result<ResultValue, Failure> {
+pub(crate) fn response_value(request_id: u64, response: Response) -> Result<ResultValue, Failure> {
     match response {
         Response::Result { id, value } if id == request_id => Ok(value),
         Response::Error { id, code, message } if id == request_id => {
