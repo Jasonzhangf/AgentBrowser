@@ -58,7 +58,7 @@ public final class MainActivity extends Activity {
         video.setOnTouchListener((view, event) -> networkTouch(event));
         stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
             layoutVideo();
-            if (networkSelected && network.connected()) reportViewport();
+            if (networkSelected && (r-l!=or-ol || b-t!=ob-ot)) reportViewport();
         });
         video.getHolder().addCallback(new SurfaceHolder.Callback() {
             public void surfaceCreated(SurfaceHolder holder) { probe.setSurface(holder.getSurface()); annex.setSurface(holder.getSurface()); }
@@ -163,7 +163,7 @@ public final class MainActivity extends Activity {
                 // area. Host viewport negotiation will use this area, not screen size.
                 webView.setLayoutParams(landscape ? new LinearLayout.LayoutParams(panel,-1) : new LinearLayout.LayoutParams(-1,panel));
                 network.connect();
-                stage.postDelayed(this::reportViewport, 250);
+                stage.post(this::reportViewport);
             }
             case "disconnect" -> { requireFields(value, "op"); network.disconnect(); }
             case "observe" -> { requireFields(value, "op"); network.command(0, 0, 0, 0, 0, 0, ""); }
@@ -178,7 +178,7 @@ public final class MainActivity extends Activity {
         return network.snapshot(annex.snapshot()).toString();
     }
     private void reportViewport() {
-        if (!networkSelected || !network.connected()) return;
+        if (!networkSelected || stage.getWidth()<=0 || stage.getHeight()<=0) return;
         float density = getResources().getDisplayMetrics().density;
         int width = Math.max(1, Math.round(stage.getWidth() / density));
         int height = Math.max(1, Math.round(stage.getHeight() / density));

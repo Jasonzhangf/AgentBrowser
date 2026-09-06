@@ -21,8 +21,8 @@ final class NetworkSession {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private long handle,token,generation,shownEpoch;
-    private int declaredWidth,declaredHeight;
-    private boolean declaredLandscape;
+    private record Viewport(int width,int height,boolean landscape) { }
+    private Viewport requestedViewport,submittedViewport;
     private boolean running,closed,framePending,commandPending;
     private NetworkFrame displayed;
     private JSONObject host;
@@ -31,15 +31,21 @@ final class NetworkSession {
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized boolean current(long value){return connected()&&token==value;}
-    synchronized boolean inputReady(){return connected()&&!framePending&&!commandPending&&displayed!=null;}
+    synchronized boolean inputReady(){return connected()&&!framePending&&!commandPending&&displayed!=null
+        &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null&&!host.optBoolean("viewport_pending");}
     synchronized long epoch(){return shownEpoch;}
     synchronized boolean humanShown(){return shownMode.equals("control");}
     synchronized void declareViewport(int cssWidth,int cssHeight,boolean landscape){
-        if(!connected()||commandPending)return;
-        if(cssWidth<=0||cssHeight<=0)return;
-        if(cssWidth==declaredWidth&&cssHeight==declaredHeight&&landscape==declaredLandscape)return;
-        declaredWidth=cssWidth;declaredHeight=cssHeight;declaredLandscape=landscape;
-        command(6,0,cssWidth,cssHeight,landscape?1:0,0,"");
+        if(cssWidth<=0||cssHeight<=0||cssWidth>4096||cssHeight>4096||(long)cssWidth*cssHeight>4194304)
+            throw new IllegalArgumentException("INVALID_VIEWPORT");
+        requestedViewport=new Viewport(cssWidth,cssHeight,landscape);
+        flushViewport();
+    }
+    private synchronized void flushViewport(){
+        if(!connected()||commandPending||requestedViewport==null||requestedViewport.equals(submittedViewport))return;
+        Viewport viewport=requestedViewport;
+        command(6,0,viewport.width(),viewport.height(),viewport.landscape()?1:0,0,"");
+        submittedViewport=viewport;
     }
     private static long next(long value){if(value==Long.MAX_VALUE)throw new IllegalStateException("GENERATION_EXHAUSTED");return value+1;}
     synchronized JSONObject snapshot(JSONObject media){
@@ -69,7 +75,7 @@ final class NetworkSession {
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
         token=next(token);generation=next(generation);long expected=token;
         state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";
-        declaredWidth=0;declaredHeight=0;declaredLandscape=false;
+        submittedViewport=null;
         worker.execute(()->open(expected));
     }
     private void open(long expected){
@@ -78,7 +84,7 @@ final class NetworkSession {
             NativeConnection.load();
             opened=NativeConnection.open(new String(read("endpoint.txt"),StandardCharsets.UTF_8).trim(),read("ca.der"),read("client.der"),read("key.der"));
             JSONObject status=new JSONObject(NativeConnection.command(opened,0,0,0,0,0,0,0,""));
-            synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";}
+            synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";flushViewport();}
             poll(expected);
         }catch(Exception failure){
             if(opened!=0){try{NativeConnection.close(opened);}catch(Exception close){failure.addSuppressed(close);}}
@@ -126,8 +132,8 @@ final class NetworkSession {
             try{
                 synchronized(this){if(!current(expected))return;}
                 String result=NativeConnection.command(nativeHandle,op,epoch,ticket,x,y,dx,dy,text==null?"":text);
-                JSONObject status=new JSONObject(op<=2?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
-                synchronized(this){if(current(expected)){host=status;commandPending=false;}}
+                JSONObject status=new JSONObject(op<=2||op==6?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
+                synchronized(this){if(current(expected)){host=status;commandPending=false;flushViewport();}}
             }catch(Exception failure){terminate(expected,failure);}
         });
     }

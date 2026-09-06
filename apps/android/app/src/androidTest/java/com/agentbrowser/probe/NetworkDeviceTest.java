@@ -30,8 +30,29 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         fail("Condition: "+script+"\nstatus="+js("JSON.stringify("+STATUS+")")+"\n"+js("document.body.innerText"));
     }
     private void click(String id)throws Exception{js("document.getElementById('"+id+"').click()");}
-    private void remoteClick(double x,double y)throws Exception{String result=js("(()=>{const s="+STATUS+";return ProbeNative.request(JSON.stringify({op:'click',epoch:s.epoch,x:"+x+",y:"+y+"}))})()");assertFalse("Remote click rejected: "+result,result.contains("rejection"));}
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
+    private JSONObject viewport() throws Exception {
+        int[] size=new int[4];
+        getInstrumentation().runOnMainSync(()->{
+            android.view.View stage=(android.view.View)activity.videoClip.getParent();
+            float density=activity.getResources().getDisplayMetrics().density;
+            size[0]=Math.round(stage.getWidth()/density);size[1]=Math.round(stage.getHeight()/density);
+            size[2]=activity.visibleWidth;size[3]=activity.visibleHeight;
+        });
+        assertEquals("Host page width matches phone stage",size[0],size[2]);
+        assertEquals("Host page height matches phone stage",size[1],size[3]);
+        return new JSONObject().put("cssWidth",size[0]).put("cssHeight",size[1]).put("sourceWidth",size[2]).put("sourceHeight",size[3]);
+    }
+    private void awaitSourceSize(int width,int height) throws Exception {
+        long deadline=SystemClock.elapsedRealtime()+6000;
+        boolean[] matched={false};
+        do {
+            getInstrumentation().runOnMainSync(()->matched[0]=activity.visibleWidth==width&&activity.visibleHeight==height);
+            if(matched[0]){until(STATUS+".inputReady",6000);return;}
+            SystemClock.sleep(50);
+        } while(SystemClock.elapsedRealtime()<deadline);
+        fail("Viewport declaration lost: expected "+width+"x"+height+", status="+js("JSON.stringify("+STATUS+")"));
+    }
     private void touch(float x,float y)throws Exception{
         until(STATUS+".inputReady",6000);
         float[] location=new float[2];
@@ -60,6 +81,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             until("!!document.getElementById('connect')",10000);click("connect");
             until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             until("document.body.innerText.includes('观察模式')",5000);
+            JSONObject viewport=viewport();
             String session=js(STATUS+".sessionId");
             Bitmap before=capture("before");
             assertTrue("Real red Host button",Color.red(before.getPixel(30,30))>160&&Color.green(before.getPixel(30,30))<100);
@@ -67,16 +89,31 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             Bitmap observer=capture("observer");
             assertTrue("Observer touch cannot mutate Host",Color.red(observer.getPixel(30,30))>160&&Color.green(observer.getPixel(30,30))<100);
             click("takeover");until(STATUS+".controlMode==='control'",6000);
-            remoteClick(30,30);
+            touch(30,30);
             Bitmap after=null;
             long paintDeadline=SystemClock.elapsedRealtime()+5000;
             do { SystemClock.sleep(150); after=capture("after"); }
             while (Color.green(after.getPixel(30,30))<=160 && SystemClock.elapsedRealtime()<paintDeadline);
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
-            remoteClick(30,225);SystemClock.sleep(250);
+            touch(30,125);SystemClock.sleep(250);
             until(STATUS+".inputReady",6000);
             String accepted=js("(()=>{const s="+STATUS+";return !JSON.parse(ProbeNative.request(JSON.stringify({op:'input_text',epoch:s.epoch,text:'native-network-proof'}))).rejection})()");
             assertEquals("true",accepted);
+            until(STATUS+".inputReady",6000);
+            int width=viewport.getInt("cssWidth"),height=viewport.getInt("cssHeight");
+            // Hold the session monitor so the status command cannot complete
+            // before both declarations arrive. Only the latest should survive.
+            getInstrumentation().runOnMainSync(()->{
+                synchronized(activity.network){
+                    activity.network.command(0,0,0,0,0,0,"");
+                    activity.network.declareViewport(width-20,height-20,false);
+                    activity.network.declareViewport(width-10,height-10,false);
+                }
+            });
+            awaitSourceSize(width-10,height-10);
+            getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width,height,false));
+            awaitSourceSize(width,height);
+            viewport();
             SystemClock.sleep(700);click("release");until("document.body.innerText.includes('观察模式')",6000);
             Bitmap screenshot=getInstrumentation().getUiAutomation().takeScreenshot();assertNotNull(screenshot);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/screen.png"))){assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG,100,output));}
@@ -89,6 +126,9 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             getInstrumentation().runOnMainSync(()->assertTrue(activity.moveTaskToBack(true)));
             until(STATUS+".released",6000);
             JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true)
+                .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
+                .put("viewport",viewport)
+                .put("busyViewportCoalesced",true)
                 .put("reconnectPreservesDocument",true).put("backgroundRelease",true).put("staleCallbacksFenced",true)
                 .put("textSubmitted",true).put("sessionId",new org.json.JSONTokener(session).nextValue());
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/result.json"))){output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
