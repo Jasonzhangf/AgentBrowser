@@ -164,6 +164,16 @@ print("{\\"x\\":\\(origin.x),\\"y\\":\\(origin.y),\\"width\\":\\(extent.width),\
   return JSON.parse(String(output.stdout).trim());
 }
 
+function activatePid(pid) {
+  const swift = `
+import AppKit
+let app = NSRunningApplication(processIdentifier: ${pid})!
+_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+`;
+  command('swift', ['-e', swift], {timeout: 30_000});
+}
+
 async function waitForWindow(child) {
   let rect;
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -287,6 +297,7 @@ function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
 }
 
 function focusAccessibilityTextField(pid, description, logPath) {
+  activatePid(pid);
   const swift = `
 import ApplicationServices
 import Foundation
@@ -316,6 +327,7 @@ guard AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBo
 }
 
 function postUnicodeText(pid, text, logPath) {
+  activatePid(pid);
   const swift = `
 import CoreGraphics
 import Foundation
