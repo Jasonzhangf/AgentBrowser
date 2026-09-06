@@ -210,6 +210,7 @@ public final class MainActivity extends Activity {
             case "observe" -> { requireFields(value, "op"); network.command(0, 0, 0, 0, 0, 0, ""); }
             case "takeover" -> { requireFields(value, "op", "epoch"); network.command(1, value.getLong("epoch"), 0, 0, 0, 0, ""); }
             case "release" -> { requireFields(value, "op", "epoch"); network.command(2, value.getLong("epoch"), 0, 0, 0, 0, ""); }
+            case "navigate" -> { requireFields(value, "op", "epoch", "url"); network.command(7, value.getLong("epoch"), 0, 0, 0, 0, value.getString("url")); }
             case "click" -> { requireFields(value, "op", "epoch", "x", "y"); network.command(3, value.getLong("epoch"), finite(value, "x"), finite(value, "y"), 0, 0, ""); }
             case "input_text" -> { requireFields(value, "op", "epoch", "text"); String text = value.getString("text"); if (text.length() > 4096) throw new IllegalArgumentException("INPUT_TEXT_LIMIT"); network.command(4, value.getLong("epoch"), 0, 0, 0, 0, text); }
             case "scroll" -> { requireFields(value, "op", "epoch", "x", "y", "dx", "dy"); network.command(5, value.getLong("epoch"), finite(value, "x"), finite(value, "y"), finite(value, "dx"), finite(value, "dy"), ""); }
@@ -241,7 +242,7 @@ public final class MainActivity extends Activity {
             try {
                 org.json.JSONObject json = new org.json.JSONObject(raw);
                 String op = json.optString("op", "");
-                if (java.util.Set.of("connect", "disconnect", "observe", "takeover", "release", "click", "input_text", "scroll").contains(op)
+                if (java.util.Set.of("connect", "disconnect", "observe", "takeover", "release", "navigate", "click", "input_text", "scroll").contains(op)
                         || ("status".equals(op) && networkSelected)) {
                     var task = new java.util.concurrent.FutureTask<String>(() -> dispatchNetwork(json));
                     runOnUiThread(task);

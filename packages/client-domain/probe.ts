@@ -3,6 +3,7 @@ export type ProbeState = 'idle' | 'starting' | 'playing' | 'stopping' | 'stopped
 export type ProbeCommand =
   | { op: 'play'; sample: 'portrait' | 'broken' } | { op: 'stop' } | { op: 'status' }
   | { op: 'connect' } | { op: 'disconnect' } | { op: 'observe' } | { op: 'takeover'; epoch: number } | { op: 'release'; epoch: number }
+  | { op: 'navigate'; epoch: number; url: string }
   | { op: 'click'; epoch: number; x: number; y: number } | { op: 'input_text'; epoch: number; text: string }
   | { op: 'scroll'; epoch: number; x: number; y: number; dx: number; dy: number };
 export interface ProbeSnapshot {

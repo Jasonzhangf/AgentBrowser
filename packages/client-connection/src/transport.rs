@@ -36,6 +36,7 @@ enum Action {
     DeclareViewport(ViewportDeclaration),
     Takeover(u64),
     Release(u64),
+    Navigate(String, u64),
     Input(Input, DisplayedFrame, u64),
 }
 
@@ -71,6 +72,9 @@ impl Connection {
     }
     pub async fn takeover(&self, epoch: u64) -> Result<SessionStatus, Failure> { status(self.call(Action::Takeover(epoch)).await?) }
     pub async fn release(&self, epoch: u64) -> Result<SessionStatus, Failure> { status(self.call(Action::Release(epoch)).await?) }
+    pub async fn navigate(&self, url: String, epoch: u64) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::Navigate(url, epoch)).await?)
+    }
     pub async fn input(&self, input: Input, displayed: DisplayedFrame, epoch: u64) -> Result<(), Failure> {
         match self.call(Action::Input(input, displayed, epoch)).await? {
             ResultValue::Input { .. } => Ok(()),
@@ -235,6 +239,18 @@ async fn execute(socket: &mut Socket, id: &mut u64, action: Action, generation: 
         Action::DeclareViewport(viewport) => (Command::DeclareViewport { viewport }, None),
         Action::Takeover(epoch) => (Command::RequestTakeover { epoch }, None),
         Action::Release(epoch) => (Command::ReleaseControl { epoch }, None),
+        Action::Navigate(url, epoch) => {
+            let current = status(exchange(socket, id, Command::Status {}, None).await?)?;
+            if current.session_id != session || current.attachment_id != attachment {
+                return Err(Failure::Protocol("Control attachment changed".into()));
+            }
+            if current.viewport_pending {
+                return Err(Failure::Host { code: "VIEWPORT_PENDING".into(), message: "Viewport layout is pending".into() });
+            }
+            (Command::Navigate { url }, Some(Operation { session_id: session.into(), attachment_id: attachment.unwrap(),
+                sequence: current.next_sequence, control_epoch: epoch,
+                viewport_revision: current.viewport_revision, document_revision: current.document_revision }))
+        }
         Action::Input(input, frame, epoch) => {
             if frame.generation != generation || frame.session_id != session {
                 return Err(Failure::Protocol("Input belongs to another displayed connection".into()));

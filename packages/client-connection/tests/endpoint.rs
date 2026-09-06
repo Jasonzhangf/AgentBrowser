@@ -66,15 +66,30 @@ async fn exercise() {
     let observed = connection.status().await.unwrap();
     assert!(matches!(connection.input(Input::Click { x:30., y:30. }, displayed.clone(), observed.control.epoch).await,
         Err(Failure::Host { .. })), "Observer cannot input");
+    assert!(matches!(connection.navigate("data:text/html,<title>observer</title>".into(), observed.control.epoch).await,
+        Err(Failure::Host { ref code, .. }) if code == "CONTROL_REQUIRED"), "Observer navigation must reach Host control arbitration");
     let human = connection.takeover(observed.control.epoch).await.unwrap();
     assert!(matches!(human.control.phase, ControlPhase::Human { .. }));
-    let mut stale = displayed.clone(); stale.document_revision += 1;
-    assert!(matches!(connection.input(Input::Click { x:30., y:30. }, stale, human.control.epoch).await,
-        Err(Failure::Host { .. })), "Displayed revisions must not be replaced with latest status");
-    connection.input(Input::Click { x:30., y:30. }, displayed.clone(), human.control.epoch).await.unwrap();
+    assert!(matches!(connection.navigate("about:blank".into(), observed.control.epoch).await,
+        Err(Failure::Host { ref code, .. }) if code == "STALE_CONTROL"), "Stale navigation epoch must reach Host validation");
+    let navigated = connection.navigate("data:text/html,<title>navigated</title><button style='width:200px;height:100px' onclick='window.navigatedClicked=(window.navigatedClicked||0)+1'>new</button>".into(), human.control.epoch).await.unwrap();
+    assert_eq!(navigated.document_revision, human.document_revision + 1);
+    let navigated_displayed = loop {
+        connection.media.changed().await.unwrap();
+        let video = connection.media.borrow_and_update().clone().unwrap();
+        if let VideoPacket::AccessUnit { source, .. } = &video.packet {
+            if source.document_revision == navigated.document_revision {
+                break DisplayedFrame { generation: connection.generation, session_id: source.session_id.clone(),
+                    document_revision: source.document_revision, viewport_revision: source.viewport_revision };
+            }
+        }
+    };
+    assert!(matches!(connection.input(Input::Click { x:30., y:30. }, displayed.clone(), human.control.epoch).await,
+        Err(Failure::Host { .. })), "Old displayed document must be rejected after navigation");
+    connection.input(Input::Click { x:30., y:30. }, navigated_displayed, human.control.epoch).await.unwrap();
     connection.release(human.control.epoch).await.unwrap();
     let latest = state(local_call(&mut local, &mut id, Command::Status {}, None).await);
-    let effect = local_call(&mut local, &mut id, Command::Evaluate { expression: "window.clicked".into() }, Some(identity(&latest))).await;
+    let effect = local_call(&mut local, &mut id, Command::Evaluate { expression: "window.navigatedClicked".into() }, Some(identity(&latest))).await;
     match effect { ResultValue::Evaluation { result } => assert_eq!(result.value.unwrap().as_f64(), Some(1.0)), _ => panic!("Expected DOM evidence") }
     let observed = connection.status().await.unwrap();
     connection.takeover(observed.control.epoch).await.unwrap();

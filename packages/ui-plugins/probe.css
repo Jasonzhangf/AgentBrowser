@@ -23,6 +23,9 @@ footer p { margin: 2px 0; }
 .network h2 { margin: 0; font-size: 15px; }
 .network .actions { margin-top: 8px; }
 .network .actions button { min-height: 42px; padding: 8px 10px; font-size: 13px; }
+.address-entry { display: flex; gap: 8px; margin-top: 8px; }
+.address-entry input { min-width: 0; flex: 1; border: 1px solid #cad6cc; border-radius: 8px; padding: 9px; font: inherit; }
+.address-entry button { min-height: 42px; padding: 8px 12px; font-size: 13px; }
 .text-entry { display: flex; gap: 8px; margin-top: 8px; }
 .text-entry input { min-width: 0; flex: 1; border: 1px solid #cad6cc; border-radius: 8px; padding: 9px; font: inherit; }
 .text-entry button { min-height: 42px; padding: 8px 12px; font-size: 13px; }
@@ -33,6 +36,7 @@ footer p { margin: 2px 0; }
 .remote .network .detail { margin: 0 0 6px; }
 .remote .network .actions { margin-top: 0; }
 .remote .network button { min-height: 40px; padding: 7px 8px; }
+.remote .address-entry { margin-top: 6px; }
 .remote .text-entry { margin-top: 6px; }
 body:has(.remote) { padding: 10px 14px; }
 body:has(.remote) footer { display: none; }

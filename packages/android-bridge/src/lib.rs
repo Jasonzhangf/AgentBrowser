@@ -155,6 +155,7 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_command(
                 }
                 1 => Ok(serde_json::to_string(&connection.takeover(epoch as u64).await?).map_err(error)?),
                 2 => Ok(serde_json::to_string(&connection.release(epoch as u64).await?).map_err(error)?),
+                7 => Ok(serde_json::to_string(&connection.navigate(text, epoch as u64).await?).map_err(error)?),
                 3..=5 => {
                     if ![x,y,dx,dy].iter().all(|number| number.is_finite()) { return Err("Nonfinite input coordinates".into()); }
                     let frame = session.displayed.iter().find(|(id,_)|ticket>0&&*id==ticket as u64)
