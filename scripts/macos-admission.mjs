@@ -16,8 +16,6 @@ const pinnedTools = resolve('evidence/pinned-tools');
 const protocolRoot = resolve(process.env.OBSCURA_PROTOCOL_ROOT ?? '');
 const binaryRoot = resolve(process.env.OBSCURA_BIN_DIR ?? '');
 const bindIp = process.env.OBSCURA_ENDPOINT_BIND_IP;
-const appProcessName = 'AgentBrowserMac';
-const appWindowName = 'AgentBrowser';
 const appBundleName = 'AgentBrowserMac.app';
 const appExecutableName = 'AgentBrowserMac';
 const hash = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -142,31 +140,35 @@ async function terminateOwned(child, executable, logPath) {
   return {pid: child.pid, ...result};
 }
 
-function osa(script, options = {}) {
-  return command('osascript', ['-e', script], options).toString().trim();
+function windowRect(pid) {
+  const swift = `
+import ApplicationServices
+import Foundation
+let app = AXUIElementCreateApplication(${pid})
+func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var result: CFTypeRef?
+    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
+    return error == .success ? result : nil
 }
-
-function osaPoll(script) {
-  return optionalCommand('osascript', ['-e', script], {encoding: 'utf8'});
-}
-
-function uiScript(body) {
-  return `tell application "System Events"\n  tell process "${appProcessName}"\n    set frontmost to true\n    ${body}\n  end tell\nend tell`;
-}
-
-function windowRect() {
-  const output = osaPoll(uiScript(`get {position, size} of window "${appWindowName}"`));
+guard let windows = value(app, kAXWindowsAttribute) as? [AXUIElement], let window = windows.first,
+      let positionValue = value(window, kAXPositionAttribute), let sizeValue = value(window, kAXSizeAttribute) else { exit(2) }
+let position = positionValue as! AXValue
+let size = sizeValue as! AXValue
+var origin = CGPoint.zero
+var extent = CGSize.zero
+guard AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(size, .cgSize, &extent), extent.width > 0, extent.height > 0 else { exit(3) }
+print("{\\"x\\":\\(origin.x),\\"y\\":\\(origin.y),\\"width\\":\\(extent.width),\\"height\\":\\(extent.height)}")
+`;
+  const output = optionalCommand('swift', ['-e', swift], {encoding: 'utf8', timeout: 30_000});
   if (output.status !== 0) return null;
-  const values = String(output.stdout).match(/-?\d+/g)?.map(Number) ?? [];
-  if (values.length < 4) return null;
-  return {x: values[0], y: values[1], width: values[2], height: values[3]};
+  return JSON.parse(String(output.stdout).trim());
 }
 
 async function waitForWindow(child) {
   let rect;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     if (!processRows(child.executable).some(row => row.pid === child.pid)) throw new Error(`App exited before window appeared: ${child.pid}`);
-    rect = windowRect();
+    rect = windowRect(child.pid);
     if (rect && rect.width >= 900 && rect.height >= 600) return rect;
     await sleep(100);
   }
@@ -263,7 +265,7 @@ import AppKit
 import CoreGraphics
 let pid: pid_t = ${pid}
 let app = NSRunningApplication(processIdentifier: pid)!
-_ = app.activate(options: [.activateAllWindows])
+_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
 let point = CGPoint(x: ${target.x}, y: ${target.y})
 let source = CGEventSource(stateID: .hidSystemState)!
@@ -275,7 +277,7 @@ let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorP
 up.post(tap: .cghidEventTap)
 `;
   command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'bundle_id', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
@@ -393,7 +395,7 @@ import AppKit
 import CoreGraphics
 let pid: pid_t = ${pid}
 let app = NSRunningApplication(processIdentifier: pid)!
-_ = app.activate(options: [.activateAllWindows])
+_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
 let source = CGEventSource(stateID: .hidSystemState)!
 let point = CGPoint(x: ${target.x}, y: ${target.y})
@@ -408,8 +410,8 @@ event.post(tap: .cghidEventTap)
   writeFileSync(eventLogPath, JSON.stringify({pid, event: 'native_scroll', delivery: 'hid_event_tap', delta, screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
-function captureWindow(path, full = true) {
-  const rect = windowRect();
+function captureWindow(path, pid, full = true) {
+  const rect = windowRect(pid);
   assert(rect, 'AgentBrowser window disappeared before screenshot');
   const region = full
     ? rect
@@ -691,11 +693,11 @@ async function main() {
     const firstApp = await launchApp('app-first');
     await waitForWindow(firstApp);
     await sleep(1_500);
-    screenshots.push(captureWindow(join(directory, 'waiting.png'), false));
+    screenshots.push(captureWindow(join(directory, 'waiting.png'), firstApp.pid, false));
     await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
     await sleep(4_000);
     await observeHostStatus('connect', 2, 'agent');
-    const connected = captureWindow(join(directory, 'connected.png'), false);
+    const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid, false);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
     await pressAccessibilityButton(firstApp.pid, '接管页面', join(directory, 'takeover.log'));
@@ -725,7 +727,7 @@ async function main() {
     await sleep(2_000);
     postSurfaceScroll(firstApp.pid, viewport, 180, 500, -20, join(directory, 'scroll-surface-geometry.log'), join(directory, 'scroll.log'));
     await sleep(2_000);
-    screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), true));
+    screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), firstApp.pid, true));
     await pressAccessibilityButton(firstApp.pid, '返回观察', join(directory, 'release.log'));
     await sleep(2_000);
     await observeHostStatus('release', 2, 'agent');
@@ -741,7 +743,7 @@ async function main() {
     await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'reconnect.log'));
     await sleep(4_000);
     const reconnectStatus = await observeHostStatus('reconnect', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'reconnect.png'), false));
+    screenshots.push(captureWindow(join(directory, 'reconnect.png'), firstApp.pid, false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Reconnect produced no displayed frame');
     await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
     await sleep(1_000);
@@ -758,7 +760,7 @@ async function main() {
     await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
     await sleep(4_000);
     const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), false));
+    screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), secondApp.pid, false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
     await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'restart-disconnect.log'));
     await sleep(1_000);
