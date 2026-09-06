@@ -100,6 +100,19 @@
   },
   "modules": [
     {
+      "module_id":"client-connection", "source_owner":"client-connection", "stage":"contract_bound",
+      "owned_paths":["packages/client-connection/**","scripts/connection.py","scripts/connection-admission.mjs","Cargo.toml","Cargo.lock"],
+      "contract_paths":["docs/client-connection.md","docs/architecture.md"],
+      "dependency_modules":[],"deployment_operations":[],
+      "build":{"program":"python3","args":["scripts/connection.py","build"],"working_directory":"."},
+      "artifact_paths":["libagentbrowser_connection.rlib","connection-acceptance"],
+      "generated_outputs":["target/**","generated/modules/client-connection/**"],"active_artifact":"active/lib/client-connection",
+      "regression":{"suite_id":"connection-direct-wss","command":{"program":"python3","args":["scripts/connection.py","test"],"working_directory":"."},
+        "input_paths":["packages/client-connection/**","scripts/connection.py","scripts/connection-admission.mjs","Cargo.toml","Cargo.lock"],
+        "minimum_test_count":6,"allow_skipped":false,"required_before_freeze":true,"ordinary_mode_after_freeze":"disabled",
+        "reenable_on":["source_change","contract_change","public_api_change","artifact_change","dependency_change"]}
+    },
+    {
       "active_artifact": "active/lib/android-probe",
       "artifact_paths": [
         "app-debug.apk"
@@ -185,19 +198,6 @@
       },
       "source_owner": "android-probe",
       "stage": "contract_bound"
-    },
-    {
-      "module_id":"client-connection", "source_owner":"client-connection", "stage":"contract_bound",
-      "owned_paths":["packages/client-connection/**","scripts/connection.py","scripts/connection-admission.mjs","Cargo.toml","Cargo.lock"],
-      "contract_paths":["docs/client-connection.md","docs/architecture.md"],
-      "dependency_modules":[],"deployment_operations":[],
-      "build":{"program":"python3","args":["scripts/connection.py","build"],"working_directory":"."},
-      "artifact_paths":["libagentbrowser_connection.rlib","connection-acceptance"],
-      "generated_outputs":["target/**","generated/modules/client-connection/**"],"active_artifact":"active/lib/client-connection",
-      "regression":{"suite_id":"connection-direct-wss","command":{"program":"python3","args":["scripts/connection.py","test"],"working_directory":"."},
-        "input_paths":["packages/client-connection/**","scripts/connection.py","scripts/connection-admission.mjs","Cargo.toml","Cargo.lock"],
-        "minimum_test_count":6,"allow_skipped":false,"required_before_freeze":true,"ordinary_mode_after_freeze":"disabled",
-        "reenable_on":["source_change","contract_change","public_api_change","artifact_change","dependency_change"]}
     }
   ],
   "project_id": "agentbrowser",
