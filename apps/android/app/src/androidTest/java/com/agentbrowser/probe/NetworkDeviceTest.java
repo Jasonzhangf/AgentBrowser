@@ -37,6 +37,15 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         fail("Condition: "+script+"\nstatus="+js("JSON.stringify("+STATUS+")")+"\n"+js("document.body.innerText"));
     }
     private void click(String id)throws Exception{js("document.getElementById('"+id+"').click()");}
+    private void navigateFromAddress(String url) throws Exception {
+        until("!document.getElementById('address').disabled",6000);
+        long previous=Long.parseLong(js(STATUS+".documentRevision"));
+        js("(()=>{const input=document.getElementById('address');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,"
+            +JSONObject.quote(url)+");input.dispatchEvent(new Event('input',{bubbles:true}));})()");
+        until("!document.getElementById('navigate').disabled",6000);
+        click("navigate");
+        until(STATUS+".documentRevision==="+(previous+1)+" && "+STATUS+".inputReady",15000);
+    }
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
     private void assertDisplayedRevision() throws Exception {
         assertEquals("Input requires the actually displayed Host revisions", "true", js("(s=>!s.inputReady||(s.documentRevision===s.displayedDocumentRevision&&s.viewportRevision===s.displayedViewportRevision))("+STATUS+")"));
@@ -270,6 +279,17 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             until("!!document.getElementById('connect')",10000);click("connect");
             until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             until("document.body.innerText.includes('观察模式')",5000);
+            assertEquals("Observer cannot navigate from the UI","true",js("document.getElementById('address').disabled && document.getElementById('navigate').disabled"));
+            String initialUrl=new String(android.util.Base64.decode(
+                ((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("initialUrlBase64"),
+                android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
+            String navigationSession=js(STATUS+".sessionId");
+            click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            navigateFromAddress("about:blank");
+            navigateFromAddress(initialUrl);
+            assertEquals("Navigation retains the Host Session",navigationSession,js(STATUS+".sessionId"));
+            until("!document.getElementById('release').disabled",5000);
+            click("release");until(STATUS+".controlMode==='observe'",6000);
             JSONObject viewport=viewport();
             String session=js(STATUS+".sessionId");
             long framesBeforeRejection=activity.annex.snapshot().getLong("renderedFrames");
@@ -377,7 +397,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             click("release");until(STATUS+".controlMode==='observe'",6000);
             getInstrumentation().runOnMainSync(()->assertTrue(activity.moveTaskToBack(true)));
             until(STATUS+".released",6000);
-            JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true)
+            JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true).put("addressNavigation",true)
                 .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
                 .put("viewport",viewport)
                 .put("busyViewportCoalesced",true)

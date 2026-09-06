@@ -1,5 +1,6 @@
 """Real installed APK + private Host fixture + independent DOM evidence."""
 import json
+import base64
 import hashlib
 import os
 import pathlib
@@ -57,7 +58,8 @@ with (evidence / "network-host.log").open("wb") as log:
         pairing = ready["fixture"]
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
-            "com.agentbrowser.probe.NetworkDeviceTest", "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
+            "com.agentbrowser.probe.NetworkDeviceTest", "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
+            "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)
         (evidence / "network-test.log").write_bytes(result.stdout)
         if b"OK (1 test)" not in result.stdout:
@@ -65,7 +67,7 @@ with (evidence / "network-host.log").open("wb") as log:
         instrumentation = json.loads(subprocess.check_output(
             ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", "files/network-evidence/result.json"]
         ))
-        required = ["keyboardVisible", "compositionStarted", "compositionSendDisabled", "compositionCancelled",
+        required = ["addressNavigation", "keyboardVisible", "compositionStarted", "compositionSendDisabled", "compositionCancelled",
                     "compositionCommitted", "unfinishedCompositionDropped", "disconnectCompositionCancelled",
                     "imeTextEvidence", "imeTextPainted"]
         if not all(instrumentation.get(flag) is True for flag in required):

@@ -80,6 +80,7 @@ assert(network.displayedRevisionFenced);
 assert(network.swipeDoesNotClick && network.scrollPixels);
 assert(network.cancelledGestureIgnored && network.staleViewportGestureIgnored);
 assert(network.rotationPreservesState);
+assert(network.addressNavigation, 'Real address-bar navigation must reach a displayed Host document');
 assert(network.keyboardVisible && network.compositionStarted && network.compositionSendDisabled);
 assert(network.compositionCancelled && network.compositionCommitted && network.unfinishedCompositionDropped);
 assert(network.disconnectCompositionCancelled);

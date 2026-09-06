@@ -35,9 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut line = String::new(); local.read_line(&mut line).await?;
     let mut id = 0;
     let attached = status(call(&mut local, &mut id, Command::Attach { mode: Mode::Agent, viewport: None }, None).await);
-    let navigated = status(call(&mut local, &mut id, Command::Navigate { url:
+    let initial_url: String =
         "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p><div style='height:1400px;background:blue'></div><script>window.maxScroll=0;window.addEventListener('scroll',()=>{window.maxScroll=Math.max(window.maxScroll,window.scrollY)});</script>".into()
-    }, Some(identity(&attached))).await);
+    ;
+    let navigated = status(call(&mut local, &mut id, Command::Navigate { url: initial_url.clone() }, Some(identity(&attached))).await);
     let resized = status(call(&mut local, &mut id, Command::Resize { width:391,height:845 }, Some(identity(&navigated))).await);
     let reservation = std::net::TcpListener::bind((bind,0))?;
     let address = reservation.local_addr()?; drop(reservation);
@@ -49,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg("--client-ca").arg(root.join("ca.der")).arg("--media-bin").arg(bin.join("obscura-media"))
         .stdout(Stdio::null()).stderr(Stdio::inherit()).kill_on_drop(true).spawn()?;
     wait(root.join("endpoint/encoded.sock")).await;
-    println!("{}",serde_json::json!({"fixture":root,"endpoint":format!("wss://{address}"),"session":resized.session_id}));
+    println!("{}",serde_json::json!({"fixture":root,"endpoint":format!("wss://{address}"),"session":resized.session_id,"initialUrl":initial_url}));
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     while let Some(command) = input.next_line().await? {
         if command == "quit" { break; }
