@@ -248,6 +248,7 @@ up.postToPid(pid)
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
+  osa(uiScript('set frontmost to true'));
   const surface = videoSurfaceGeometry(pid, geometryLogPath);
   const target = pageScreenPoint(surface, viewport, x, y);
   postMouse(pid, target, eventLogPath);
@@ -355,6 +356,7 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
 }
 
 function postSurfaceScroll(pid, viewport, x, y, delta, geometryLogPath, eventLogPath) {
+  osa(uiScript('set frontmost to true'));
   const surface = videoSurfaceGeometry(pid, geometryLogPath);
   const target = pageScreenPoint(surface, viewport, x, y);
   const swift = `
