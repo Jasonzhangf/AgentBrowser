@@ -70,14 +70,22 @@ function psRows() {
   }).filter(Boolean);
 }
 
+function commandPrefixes(prefix) {
+  return prefix.startsWith('/tmp/') ? [prefix, `/private${prefix}`] : [prefix];
+}
+
+function ownsCommand(row, prefix) {
+  return commandPrefixes(prefix).some(candidate => row.command === candidate || row.command.startsWith(`${candidate} `));
+}
+
 function processRows(prefix) {
-  return psRows().filter(row => row.command === prefix || row.command.startsWith(`${prefix} `));
+  return psRows().filter(row => ownsCommand(row, prefix));
 }
 
 function ownedCommand(pid, prefix) {
   const row = psRows().find(candidate => candidate.pid === pid);
   assert(row, `Owned process ${pid} is no longer observable`);
-  assert(row.command === prefix || row.command.startsWith(`${prefix} `),
+  assert(ownsCommand(row, prefix),
     `PID ${pid} is not owned by ${prefix}: ${row.command}`);
   return row;
 }
@@ -95,19 +103,40 @@ function waitForChildExit(child, timeout = 10_000) {
   });
 }
 
+async function waitForProcessExit(pid, executable, timeout = 8_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (!processRows(executable).some(row => row.pid === pid)) return {code: null, signal: 'SIGTERM'};
+    await sleep(100);
+  }
+  throw new Error(`Process ${pid} did not exit`);
+}
+
+async function waitForProcess(executable, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const rows = processRows(executable);
+    if (rows.length === 1) return rows[0];
+    assert(rows.length === 0, `Multiple installed App processes observed: ${JSON.stringify(rows)}`);
+    await sleep(100);
+  }
+  throw new Error(`Installed App process did not appear: ${executable}`);
+}
+
 async function terminateOwned(child, executable, logPath) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) {
-    return {pid: child?.pid ?? null, code: child?.exitCode ?? null, signal: child?.signalCode ?? null};
+  if (!child || !processRows(executable).some(row => row.pid === child.pid)) {
+    return {pid: child?.pid ?? null, code: null, signal: null};
   }
   ownedCommand(child.pid, executable);
-  child.kill('SIGTERM');
+  process.kill(child.pid, 'SIGTERM');
   let result;
   try {
-    result = await waitForChildExit(child, 8_000);
+    result = await waitForProcessExit(child.pid, executable, 8_000);
   } catch {
     ownedCommand(child.pid, executable);
-    child.kill('SIGKILL');
-    result = await waitForChildExit(child, 8_000);
+    process.kill(child.pid, 'SIGKILL');
+    result = await waitForProcessExit(child.pid, executable, 8_000);
+    result.signal = 'SIGKILL';
   }
   if (logPath) writeFileSync(logPath, JSON.stringify({pid: child.pid, ...result}, null, 2) + '\n');
   return {pid: child.pid, ...result};
@@ -125,10 +154,6 @@ function uiScript(body) {
   return `tell application "System Events"\n  tell process "${appProcessName}"\n    set frontmost to true\n    ${body}\n  end tell\nend tell`;
 }
 
-function activateApp() {
-  osa('tell application id "com.agentbrowser.macos" to activate');
-}
-
 function windowRect() {
   const output = osaPoll(uiScript(`get {position, size} of window "${appWindowName}"`));
   if (output.status !== 0) return null;
@@ -140,9 +165,7 @@ function windowRect() {
 async function waitForWindow(child) {
   let rect;
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`App exited before window appeared: ${child.exitCode}/${child.signalCode}`);
-    }
+    if (!processRows(child.executable).some(row => row.pid === child.pid)) throw new Error(`App exited before window appeared: ${child.pid}`);
     rect = windowRect();
     if (rect && rect.width >= 900 && rect.height >= 600) return rect;
     await sleep(100);
@@ -236,8 +259,12 @@ function pageScreenPoint(surface, viewport, x, y) {
 
 function postMouse(pid, target, logPath) {
   const swift = `
+import AppKit
 import CoreGraphics
 let pid: pid_t = ${pid}
+let app = NSRunningApplication(processIdentifier: pid)!
+_ = app.activate(options: [.activateAllWindows])
+RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
 let point = CGPoint(x: ${target.x}, y: ${target.y})
 let source = CGEventSource(stateID: .hidSystemState)!
 let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
@@ -252,7 +279,6 @@ up.post(tap: .cghidEventTap)
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
-  activateApp();
   const surface = videoSurfaceGeometry(pid, geometryLogPath);
   const target = pageScreenPoint(surface, viewport, x, y);
   postMouse(pid, target, eventLogPath);
@@ -360,11 +386,15 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
 }
 
 function postSurfaceScroll(pid, viewport, x, y, delta, geometryLogPath, eventLogPath) {
-  activateApp();
   const surface = videoSurfaceGeometry(pid, geometryLogPath);
   const target = pageScreenPoint(surface, viewport, x, y);
   const swift = `
+import AppKit
 import CoreGraphics
+let pid: pid_t = ${pid}
+let app = NSRunningApplication(processIdentifier: pid)!
+_ = app.activate(options: [.activateAllWindows])
+RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
 let source = CGEventSource(stateID: .hidSystemState)!
 let point = CGPoint(x: ${target.x}, y: ${target.y})
 let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: ${delta}, wheel2: 0, wheel3: 0)!
@@ -639,22 +669,26 @@ async function main() {
     install.fixture = {root: fixtureInfo.fixture, endpoint: fixtureInfo.endpoint, session: fixtureInfo.session};
     writeFileSync(join(directory, 'fixture.json'), JSON.stringify(install.fixture, null, 2) + '\n', {flag: 'wx'});
 
-    function launchApp(label) {
+    async function launchApp(label) {
       const logPath = join(directory, `${label}.log`);
       const stdout = createWriteStream(logPath, {flags: 'wx'});
-      const child = spawn(installedExecutable, ['--pairing-dir', fixtureInfo.fixture], {
-        cwd: installedApp,
+      const launcher = spawn('open', ['-n', '-a', installedApp, '--args', '--pairing-dir', fixtureInfo.fixture], {
+        cwd: root,
         env: {...admissionEnv},
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      child.stdout.pipe(stdout);
-      child.stderr.pipe(stdout);
+      launcher.stdout.pipe(stdout);
+      launcher.stderr.pipe(stdout);
+      const launchResult = await waitForChildExit(launcher, 20_000);
+      assert.equal(launchResult.code, 0, `open failed for ${installedApp}: ${JSON.stringify(launchResult)}`);
+      const row = await waitForProcess(installedExecutable);
+      const child = {pid: row.pid, executable: installedExecutable, label};
       appChildren.push(child);
       return child;
     }
 
     assert.equal(processRows(installedExecutable).length, 0, 'A prior installed AppBrowser process is still running');
-    const firstApp = launchApp('app-first');
+    const firstApp = await launchApp('app-first');
     await waitForWindow(firstApp);
     await sleep(1_500);
     screenshots.push(captureWindow(join(directory, 'waiting.png'), false));
@@ -719,7 +753,7 @@ async function main() {
     persist(join(directory, 'reconnect.json'), reconnect);
 
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
-    const secondApp = launchApp('app-restarted');
+    const secondApp = await launchApp('app-restarted');
     await waitForWindow(secondApp);
     await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
     await sleep(4_000);
@@ -754,14 +788,10 @@ async function main() {
     assert.deepEqual(externalFiles.map(path => hash(readFileSync(path))), externalHashes, 'External protocol/binary drifted');
   } finally {
     for (const child of appChildren) {
-      if (child.exitCode === null && child.signalCode === null) {
-        if (install?.installed_app) {
-          const exact = join(install.installed_app, 'Contents/MacOS/AgentBrowserMac');
-          if (processRows(exact).some(row => row.pid === child.pid)) {
-            ownedCommand(child.pid, exact);
-            child.kill('SIGTERM');
-            try { await waitForChildExit(child, 8_000); } catch { /* preserve primary failure */ }
-          }
+      if (install?.installed_app) {
+        const exact = join(install.installed_app, 'Contents/MacOS/AgentBrowserMac');
+        if (processRows(exact).some(row => row.pid === child.pid)) {
+          try { await terminateOwned(child, exact); } catch { /* preserve primary failure */ }
         }
       }
     }
