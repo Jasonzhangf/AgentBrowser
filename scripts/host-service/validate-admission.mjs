@@ -1,7 +1,7 @@
 // Real compiled-bundle install, launchd restart and Host attachment receipts.
 import {spawnSync} from 'node:child_process';
 import {createHash, randomUUID} from 'node:crypto';
-import {mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync, chmodSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, copyFileSync, chmodSync} from 'node:fs';
 import {hostname, userInfo} from 'node:os';
 import {resolve} from 'node:path';
 import {createConnection} from 'node:net';
@@ -56,7 +56,7 @@ files.forEach(name => { copyFileSync(`${compiled}/${name}`, `${installed}/${name
 assert.deepEqual(files.map(name => hash(readFileSync(`${installed}/${name}`))), hashes);
 const token = randomUUID().replaceAll('-', '');
 const root = `/private/tmp/abhs-admit-${token}`;
-const runtime = `/private/tmp/abhr-${token}`;
+const runtime = mkdtempSync('/private/tmp/abhr-');
 const label = `com.agentbrowser.admission.${token}`, service = `gui/${process.getuid()}/${label}`;
 const manager = (...args) => JSON.parse(run(`${installed}/host-service`, [...args, '--root', root]));
 async function ready(previous) {
