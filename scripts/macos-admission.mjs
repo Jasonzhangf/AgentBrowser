@@ -277,7 +277,11 @@ let pid: pid_t = ${pid}
 let app = NSRunningApplication(processIdentifier: pid)!
 _ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
 RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-let point = CGPoint(x: ${target.x}, y: ${target.y})
+// AX and screencapture use a top-left origin; Quartz mouse events use a
+// bottom-left origin. Keep the page/surface mapping in AX coordinates and
+// convert only at the native event boundary.
+let display = CGDisplayBounds(CGMainDisplayID())
+let point = CGPoint(x: ${target.x}, y: display.maxY - ${target.y})
 let source = CGEventSource(stateID: .hidSystemState)!
 let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
 move.post(tap: .cghidEventTap)
