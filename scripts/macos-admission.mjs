@@ -245,6 +245,7 @@ function hostStatus(socketPath, requestId) {
     const socket = createConnection({path: socketPath});
     const reader = createInterface({input: socket});
     let stage = 'ready';
+    let attachedStatus;
     let settled = false;
     const timer = setTimeout(() => finish(new Error(`Host status deadline: ${socketPath}`)), 20_000);
     function finish(error, value) {
@@ -273,20 +274,43 @@ function hostStatus(socketPath, requestId) {
           finish(new Error(`Unexpected Host ready response: ${line}`));
           return;
         }
-        stage = 'result';
-        socket.write(`${JSON.stringify({id: requestId, command: {type: 'status'}, operation: null})}\n`);
+        stage = 'attach';
+        socket.write(`${JSON.stringify({id: requestId, command: {type: 'attach', mode: 'observe', viewport: null}, operation: null})}\n`);
         return;
       }
       if (response.type === 'error') {
         finish(new Error(`Host status request failed: ${line}`));
         return;
       }
-      if (response.type !== 'result' || response.id !== requestId) {
+      if (response.type !== 'result') {
         finish(new Error(`Unexpected Host status response: ${line}`));
         return;
       }
+      if (stage === 'attach') {
+        if (response.id !== requestId) {
+          finish(new Error(`Unexpected Host attach response: ${line}`));
+          return;
+        }
+        attachedStatus = response.value;
+        stage = 'status';
+        socket.write(`${JSON.stringify({id: requestId + 1, command: {type: 'status'}, operation: null})}\n`);
+        return;
+      }
+      if (stage === 'status') {
+        if (response.id !== requestId + 1) {
+          finish(new Error(`Unexpected Host status response: ${line}`));
+          return;
+        }
+        stage = 'detach';
+        socket.write(`${JSON.stringify({id: requestId + 2, command: {type: 'detach'}, operation: null})}\n`);
+        return;
+      }
+      if (response.id !== requestId + 2) {
+        finish(new Error(`Unexpected Host detach response: ${line}`));
+        return;
+      }
       stage = 'done';
-      finish(null, response.value);
+      finish(null, {attached: attachedStatus, status: response.value});
     });
   });
 }
@@ -437,9 +461,15 @@ async function main() {
     async function observeHostStatus(label, expectedAttachments, expectedPhase) {
       let status;
       for (let attempt = 0; attempt < 40; attempt += 1) {
-        status = await hostStatus(hostSocket, hostRequestId++);
-        if (status?.attachments === expectedAttachments && status.control?.phase?.type === expectedPhase) {
-          const receipt = {label, expected: {attachments: expectedAttachments, control_phase: expectedPhase}, observed_at: now(), status};
+        const observed = await hostStatus(hostSocket, hostRequestId);
+        hostRequestId += 3;
+        status = observed.status;
+        if (observed.attached?.attachments === expectedAttachments + 1
+          && observed.attached?.control?.phase?.type === expectedPhase
+          && status?.attachments === expectedAttachments
+          && status.control?.phase?.type === expectedPhase) {
+          const receipt = {label, expected: {attachments: expectedAttachments, control_phase: expectedPhase}, observed_at: now(),
+            diagnostic_attachment: {mode: 'observe', attached_status: observed.attached, detached: true}, status};
           hostStatuses.push(receipt);
           return status;
         }
