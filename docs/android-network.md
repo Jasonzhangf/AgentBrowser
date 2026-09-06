@@ -96,5 +96,13 @@ viewport change between press and release.
 
 This remains a direct prepaired WSS integration slice. UDP/Relay selection,
 production account enrollment, multiple-client viewport election, complete
-rotation/reconnect UX and milestone publication remain separate acceptance work.
+reconnect UX and milestone publication remain separate acceptance work.
 No whole-flow PASS is inferred from a compiled library or previous local files.
+
+Android handles orientation and screen-size configuration changes in the
+existing Activity. The same WebView and network connection remain alive while
+the native stage is measured again and the Host negotiates its shared viewport.
+Rotation cancels any unfinished local gesture. Real-device acceptance rotates
+landscape then portrait and requires unchanged Session, document and control,
+retained visible input and matching stage/source dimensions. Keyboard insets
+and multi-device election still require separate verification.

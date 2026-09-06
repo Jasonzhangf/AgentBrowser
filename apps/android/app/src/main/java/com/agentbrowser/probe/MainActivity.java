@@ -92,11 +92,9 @@ public final class MainActivity extends Activity {
                 } catch (IOException error) { return new WebResourceResponse("text/plain", "UTF-8", 500, "Asset missing", Map.of(), new ByteArrayInputStream(error.toString().getBytes(StandardCharsets.UTF_8))); }
             }
         });
-        landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-        if (landscape) layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.addView(stage, landscape ? new LinearLayout.LayoutParams(0, -1, 1) : new LinearLayout.LayoutParams(-1, 0, 1));
-        int panel = (int) (370 * getResources().getDisplayMetrics().density);
-        layout.addView(webView, landscape ? new LinearLayout.LayoutParams(panel, -1) : new LinearLayout.LayoutParams(-1, panel));
+        layout.addView(stage);
+        layout.addView(webView);
+        layoutChrome();
         setContentView(layout);
         getWindow().getInsetsController().setSystemBarsAppearance(
             android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
@@ -106,6 +104,21 @@ public final class MainActivity extends Activity {
     }
     private static WebResourceResponse blocked() {
         return new WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", Map.of(), new ByteArrayInputStream(new byte[0]));
+    }
+    private void layoutChrome() {
+        landscape=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        layout.setOrientation(landscape?LinearLayout.HORIZONTAL:LinearLayout.VERTICAL);
+        stage.setLayoutParams(landscape?new LinearLayout.LayoutParams(0,-1,1):new LinearLayout.LayoutParams(-1,0,1));
+        int panel=Math.round((networkSelected?136:370)*getResources().getDisplayMetrics().density);
+        webView.setLayoutParams(landscape?new LinearLayout.LayoutParams(panel,-1):new LinearLayout.LayoutParams(-1,panel));
+    }
+    @Override public void onConfigurationChanged(android.content.res.Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        touchContext=null;
+        layoutChrome();
+        layout.requestApplyInsets();
+        // Stage layout reports the measured area; preserve this Activity and Host.
+        stage.post(this::reportViewport);
     }
     private void layoutVideo() {
         float scale=Math.min(stage.getWidth()/(float)visibleWidth,stage.getHeight()/(float)visibleHeight);
@@ -186,10 +199,9 @@ public final class MainActivity extends Activity {
                 requireFields(value, "op");
                 if (!annex.released() || !probe.snapshot().optBoolean("released")) throw new IllegalStateException("MEDIA_BUSY");
                 networkSelected = true;
-                int panel=(int)(136*getResources().getDisplayMetrics().density);
                 // Reserve compact chrome, then measure the remaining actual page
                 // area. Host viewport negotiation will use this area, not screen size.
-                webView.setLayoutParams(landscape ? new LinearLayout.LayoutParams(panel,-1) : new LinearLayout.LayoutParams(-1,panel));
+                layoutChrome();
                 network.connect();
                 stage.post(this::reportViewport);
             }

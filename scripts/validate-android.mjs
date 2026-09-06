@@ -79,6 +79,13 @@ assert(network.hostRejectionKeepsConnection);
 assert(network.displayedRevisionFenced);
 assert(network.swipeDoesNotClick && network.scrollPixels);
 assert(network.cancelledGestureIgnored && network.staleViewportGestureIgnored);
+assert(network.rotationPreservesState);
+for(const view of [network.landscapeViewport,network.portraitViewport]) {
+  assert.equal(view.cssWidth,view.sourceWidth);
+  assert.equal(view.cssHeight,view.sourceHeight);
+}
+assert(network.landscapeViewport.cssWidth>network.landscapeViewport.cssHeight);
+assert(network.portraitViewport.cssWidth<network.portraitViewport.cssHeight);
 assert(network.textPainted && network.inputGlyphsAfter > network.inputGlyphsBefore + 30);
 assert.equal(network.viewport.cssWidth, network.viewport.sourceWidth);
 assert.equal(network.viewport.cssHeight, network.viewport.sourceHeight);

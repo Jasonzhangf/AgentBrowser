@@ -117,6 +117,34 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         assertTrue("Interrupted gesture must not click: resize="+resize,
             Color.red(unchanged.getPixel(30,30))>160&&Color.green(unchanged.getPixel(30,30))<100);
     }
+    private void rotate(boolean landscape)throws Exception{
+        String session=js(STATUS+".sessionId"),document=js(STATUS+".documentRevision");
+        getInstrumentation().runOnMainSync(()->activity.setRequestedOrientation(landscape
+            ?android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            :android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+        long deadline=SystemClock.elapsedRealtime()+8000;
+        boolean[] matched={false},destroyed={false};
+        do{
+            getInstrumentation().runOnMainSync(()->{
+                destroyed[0]=activity.isDestroyed();
+                android.view.View stage=(android.view.View)activity.videoClip.getParent();
+                boolean orientation=activity.getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+                float density=activity.getResources().getDisplayMetrics().density;
+                matched[0]=orientation==landscape&&(stage.getWidth()>stage.getHeight())==landscape
+                    &&activity.visibleWidth==Math.round(stage.getWidth()/density)
+                    &&activity.visibleHeight==Math.round(stage.getHeight()/density);
+            });
+            assertFalse("Rotation must retain the Activity and its connection",destroyed[0]);
+            if(matched[0])break;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        assertTrue("Rotation must negotiate the actual phone area",matched[0]);
+        until(STATUS+".inputReady",6000);
+        assertEquals("Rotation preserves Session",session,js(STATUS+".sessionId"));
+        assertEquals("Rotation preserves document",document,js(STATUS+".documentRevision"));
+        assertEquals("Rotation preserves takeover","\"control\"",js(STATUS+".controlMode"));
+        assertTrue("Rotation preserves visible input",darkInputGlyphs(capture(landscape?"landscape":"portrait-restored"))>30);
+    }
     private Bitmap capture(String name)throws Exception{
         Bitmap full=Bitmap.createBitmap(Math.max(1,activity.video.getWidth()),Math.max(1,activity.video.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
         getInstrumentation().runOnMainSync(()->PixelCopy.request(activity.video,full,value->{result[0]=value;done.countDown();},new Handler(Looper.getMainLooper())));
@@ -198,6 +226,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             while(paintedGlyphs<=emptyGlyphs+30&&SystemClock.elapsedRealtime()<textDeadline);
             assertTrue("Entered text must paint in the native Surface: before="+emptyGlyphs+", after="+paintedGlyphs,
                 paintedGlyphs>emptyGlyphs+30);
+            rotate(true);
+            JSONObject landscapeViewport=viewport();
+            rotate(false);
+            JSONObject portraitViewport=viewport();
             int width=viewport.getInt("cssWidth"),height=viewport.getInt("cssHeight");
             // Hold the session monitor so the status command cannot complete
             // before both declarations arrive. Only the latest should survive.
@@ -234,6 +266,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             result.put("displayedRevisionFenced",true);
             result.put("swipeDoesNotClick",true).put("scrollPixels",true);
             result.put("cancelledGestureIgnored",true).put("staleViewportGestureIgnored",true);
+            result.put("rotationPreservesState",true);
+            result.put("landscapeViewport",landscapeViewport).put("portraitViewport",portraitViewport);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/result.json"))){output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
