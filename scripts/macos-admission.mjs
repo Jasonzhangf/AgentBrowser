@@ -146,21 +146,82 @@ async function waitForWindow(child) {
   throw new Error('Timed out waiting for the installed AppKit window');
 }
 
-function point(rect, x, y) {
-  return {x: Math.round(rect.x + x), y: Math.round(rect.y + y)};
+function videoSurfaceGeometry(pid, logPath) {
+  const swift = `
+import ApplicationServices
+import Foundation
+let pid: pid_t = ${pid}
+let target = "H.264 原生视频显示区"
+let app = AXUIElementCreateApplication(pid)
+func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var result: CFTypeRef?
+    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
+    return error == .success ? result : nil
+}
+func find(_ element: AXUIElement) -> AXUIElement? {
+    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }
+    if labels.contains(target) { return element }
+    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    for child in children {
+        if let match = find(child) { return match }
+    }
+    return nil
+}
+guard let surface = find(app) else { exit(2) }
+guard let position = value(surface, kAXPositionAttribute) as? AXValue,
+      let size = value(surface, kAXSizeAttribute) as? AXValue else { exit(3) }
+var origin = CGPoint.zero
+var extent = CGSize.zero
+guard AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(size, .cgSize, &extent), extent.width > 0, extent.height > 0 else { exit(3) }
+print("{\\"x\\":\\(origin.x),\\"y\\":\\(origin.y),\\"width\\":\\(extent.width),\\"height\\":\\(extent.height)}")
+`;
+  const output = command('swift', ['-e', swift], {timeout: 30_000}).toString().trim();
+  const geometry = JSON.parse(output);
+  assert(Number.isFinite(geometry.x) && Number.isFinite(geometry.y)
+    && Number.isFinite(geometry.width) && Number.isFinite(geometry.height)
+    && geometry.width > 0 && geometry.height > 0,
+  `Invalid H.264 surface geometry: ${output}`);
+  writeFileSync(logPath, JSON.stringify({pid, label: 'H.264 原生视频显示区', geometry}, null, 2) + '\n', {flag: 'wx'});
+  return geometry;
 }
 
-function clickRelative(x, y) {
-  const rect = windowRect();
-  assert(rect, 'AgentBrowser window disappeared before click');
-  const target = point(rect, x, y);
-  osa(uiScript(`click at {${target.x}, ${target.y}}`));
+function pageScreenPoint(surface, viewport, x, y) {
+  const sourceWidth = viewport.width;
+  const sourceHeight = viewport.height;
+  const scale = Math.min(surface.width / sourceWidth, surface.height / sourceHeight);
+  const renderedWidth = sourceWidth * scale;
+  const renderedHeight = sourceHeight * scale;
+  const offsetX = (surface.width - renderedWidth) / 2;
+  const offsetY = (surface.height - renderedHeight) / 2;
+  assert(x >= 0 && x <= sourceWidth && y >= 0 && y <= sourceHeight, 'Page coordinate outside H.264 viewport');
+  return {
+    x: Math.round(surface.x + offsetX + x * scale),
+    y: Math.round(surface.y + offsetY + y * scale),
+    mapping: {source_width: sourceWidth, source_height: sourceHeight, scale, offset_x: offsetX, offset_y: offsetY},
+  };
 }
 
-function typeAscii(text) {
-  assert(!/[^\x20-\x7e]/.test(text), 'ASCII keyboard helper received non-ASCII text');
-  const escaped = text.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-  osa(uiScript(`keystroke "${escaped}"`));
+function postMouse(pid, target, logPath) {
+  const swift = `
+import CoreGraphics
+let pid: pid_t = ${pid}
+let point = CGPoint(x: ${target.x}, y: ${target.y})
+let source = CGEventSource(stateID: .hidSystemState)!
+let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
+move.postToPid(pid)
+let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)!
+down.postToPid(pid)
+let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!
+up.postToPid(pid)
+`;
+  command('swift', ['-e', swift], {timeout: 30_000});
+  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+}
+
+function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
+  const surface = videoSurfaceGeometry(pid, geometryLogPath);
+  const target = pageScreenPoint(surface, viewport, x, y);
+  postMouse(pid, target, eventLogPath);
 }
 
 function focusAccessibilityTextField(pid, description, logPath) {
@@ -264,9 +325,22 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
   assert.fail(`AX button did not become available: ${title}`);
 }
 
-function postScroll(pid, x, y, delta, logPath) {
-  const swift = `import CoreGraphics; let source = CGEventSource(stateID: .hidSystemState); let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: ${delta}, wheel2: 0, wheel3: 0)!; event.location = CGPoint(x: ${x}, y: ${y}); event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: ${delta}); event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: ${delta}); event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: ${delta * 65536}); event.postToPid(${pid})`;
-  command('swift', ['-e', swift], {log: logPath, timeout: 30_000});
+function postSurfaceScroll(pid, viewport, x, y, delta, geometryLogPath, eventLogPath) {
+  const surface = videoSurfaceGeometry(pid, geometryLogPath);
+  const target = pageScreenPoint(surface, viewport, x, y);
+  const swift = `
+import CoreGraphics
+let source = CGEventSource(stateID: .hidSystemState)!
+let point = CGPoint(x: ${target.x}, y: ${target.y})
+let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: ${delta}, wheel2: 0, wheel3: 0)!
+event.location = point
+event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: ${delta})
+event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: ${delta})
+event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: ${delta * 65536})
+event.postToPid(${pid})
+`;
+  command('swift', ['-e', swift], {timeout: 30_000});
+  writeFileSync(eventLogPath, JSON.stringify({pid, event: 'native_scroll', delta, screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function captureWindow(path, full = true) {
@@ -285,10 +359,9 @@ function screenshotLog(screenshots) {
 
 function fixtureResponseValue(line) {
   const response = JSON.parse(line);
-  assert.equal(response.type, 'result', `Fixture returned non-result: ${line}`);
-  const value = response.value?.result?.value;
-  if (typeof value === 'string') return JSON.parse(value);
-  return value;
+  const value = response.result?.value;
+  assert.equal(typeof value, 'string', `Fixture returned non-evaluation: ${line}`);
+  return JSON.parse(value);
 }
 
 function hostStatus(socketPath, requestId) {
@@ -558,7 +631,12 @@ async function main() {
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
     await pressAccessibilityButton(firstApp.pid, '接管页面', join(directory, 'takeover.log'));
     await sleep(1_000);
-    await observeHostStatus('takeover', 2, 'human');
+    const takeoverStatus = await observeHostStatus('takeover', 2, 'human');
+    assert(Array.isArray(takeoverStatus.viewport) && takeoverStatus.viewport.length === 2,
+      `Host did not publish a committed viewport: ${JSON.stringify(takeoverStatus)}`);
+    const viewport = {width: takeoverStatus.viewport[0], height: takeoverStatus.viewport[1]};
+    assert(Number.isFinite(viewport.width) && Number.isFinite(viewport.height)
+      && viewport.width > 0 && viewport.height > 0, `Invalid Host viewport: ${JSON.stringify(takeoverStatus.viewport)}`);
     const page = '<body style="margin:0;background:white"><h1 id="title" style="height:45px;margin:0">中文导航验收</h1><button id="target" style="display:block;width:180px;height:100px;background:red" onclick="window.clicked=(window.clicked||0)+1;this.style.background=\'lime\'">touch</button><input id="field" style="display:block;width:220px;height:50px"><div style="height:1400px;background:blue"></div><script>window.maxScroll=0;window.addEventListener(\'scroll\',()=>window.maxScroll=Math.max(window.maxScroll,window.scrollY));</script></body>';
     const url = `data:text/html,${encodeURIComponent(page)}`;
     focusAccessibilityTextField(firstApp.pid, '远程页面地址', join(directory, 'address-focus.log'));
@@ -566,9 +644,9 @@ async function main() {
     await sleep(500);
     await pressAccessibilityButton(firstApp.pid, '打开', join(directory, 'navigate.log'));
     await sleep(4_000);
-    clickRelative(120, 105);
+    clickPage(firstApp.pid, viewport, 90, 95, join(directory, 'button-surface-geometry.log'), join(directory, 'button-click.log'));
     await sleep(1_000);
-    clickRelative(120, 185);
+    clickPage(firstApp.pid, viewport, 110, 170, join(directory, 'input-surface-geometry.log'), join(directory, 'input-click.log'));
     await sleep(400);
     const inputText = '你好，Mac 输入';
     focusAccessibilityTextField(firstApp.pid, '输入到远程页面的文字', join(directory, 'input-focus.log'));
@@ -576,10 +654,7 @@ async function main() {
     await sleep(400);
     await pressAccessibilityButton(firstApp.pid, '发送', join(directory, 'send-text.log'));
     await sleep(2_000);
-    const rect = windowRect();
-    assert(rect, 'AppKit window disappeared before scroll');
-    const scrollPoint = point(rect, 180, 500);
-    postScroll(firstApp.pid, scrollPoint.x, scrollPoint.y, -20, join(directory, 'scroll.log'));
+    postSurfaceScroll(firstApp.pid, viewport, 180, 500, -20, join(directory, 'scroll-surface-geometry.log'), join(directory, 'scroll.log'));
     await sleep(2_000);
     screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), true));
     await pressAccessibilityButton(firstApp.pid, '返回观察', join(directory, 'release.log'));
