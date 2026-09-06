@@ -200,11 +200,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         compositionSendDisabled="true".equals(js("document.getElementById('send-text').disabled"));
         assertTrue("Do not send unfinished composition",compositionSendDisabled);
         click("send-text");
-        assertEquals("zhongwen",js("document.getElementById('input-text').value"));
+        assertEquals("true",js("document.getElementById('input-text').value==='zhongwen'"));
         js("document.getElementById('input-text').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
         until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
         compositionCancelled=true;
-        assertEquals("true",js("document.getElementById('input-text').parentElement.dataset.compositionCancelled"));
+        assertEquals("true",js("document.getElementById('input-text').parentElement.dataset.compositionCancelled==='true'"));
         js("document.getElementById('input-text').focus()");
         getInstrumentation().runOnMainSync(()->{
             activity.webView.requestFocus();
@@ -214,25 +214,31 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         AtomicReference<android.view.inputmethod.InputConnection> committedInput=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->committedInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
         assertNotNull("Focused WebView input connection after composition cancel",committedInput.get());
+        imeEdit(committedInput.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
+        until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
         imeEdit(committedInput.get(),connection->{assertTrue(connection.commitText("中文",1));assertTrue(connection.finishComposingText());});
         until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
         compositionCommitted=true;
+        until(STATUS+".inputReady",6000);
         click("send-text");
         until(STATUS+".inputReady",6000);
         long paintDeadline=SystemClock.elapsedRealtime()+5000;
         do{
             SystemClock.sleep(100);
             Bitmap painted=capture("ime-text");chineseInkPixels=0;
-            // Second CJK glyph extends beyond the two narrow missing-glyph boxes
-            // in the fixed fixture's input. DOM text alone cannot pass this check.
-            int left=130*painted.getWidth()/activity.visibleWidth,right=140*painted.getWidth()/activity.visibleWidth;
-            int top=104*painted.getHeight()/activity.visibleHeight,bottom=120*painted.getHeight()/activity.visibleHeight;
+            // Bundled CJK glyphs occupy CSS x114..130 after the fixed Latin prefix.
+            // x130..140 is beyond the actual text. Host glyph coverage/raster
+            // tests separately reject missing-glyph substitution.
+            int left=114*painted.getWidth()/activity.visibleWidth,right=130*painted.getWidth()/activity.visibleWidth;
+            int top=104*painted.getHeight()/activity.visibleHeight,bottom=118*painted.getHeight()/activity.visibleHeight;
             for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
                 int color=painted.getPixel(x,y);
                 if(Color.red(color)<80&&Color.green(color)<80&&Color.blue(color)<80)chineseInkPixels++;
             }
         }while(chineseInkPixels<=30&&SystemClock.elapsedRealtime()<paintDeadline);
-        assertTrue("Chinese text must paint beyond missing-glyph boxes: "+chineseInkPixels,chineseInkPixels>30);
+        assertTrue("Chinese text must paint in the CJK glyph region: "+chineseInkPixels
+            +"\ninput="+js("JSON.stringify({text:document.getElementById('input-text').value,phase:document.getElementById('input-text').parentElement.dataset.composition,disabled:document.getElementById('send-text').disabled,error:document.querySelector('[role=alert]')?.textContent})")
+            +"\nstatus="+js(STATUS),chineseInkPixels>30);
         getInstrumentation().runOnMainSync(()->activity.getWindow().getInsetsController().hide(android.view.WindowInsets.Type.ime()));
         js("document.getElementById('input-text').blur()");
         awaitSourceSize(width,height);
@@ -341,10 +347,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             Bitmap screenshot=getInstrumentation().getUiAutomation().takeScreenshot();assertNotNull(screenshot);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/screen.png"))){assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG,100,output));}
             click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            until("!document.getElementById('input-text').disabled",5000);
             js("document.getElementById('input-text').focus()");
+            until("document.activeElement===document.getElementById('input-text')",5000);
             AtomicReference<android.view.inputmethod.InputConnection> disconnectInput=new AtomicReference<>();
             getInstrumentation().runOnMainSync(()->{
                 activity.webView.requestFocus();
+                activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
+                    .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
                 disconnectInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo()));
             });
             assertNotNull("Focused WebView input connection before disconnect",disconnectInput.get());
@@ -359,6 +369,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             click("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             assertEquals("Reconnect preserves live document",session,js(STATUS+".sessionId"));
             Bitmap reconnected=capture("reconnected");assertTrue(Color.green(reconnected.getPixel(30,30))>160&&Color.red(reconnected.getPixel(30,30))<100);
+            // Disconnecting the human controller suspends Agent control. Restore
+            // it only through the real explicit takeover/release UI protocol.
+            click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            until("!document.getElementById('release').disabled",5000);
+            click("release");until(STATUS+".controlMode==='observe'",6000);
             getInstrumentation().runOnMainSync(()->assertTrue(activity.moveTaskToBack(true)));
             until(STATUS+".released",6000);
             JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true)
