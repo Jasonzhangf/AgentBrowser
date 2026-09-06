@@ -2,9 +2,11 @@
 
 Owner: `packages/client-connection/`, root Cargo workspace and `scripts/connection*`.
 Android native resources, UI, Relay and Obscura protocol remain separate owners.
-This first slice implements an explicitly prepaired direct WSS endpoint. It does
-not implement candidate selection, UDP, automatic retries, JNI,
-phone layout election or native displayed-frame acknowledgement.
+The existing direct path remains an explicitly prepaired WSS endpoint. This
+candidate also adds an explicitly selected WebRTC H.264/DataChannel backend in
+the same `Connection` owner. It does not implement automatic candidate
+selection, automatic retries, JNI, phone layout election or native displayed-
+frame acknowledgement.
 
 ## Runtime contract
 
@@ -29,6 +31,33 @@ phone layout election or native displayed-frame acknowledgement.
   Native Android currently limits AU to 1MiB; the future bridge must explicitly
   reject larger packets, never truncate. Codec content is validated by decoder.
 
+## WebRTC direct backend
+
+`Connector::connect_webrtc` uses the same generation fence, bounded action pump,
+`Connection` API and `DisplayedFrame` input fence as direct WSS. mTLS WSS opens
+the Host attachment, carries the typed SDP offer/answer and keeps the binding
+alive. After the v3 capability/binding handshake, browser requests and Host
+responses use the single `obscura.control.v1` DataChannel; the client never
+replays a failed DataChannel mutation over WSS.
+
+The client requires the negotiated UDP ICE pair, receives the Host H.264 RTP
+track through `webrtc-rs`, depacketizes Annex B access units with the existing
+H.264 depacketizer, and pairs each access unit with the typed
+`WebRtcVideoFrame` descriptor by exact RTP timestamp. The descriptor's source
+identity, encoder identity, PTS and revisions are preserved; missing or
+duplicate descriptors/samples fail a bounded association buffer instead of
+guessing a frame. A DataChannel or signaling failure closes the whole
+connection and an accepted operation whose response is lost is `OutcomeUnknown`.
+The shared `next_video` backend contract is cancellation-safe: the action pump
+may insert a status or mutation while media receive is pending without
+consuming a partial frame. Connection shutdown explicitly closes the WebRTC
+peer and signaling socket; a cancelled setup schedules the same peer close.
+
+`WebRtcConfig::bind_ip` selects the local UDP interface. The default is loopback
+for isolated local tests; LAN/Tailscale callers must pass the live interface
+address. WebRTC protocol version 3 is a hard capability check; the old v2
+descriptor shape is rejected rather than adapted.
+
 ## Reproduce
 
 Set `OBSCURA_PROTOCOL_ROOT` to the Obscura owner's `protocol/browser` directory
@@ -44,11 +73,19 @@ python3 scripts/connection.py build
 node scripts/connection-admission.mjs
 ```
 
-Six tests cover framing/continuity, injected response loss/correlation errors and
-a real Host/media/endpoint consumer: Observe denial, takeover, stale displayed
-revision rejection, click DOM effect, release and reconnect with paused Host.
+The direct suite covers framing/continuity, injected response loss/correlation
+errors and a real Host/media/endpoint consumer. The WebRTC consumer uses this
+library to attach over mTLS, complete SDP/UDP ICE, receive and decode several
+RTP H.264 access units, observe the typed descriptor revisions, perform
+takeover, navigate, click, Chinese input and scroll over DataChannel, reject an
+old displayed frame, release, and reconnect with the Host paused. Its negative
+cases must keep stale binding, stale revision and disconnected/unknown outcomes
+explicit; WSS input is not a substitute for the DataChannel path.
+
 The generated artifact includes the native rlib and its exact linked acceptance
-consumer; admission executes that copied consumer without recompiling it.
+consumers. Admission executes copied consumers without recompiling them. The
+direct consumer covers Observe denial, takeover, stale displayed revision
+rejection, click DOM effect, release and reconnect with paused Host.
 The admission adapter compiles only `client-connection` through AppSDK's
 `compile-module` entrypoint. It does not build downstream Android during this
 module's review admission. Project contracts and the complete pre-review evidence

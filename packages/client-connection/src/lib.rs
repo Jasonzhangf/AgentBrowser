@@ -6,6 +6,8 @@ mod media;
 pub use media::{decode_video, MediaSequence, Video};
 mod transport;
 pub use transport::{Connection, Connector, DisplayedFrame, Input, Pairing};
+mod webrtc;
+pub use webrtc::WebRtcConfig;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Failure {
