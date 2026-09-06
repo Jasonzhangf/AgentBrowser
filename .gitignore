@@ -25,3 +25,6 @@ local.properties
 /.appsdk/records/evidence/relay-service/
 /.appsdk/records/fix-candidate-record-relay-service.json
 /.appsdk/records/pre-review-validation-record-relay-service.json
+/.appsdk/records/evidence/host-service/
+/.appsdk/records/fix-candidate-record-host-service.json
+/.appsdk/records/pre-review-validation-record-host-service.json
