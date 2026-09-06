@@ -9,6 +9,6 @@
     "test": "tsx --test test/*.test.ts",
     "start": "node dist/services/relay/src/main.js"
   },
-  "dependencies": {"ws": "8.18.3"},
+  "dependencies": {"ws": "8.21.3"},
   "devDependencies": {"@types/node": "22.15.30", "@types/ws": "8.18.1", "tsx": "4.20.3", "typescript": "5.8.3"}
 }
