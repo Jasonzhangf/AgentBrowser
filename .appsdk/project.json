@@ -127,6 +127,7 @@
       "artifact_paths": [
         "libagentbrowser_connection.rlib",
         "connection-acceptance",
+        "webrtc-acceptance",
         "relay-acceptance"
       ],
       "build": {

@@ -39,21 +39,23 @@ assert(!existsSync(candidatePath) && !existsSync(validationPath), 'Preserve prio
 mkdirSync(directory, {recursive: true}); mkdirSync(records, {recursive: true});
 const identity = `${hostname()}/${userInfo().username}/${process.version}`;
 const environment = `${process.platform}/${process.arch}/${identity}`;
-const entrypoint = 'connection-acceptance:real_host_observe_input_and_reconnect; relay-acceptance:authenticated_relay_directory_tunnel_isolated_and_generation_fenced';
+const entrypoint = 'connection-acceptance:real_host_observe_input_and_reconnect,real_host_webrtc_observe_takeover_input_and_reconnect; relay-acceptance:authenticated_relay_directory_tunnel_isolated_and_generation_fenced';
 const whiteProducer = {adapter: 'scripts/connection-admission.mjs:nextest', identity};
 const blackProducer = {adapter: 'scripts/connection-admission.mjs:compiled-consumer', identity};
 run('appsdk', ['compile-module', '--module', moduleId], `${directory}/compile.log`);
 const artifactFile = `generated/modules/${moduleId}/module.compiled.json`;
 const artifactBytes = readFileSync(artifactFile), artifact = JSON.parse(artifactBytes);
 const output = `generated/modules/${moduleId}/lib`;
-const artifactPaths = ['libagentbrowser_connection.rlib', 'connection-acceptance', 'relay-acceptance'].map(name => `${output}/${name}`);
+const artifactPaths = ['libagentbrowser_connection.rlib', 'connection-acceptance', 'webrtc-acceptance', 'relay-acceptance'].map(name => `${output}/${name}`);
 const artifactHashes = artifactPaths.map(path => hash(readFileSync(path)));
 for (const digest of artifactHashes) assert(artifact.artifacts.some(item => item.hash === digest), 'Compiled artifact identity missing');
 run('python3', ['scripts/connection.py', 'test'], `${directory}/whitebox.log`);
 const whiteTime = now();
 const directReplay = run(`${output}/connection-acceptance`, ['--exact', 'real_host_observe_input_and_reconnect', '--nocapture'], `${directory}/blackbox.log`);
+const webrtcReplay = run(`${output}/webrtc-acceptance`, ['--exact', 'real_host_webrtc_observe_takeover_input_and_reconnect', '--nocapture'], `${directory}/webrtc-blackbox.log`);
 const relayReplay = run(`${output}/relay-acceptance`, ['--exact', 'authenticated_relay_directory_tunnel_isolated_and_generation_fenced', '--nocapture'], `${directory}/relay-blackbox.log`);
 assert.match(directReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Direct consumer must execute its real test');
+assert.match(webrtcReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'WebRTC consumer must execute its real test');
 assert.match(relayReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay consumer must execute its real test');
 const blackTime = now();
 assert.equal(git('rev-parse', 'HEAD'), head);
@@ -69,7 +71,7 @@ function evidence(id, phase, producer, time, log) {
     phase, kind: phase === 'development_whitebox' ? 'gate' : 'sample_replay', source_commit: head,
     artifact_hash: artifact.artifact_hash, execution_surface: phase, environment_id: environment, entrypoint,
     scope: {module_id: moduleId, feature_id: moduleId, entrypoint}, producer, result: 'pass', created_at: time,
-    expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, ...artifactHashes, ...externalHashes, hash(readFileSync(log)), hash(readFileSync(`${directory}/relay-blackbox.log`))],
+    expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, ...artifactHashes, ...externalHashes, hash(readFileSync(log)), hash(readFileSync(`${directory}/webrtc-blackbox.log`)), hash(readFileSync(`${directory}/relay-blackbox.log`))],
     scope_hash: scopeHash, raw_evidence: log});
 }
 evidence(ids.white, 'development_whitebox', whiteProducer, whiteTime, `${directory}/whitebox.log`);

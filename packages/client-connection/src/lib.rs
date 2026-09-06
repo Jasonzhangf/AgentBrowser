@@ -1,11 +1,13 @@
 //! Native connection boundary. Browser ABI remains owned by Obscura.
 pub use obscura_host_protocol as protocol;
 // Relay v1 account/device and opaque channels; Browser ABI stays in protocol.
-pub mod relay;
 mod media;
+pub mod relay;
 pub use media::{decode_video, MediaSequence, Video};
 mod transport;
 pub use transport::{Connection, Connector, DisplayedFrame, Input, Pairing};
+mod webrtc;
+pub use webrtc::WebRtcConfig;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Failure {
