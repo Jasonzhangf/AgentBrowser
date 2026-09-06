@@ -13,7 +13,7 @@ phone layout election or native displayed-frame acknowledgement.
   Connection ends its connections; the independent Host persists.
 - `Pairing` supplies endpoint origin, CA DER, client certificate DER and PKCS8
   key. TLS verifies server name and client authentication; no insecure mode.
-- Control attach validates Host v3 and Observe identity. Media uses the single
+- Control attach validates Host v4 and Observe identity. Media uses the single
   use token returned by that control handshake. Connected means both handshakes
   completed, not that a native decoder has displayed a frame.
 - One actor serializes control, one media future consumes bounded messages.
@@ -48,6 +48,10 @@ a real Host/media/endpoint consumer: Observe denial, takeover, stale displayed
 revision rejection, click DOM effect, release and reconnect with paused Host.
 The generated artifact includes the native rlib and its exact linked acceptance
 consumer; admission executes that copied consumer without recompiling it.
+The admission adapter compiles only `client-connection` through AppSDK's
+`compile-module` entrypoint. It does not build downstream Android during this
+module's review admission. Project contracts and the complete pre-review evidence
+gate still run; Android retains its declared dependency and separate admission.
 It is a development candidate, not a portable distributable Rust SDK.
 Library deployment requires neither installing a service nor restarting one.
 Tests start only their own temporary Host/endpoint and clean their fixtures.

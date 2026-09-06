@@ -40,7 +40,7 @@ const environment = `${process.platform}/${process.arch}/${identity}`;
 const entrypoint = 'connection-acceptance:real_host_observe_input_and_reconnect';
 const whiteProducer = {adapter: 'scripts/connection-admission.mjs:nextest', identity};
 const blackProducer = {adapter: 'scripts/connection-admission.mjs:compiled-consumer', identity};
-run('appsdk', ['compile'], `${directory}/compile.log`);
+run('appsdk', ['compile-module', '--module', moduleId], `${directory}/compile.log`);
 const artifactFile = `generated/modules/${moduleId}/module.compiled.json`;
 const artifactBytes = readFileSync(artifactFile), artifact = JSON.parse(artifactBytes);
 const output = `generated/modules/${moduleId}/lib`;
