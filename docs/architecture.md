@@ -52,7 +52,7 @@ Mac 上 Agent 通过本地 endpoint 使用同一 operation/控制权协议；本
 | AB-01 ui-kernel | AgentBrowser `packages/ui-kernel/` | Cordis composition root、插件依赖与生命周期、UI slots、typed 服务注入 | 浏览器状态裁决、网络重连、视频字节搬运 |
 | AB-02 ui-plugins | AgentBrowser `packages/ui-plugins/` | device-directory、browser-chrome、session-view、takeover、settings 等插件；本地交互状态 | socket/解码器/原生句柄所有权、绕过 operation 写入 |
 | AB-03 client-domain | AgentBrowser `packages/client-domain/` | 远端状态只读投影、UI 命令适配、共享纯类型与 reducer | 第二个 Session owner、连接路由决策、原生对象 |
-| AB-04 platform-host | AgentBrowser `apps/android/`、`apps/macos/` | OS 生命周期、WebView、IME、触控采集、安全凭据存储、原生显示资源 | 各自复制页面/接管状态机 |
+| AB-04 platform-host | AgentBrowser `apps/android/`、`apps/macos/`、`scripts/host-service/` | OS 生命周期、WebView、IME、触控采集、安全凭据存储、原生显示资源；Mac Host 进程的安装/启动/停止入口 | 各自复制页面/接管状态机、拥有 Obscura Session 或 profile 真相 |
 | AB-05 client-connection | AgentBrowser `packages/client-connection/` | 共享 Rust 连接内核；candidate、认证、连接 generation、选路、重连和背压唯一 owner | UI active tab、DOM、浏览器业务决策 |
 | AB-06 relay-service | AgentBrowser `services/relay/` | 账号、设备绑定、目录/presence、设置同步、信令、WSS 隧道 | 执行 operation、转让控制权、持久化网页 profile |
 | OB-01 browser-host | Obscura `crates/obscura-host/` | 常驻服务、Session/Tab/Attachment、operation 执行仲裁、统一 viewport、profile 单写锁 | UI 生命周期、客户端选路、账号数据库 |
