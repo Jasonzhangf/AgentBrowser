@@ -2,6 +2,7 @@
 import {spawn, spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync} from 'node:fs';
+import {createConnection} from 'node:net';
 import {hostname, userInfo} from 'node:os';
 import {resolve, join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -168,8 +169,31 @@ function setAccessibilityValue(pid, description, value, logPath) {
 }
 
 async function pressAccessibilityButton(pid, title, logPath) {
-  const swift = `import ApplicationServices; import Foundation; let pid: pid_t = ${pid}; let target = ${JSON.stringify(title)}; let app = AXUIElementCreateApplication(pid); func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? { var result: CFTypeRef?; let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result); return error == .success ? result : nil }; func find(_ element: AXUIElement) -> Bool { let role = value(element, kAXRoleAttribute) as? String; let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }; if role == kAXButtonRole && labels.contains(target) { return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success }; let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []; return children.contains(where: find) }; guard find(app) else { exit(2) }`;
-  let lastOutput = Buffer.alloc(0);
+  const swift = `
+import ApplicationServices
+import Foundation
+let pid: pid_t = ${pid}
+let target = ${JSON.stringify(title)}
+let app = AXUIElementCreateApplication(pid)
+func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var result: CFTypeRef?
+    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
+    return error == .success ? result : nil
+}
+func find(_ element: AXUIElement) -> AXUIElement? {
+    let role = value(element, kAXRoleAttribute) as? String
+    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }
+    if role == kAXButtonRole && labels.contains(target) { return element }
+    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+    for child in children {
+        if let match = find(child) { return match }
+    }
+    return nil
+}
+guard let button = find(app) else { exit(2) }
+if (value(button, kAXEnabledAttribute) as? Bool) == false { exit(4) }
+guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else { exit(3) }
+`;
   let failures = [];
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const result = spawnSync('swift', ['-e', swift], {cwd: root, encoding: 'buffer', maxBuffer: 8 * 1024 * 1024, timeout: 30_000});
@@ -178,6 +202,10 @@ async function pressAccessibilityButton(pid, title, logPath) {
     if (!result.error && result.status === 0) {
       writeFileSync(logPath, JSON.stringify({target: title, attempts: failures.length, output: output.toString()}, null, 2) + '\n');
       return;
+    }
+    if (result.error || ![2, 4].includes(result.status)) {
+      writeFileSync(logPath, JSON.stringify({target: title, attempts: failures.length, failures}, null, 2) + '\n');
+      assert.fail(`AX button action failed: ${title} (status ${result.status})`);
     }
     await sleep(250);
   }
@@ -210,6 +238,57 @@ function fixtureResponseValue(line) {
   const value = response.value?.result?.value;
   if (typeof value === 'string') return JSON.parse(value);
   return value;
+}
+
+function hostStatus(socketPath, requestId) {
+  return new Promise((resolveStatus, rejectStatus) => {
+    const socket = createConnection({path: socketPath});
+    const reader = createInterface({input: socket});
+    let stage = 'ready';
+    let settled = false;
+    const timer = setTimeout(() => finish(new Error(`Host status deadline: ${socketPath}`)), 20_000);
+    function finish(error, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reader.close();
+      socket.destroy();
+      if (error) rejectStatus(error);
+      else resolveStatus(value);
+    }
+    socket.on('error', error => finish(error));
+    socket.on('close', () => {
+      if (!settled) finish(new Error(`Host status socket closed before response: ${socketPath}`));
+    });
+    reader.on('line', line => {
+      let response;
+      try {
+        response = JSON.parse(line);
+      } catch (error) {
+        finish(error);
+        return;
+      }
+      if (stage === 'ready') {
+        if (response.type !== 'ready') {
+          finish(new Error(`Unexpected Host ready response: ${line}`));
+          return;
+        }
+        stage = 'result';
+        socket.write(`${JSON.stringify({id: requestId, command: {type: 'status'}, operation: null})}\n`);
+        return;
+      }
+      if (response.type === 'error') {
+        finish(new Error(`Host status request failed: ${line}`));
+        return;
+      }
+      if (response.type !== 'result' || response.id !== requestId) {
+        finish(new Error(`Unexpected Host status response: ${line}`));
+        return;
+      }
+      stage = 'done';
+      finish(null, response.value);
+    });
+  });
 }
 
 function startFixture(fixtureExecutable, directory, environment) {
@@ -351,6 +430,23 @@ async function main() {
     assert.match(fixtureInfo.fixture, /^\/tmp\/an-[a-z0-9]+$/);
     assert.match(fixtureInfo.endpoint, /^wss:\/\/127\.0\.0\.1:\d+$/);
     assert.equal(typeof fixtureInfo.session, 'string');
+    const hostSocket = join(fixtureInfo.fixture, 'host/host.sock');
+    assertFile(hostSocket);
+    const hostStatuses = [];
+    let hostRequestId = 1;
+    async function observeHostStatus(label, expectedAttachments, expectedPhase) {
+      let status;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        status = await hostStatus(hostSocket, hostRequestId++);
+        if (status?.attachments === expectedAttachments && status.control?.phase?.type === expectedPhase) {
+          const receipt = {label, expected: {attachments: expectedAttachments, control_phase: expectedPhase}, observed_at: now(), status};
+          hostStatuses.push(receipt);
+          return status;
+        }
+        await sleep(250);
+      }
+      assert.fail(`Unexpected Host status at ${label}: ${JSON.stringify(status)}`);
+    }
     install.fixture = {root: fixtureInfo.fixture, endpoint: fixtureInfo.endpoint, session: fixtureInfo.session};
     writeFileSync(join(directory, 'fixture.json'), JSON.stringify(install.fixture, null, 2) + '\n', {flag: 'wx'});
 
@@ -375,11 +471,13 @@ async function main() {
     screenshots.push(captureWindow(join(directory, 'waiting.png'), false));
     await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
     await sleep(4_000);
+    await observeHostStatus('connect', 2, 'agent');
     const connected = captureWindow(join(directory, 'connected.png'), false);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
     await pressAccessibilityButton(firstApp.pid, '接管页面', join(directory, 'takeover.log'));
     await sleep(1_000);
+    await observeHostStatus('takeover', 2, 'human');
     const page = '<body style="margin:0;background:white"><h1 id="title" style="height:45px;margin:0">中文导航验收</h1><button id="target" style="display:block;width:180px;height:100px;background:red" onclick="window.clicked=(window.clicked||0)+1;this.style.background=\'lime\'">touch</button><input id="field" style="display:block;width:220px;height:50px"><div style="height:1400px;background:blue"></div><script>window.maxScroll=0;window.addEventListener(\'scroll\',()=>window.maxScroll=Math.max(window.maxScroll,window.scrollY));</script></body>';
     const url = `data:text/html,${encodeURIComponent(page)}`;
     setAccessibilityValue(firstApp.pid, '远程页面地址', url, join(directory, 'address-set.log'));
@@ -401,6 +499,7 @@ async function main() {
     screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), true));
     await pressAccessibilityButton(firstApp.pid, '返回观察', join(directory, 'release.log'));
     await sleep(2_000);
+    await observeHostStatus('release', 2, 'agent');
     const inspection = fixtureResponseValue(await fixture.request('inspect'));
     assert.deepEqual({title: inspection.title, clicked: inspection.clicked, text: inspection.text},
       {title: '中文导航验收', clicked: 1, text: inputText});
@@ -408,15 +507,20 @@ async function main() {
     assert(Number.isFinite(inspection.maxScroll) && inspection.maxScroll > 0);
     await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect.log'));
     await sleep(1_500);
+    const disconnectedStatus = await observeHostStatus('disconnect', 1, 'agent');
     const reconnectStart = now();
     await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'reconnect.log'));
     await sleep(4_000);
+    const reconnectStatus = await observeHostStatus('reconnect', 2, 'agent');
     screenshots.push(captureWindow(join(directory, 'reconnect.png'), false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Reconnect produced no displayed frame');
     await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
     await sleep(1_000);
+    const disconnectedAfterReconnectStatus = await observeHostStatus('disconnect_after_reconnect', 1, 'agent');
     reconnect = {at: reconnectStart, app_pid: firstApp.pid, fixture_session: fixtureInfo.session,
-      displayed_screenshot: screenshots.at(-1), disconnected_before_reconnect: true};
+      displayed_screenshot: screenshots.at(-1), disconnected_before_reconnect: true,
+      host_status: {after_disconnect: disconnectedStatus, after_reconnect: reconnectStatus,
+        after_disconnect_again: disconnectedAfterReconnectStatus}};
     persist(join(directory, 'reconnect.json'), reconnect);
 
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
@@ -424,18 +528,22 @@ async function main() {
     await waitForWindow(secondApp);
     await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
     await sleep(4_000);
+    const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
     screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
     await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'restart-disconnect.log'));
     await sleep(1_000);
+    const restartDisconnectedStatus = await observeHostStatus('disconnect_after_restart', 1, 'agent');
     const secondExit = await terminateOwned(secondApp, installedExecutable, join(directory, 'second-app-exit.json'));
     restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
       restarted: {pid: secondApp.pid, executable: installedExecutable, exit: secondExit},
       exact_executable_hash: installedExecutableHash, different_pid: firstApp.pid !== secondApp.pid,
+      host_status: {after_reconnect: restartReconnectStatus, after_disconnect: restartDisconnectedStatus},
       restarted_at: now()};
     assert(restart.different_pid);
     persist(join(directory, 'restart.json'), restart);
-    blackbox = {entrypoint, fixture: install.fixture, inspection, screenshots: screenshotLog(screenshots),
+    blackbox = {entrypoint, fixture: install.fixture, inspection, host_status: hostStatuses,
+      screenshots: screenshotLog(screenshots),
       app_pids: [firstApp.pid, secondApp.pid], operations: ['connect', 'h264_display', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'inspect_after_release', 'disconnect', 'reconnect', 'restart', 'reconnect_after_restart']};
     persist(join(directory, 'blackbox.json'), blackbox);
     cleanup = {fixture_quit_requested: false, app_pids: [firstApp.pid, secondApp.pid]};
