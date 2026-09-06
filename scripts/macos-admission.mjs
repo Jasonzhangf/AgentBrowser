@@ -284,14 +284,14 @@ let display = CGDisplayBounds(CGMainDisplayID())
 let point = CGPoint(x: ${target.x}, y: display.maxY - ${target.y})
 let source = CGEventSource(stateID: .hidSystemState)!
 let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
-move.post(tap: .cghidEventTap)
+move.postToPid(pid)
 let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)!
-down.post(tap: .cghidEventTap)
+down.postToPid(pid)
 let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!
-up.post(tap: .cghidEventTap)
+up.postToPid(pid)
 `;
   command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'pid', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
