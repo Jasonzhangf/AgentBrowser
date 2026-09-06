@@ -128,7 +128,8 @@
         "libagentbrowser_connection.rlib",
         "connection-acceptance",
         "webrtc-acceptance",
-        "relay-acceptance"
+        "relay-acceptance",
+        "relay-connection-acceptance"
       ],
       "build": {
         "args": [

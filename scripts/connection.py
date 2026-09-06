@@ -41,13 +41,16 @@ consumer = [item["executable"] for item in artifacts if item.get("reason") == "c
             and item["target"]["name"] == "endpoint" and item.get("executable")]
 relay = [item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact"
          and item["target"]["name"] == "relay" and item.get("executable")]
+relay_connection = [item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact"
+                    and item["target"]["name"] == "relay_connection" and item.get("executable")]
 webrtc = [item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact"
           and item["target"]["name"] == "webrtc" and item.get("executable")]
-if len(library) != 1 or len(consumer) != 1 or len(relay) != 1 or len(webrtc) != 1:
-    raise RuntimeError("Expected one native library and one consumer for each direct, WebRTC and Relay path")
+if len(library) != 1 or len(consumer) != 1 or len(relay) != 1 or len(relay_connection) != 1 or len(webrtc) != 1:
+    raise RuntimeError("Expected one native library and one consumer for each direct, WebRTC, Relay, and Relay Connection path")
 output = root / "generated/modules/client-connection/lib"
 output.mkdir(parents=True, exist_ok=True)
 shutil.copy2(library[0], output / "libagentbrowser_connection.rlib")
 shutil.copy2(consumer[0], output / "connection-acceptance")
 shutil.copy2(webrtc[0], output / "webrtc-acceptance")
 shutil.copy2(relay[0], output / "relay-acceptance")
+shutil.copy2(relay_connection[0], output / "relay-connection-acceptance")

@@ -127,6 +127,18 @@ session ID, local/peer device IDs and both certificate fingerprints. The Relay
 only sees outer TLS and inner TLS ciphertext; it never verifies or interprets
 the Browser ABI.
 
+`Connector::connect_relay(...)` is the public client entrypoint. It does not
+return a `Connection` until the secure tunnel has received Obscura `Ready`
+version 4 for the requested session and a matching `Attach { mode: Observe }`
+status. `RelayBackend` retains both the `RelayConnection` and the
+`SecureRelayTunnel` for the lifetime of the shared `Connection` pump; dropping
+the Relay connection would drop its generation source and fence the secure
+channels. Once attached, status, takeover, click, text, scroll and release use
+the existing typed action pump, and media uses the existing `decode_video`
+path. Relay ticket, peer binding, generation and authentication state never
+enter Browser ABI payloads or metadata. A later explicit connect advances the
+same `Connector` generation and closes the old Relay connection.
+
 `RelayHostConnection` and `apps/relay-host/` are thin network adapters. The
 Host adapter probes the existing Obscura endpoint through typed `Ready` and
 `Status`, publishes that session projection, refreshes the complete projection
@@ -143,11 +155,18 @@ downgrade, or fallback is introduced. Wrong peer/device keys, same-CA but
 unpinned certificates, role/channel/tunnel/session mismatches, replayed or
 expired offers, and mixed control/media tickets fail explicitly.
 
-The connection build stages `relay-acceptance` beside `connection-acceptance`.
-Admission executes both exact compiled consumers: the existing real Host path
-and a real HTTPS/WSS Relay fixture covering wrong CA, account isolation,
-directory, Host publication, side-1 offers, separate binary channels, inner
-mTLS/TunnelHello, token revocation and generation fencing.
+The connection build stages `relay-acceptance` beside
+`relay-connection-acceptance`. `relay-acceptance` is the low-level Relay
+service/tunnel consumer; it is not public `Connection` proof.
+`relay-connection-acceptance` is compiled from
+`packages/client-connection/tests/relay_connection.rs` and runs the public
+`Connector::connect_relay` entrypoint against a real Relay fixture, real
+`agentbrowser-relay-host`, and real Obscura endpoint. It covers directory
+publication, wrong session and peer binding rejection, `Ready → Observe
+Attach → media`, H.264 delivery, observe/takeover/input/release, and
+generation-fenced reconnect. Admission executes both exact compiled Relay
+consumers, with the relay-host binary and Obscura binaries supplied as hashed
+external inputs.
 Relay service sources, protocol and dependency lock are hashed as test inputs.
 The fixture requires the local Node/tsx runtime; these development consumers
 are not portable deployment artifacts. Client platform login UI, direct-path
@@ -175,3 +194,28 @@ Attach response, takeover, click receipt and a later media sequence. The
 endpoint's remote policy rejects `Evaluate`; this replay therefore does not
 claim DOM inspection or pixel-difference proof, nor does it prove installed
 product delivery.
+
+The explicit public client replay is ignored for the same reason and requires
+the same Node/tsx fixture plus a separately built relay-host adapter:
+
+```sh
+export OBSCURA_PROTOCOL_ROOT=/path/to/obscura/protocol/browser
+export OBSCURA_BIN_DIR=/path/to/obscura/target/release
+export AGENTBROWSER_RELAY_HOST_BIN="$PWD/target/debug/agentbrowser-relay-host"
+npm --prefix services/relay ci
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR="$PWD/target" \
+  cargo build -p agentbrowser-android --example device_fixture \
+  --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\""
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR="$PWD/target" \
+  cargo build -p agentbrowser-relay-host \
+  --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\""
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR="$PWD/target" \
+  cargo test -p agentbrowser-connection --test relay_connection \
+  --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\"" \
+  -- --ignored --nocapture --test-threads=1
+```
+
+This replay proves the public Relay `Connection` path only for the supplied
+local binaries and fixture. It does not prove an installed client, platform
+login UI, production Relay, or the separate relay-host module's own delivery
+gates.
