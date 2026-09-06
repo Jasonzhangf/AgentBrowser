@@ -2,7 +2,7 @@
   "schema_version": 1,
   "functions": [
     {"function_id":"goal_clarification","owner":"appsdk::goal","entry_symbols":["clarify"],"required_gates":["goal_confirmed"]},
-    {"function_id":"compile_artifact","owner":"appsdk::compiler","entry_symbols":["compile"],"required_gates":["contract_valid","sdk_pinned"]},
+    {"function_id":"compile_artifact","owner":"appsdk::compiler","entry_symbols":["compile","compile_module","module_dependency_hashes"],"required_gates":["contract_valid","sdk_pinned","module_dependency_freshness"]},
     {"function_id":"sdk_version_migration","owner":"appsdk::delivery","entry_symbols":["pin_lock","migrate_governance_maps","assert_sdk_migration_record","install_current_governance_maps","install_bundle_resources","write_project"],"required_gates":["sdk_migration","governance_map_migration","sdk_pinned"]},
     {"function_id":"project_initialization","owner":"appsdk::delivery","entry_symbols":["prepare_project","init_project","new_project","existing_init_target","write_project_agent_contract","install_bundle_resources","install_standard_template_reference","initialize_collab_peer"],"required_gates":["guidance_setup_initialization","guidance_template_upgrade_initialization","project_agent_contract_template","collab_peer_bootstrap"]},
     {"function_id":"historical_review_map_resolution","owner":"appsdk::fix_lifecycle","entry_symbols":["assert_review_map_bindings","assert_fix_architecture_gate","assert_fix_lifecycle_graph"],"required_gates":["governance_map_migration","architecture_review_pass"]},
@@ -22,8 +22,8 @@
     {"function_id":"development_process_state_projection","owner":"appsdk::process_control","entry_symbols":["project_status","next_step","lifecycle_projection","close"],"required_gates":["guidance_module_binding","guidance_lifecycle_projection","guidance_close_boundary"]},
     {"function_id":"project_cli_context_resolution","owner":"appsdk::cli","entry_symbols":["is_help","print_cli_help","project_root_or_cwd","main","guidance::run"],"required_gates":["cwd_default_cli"]},
     {"function_id":"guide_tour_review","owner":"appsdk::process_control","entry_symbols":["tour","review","state","node_review","flow_review"],"required_gates":["guidance_tour_order","guidance_review_node_before_flow"]},
-    {"function_id":"project_memory_index","owner":"project-memory::index","entry_symbols":["run","sync_index","query","compact","verify"],"required_gates":["memory_index_deterministic","memory_query_order"]},
-    {"function_id":"project_memory_review","owner":"project-memory::review","entry_symbols":["review","write_entry"],"required_gates":["memory_review_writeback","memory_global_promotion_explicit"]}
+    {"function_id":"project_memory_index","owner":"project-memory::index","entry_symbols":["run","sync_index","write_memory_index","query","query_scope","compact","verify","import_details","parse_detail"],"required_gates":["memory_index_deterministic","memory_query_order","memory_markdown_export","memory_markdown_import"]},
+    {"function_id":"project_memory_review","owner":"project-memory::review","entry_symbols":["review","promote","write_entry","write_entry_with_review"],"required_gates":["memory_review_writeback","memory_review_level","memory_global_promotion_explicit"]}
     ,{"function_id":"project_memory_l1_initialization","owner":"project-memory::index","entry_symbols":["initialize_project"],"required_gates":["memory_index_deterministic"]}
   ]
 }

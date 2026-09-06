@@ -18,6 +18,85 @@ integrity gates; do not turn every available command into a mandatory phase.
 Run project commands from project cwd. An explicit optional project path is for
 operators intentionally working elsewhere; no project-root environment variable.
 
+## One global AppSDK binary
+
+Do not copy or select AppSDK binaries by hand. The AppSDK repository's only
+supported global installation entry is:
+
+```bash
+scripts/install-global-appsdk.sh
+```
+
+It builds the release, atomically replaces the executable beside the active
+`cargo`, removes exact AppSDK-managed legacy copies, and checks that one
+managed `appsdk` remains. Run it from any directory; it resolves its own
+repository root. SHA-256 is diagnostic output only, not a fixed admission
+condition. Do not stop project development because a historical binary hash
+differs. If the version or command path is wrong, run the installer once and
+refresh the current shell cache (`rehash` in zsh or `hash -r` in bash); do not
+manually copy, rename, or leave `.local/lib/appsdk/<version>/appsdk` beside the
+canonical entry.
+
+An AppSDK binary install does not restart a daemon. Use the daemon's official
+maintenance command separately when the running process must load the new
+binary. Never start v2 or create a second global AppSDK entry as a workaround.
+
+## Reset legacy governance
+
+When an old version has left incompatible records, stale audit reports, or
+rebuildable delivery output, do not patch or hand-edit those files. In a clean
+non-`main` owner worktree, after the user explicitly authorizes discarding the
+named legacy control plane, run once:
+
+```bash
+appsdk reset-governance --discard-legacy
+appsdk init
+appsdk guide init --task governance-reset --mode bootstrap --module app-core
+appsdk guide compile
+appsdk verify
+appsdk compile
+```
+
+`reset-governance` is idempotent. It removes the old `.appsdk/` records and
+maps (including old audit/migration reports), `.appsdk-control/`, and the
+rebuildable `generated/` projection, then creates a fresh current contract and
+writes a reset record. It preserves business source, runtime data, `active/`,
+and `protected/` by default. Existing Active/Protected artifacts are not
+silently deleted; if they are obsolete, request exact paths and perform a
+separate authorized cleanup with its own evidence. Never run reset in `main`,
+on a dirty worktree, against another worker's claim, or while inventing a
+migration record. A reset is a new governance baseline, not proof that old
+delivery or review was completed.
+
+### Legacy audit and delivery output handling
+
+Before reset, classify every old item; do not treat a filename as proof of
+current truth:
+
+- `.appsdk/records/**`, `.appsdk/transactions/**`, and AppSDK audit/migration
+  reports are legacy control-plane state. Preserve a small inventory or
+  immutable snapshot in the run note when audit history matters; then let
+  `reset-governance --discard-legacy` remove the old control plane. Do not
+  copy old PASS, hashes, receipts, or review results into the new baseline.
+- The project-declared `governance.generated_root` and module-declared
+  rebuildable outputs are disposable delivery projections. The reset command
+  removes the declared generated root (plus the standard `generated/` root)
+  without deleting business source or published state.
+- Failed transaction staging under `.appsdk/` is removed with the discarded
+  control plane. If it belongs to a still-valid current task, use that task's
+  canonical retry/abort operation before reset; never delete staging by hand.
+- Reports or outputs outside those declared roots (`dist/`, `.deploy/`,
+  `build/`, `tmp/`, custom report folders, or vendor output) are not assumed
+  disposable. Retain them or archive them until the project owner identifies
+  the exact path as rebuildable and authorizes its separate cleanup.
+- `active/`, `protected/`, runtime data, source, and human project documents
+  are retained by reset. Removing obsolete Active/Protected or historical
+  documents requires exact paths, explicit authorization, and a separate
+  cleanup record.
+
+After reset, report removed and retained classes separately. A clean directory
+is not evidence that delivery, review, install, restart, or freeze happened.
+
 ## Working loop
 
 1. Read project AGENTS and affected code/contracts. Resolve owner, scope,
@@ -93,6 +172,18 @@ Its ownership and tested-integration protections remain mandatory.
   and handoffs may record concise decisions and references to existing evidence.
   Memory migration and re-entry are explicit independent operations: use
   `project-memory migrate` for a source-preserving, resumable schema move and
+  `project-memory index|export` to render old and current raw records as a
+  Markdown index/details directory; after an intentional detail edit, use
+  `project-memory import` to append the change back to raw history. Markdown
+  is an interchange view, not a second truth store.
+  Normal memory writes use one `project-memory entry` invocation, which writes
+  the raw event and regenerates detail/index/projection together; do not hand
+  write one of those derived files as a separate step.
+  `memory/index.md` contains fixed-size Skill description candidates. Their L2/L3
+  lines already include the kind, tags, and relative `L2/` or `L3/` detail path.
+  During initialization or an intentional refresh, manually carry deduplicated
+  L1 lines into the project Skill description, then fill unused slots with L2
+  and L3 lines. Memory writes never rewrite Skill descriptions automatically.
   `project-memory reentry [project] --run <run-id>` to resume the same run after
   interruption. A missing or rebuilding memory index is not a governance
   failure, and memory state must not be reconstructed from Guide, debug,

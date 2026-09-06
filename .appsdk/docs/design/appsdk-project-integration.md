@@ -4,6 +4,21 @@ AppSDK is an external governance implementation. A new project consumes its CLI/
 
 ## Repository boundary
 
+### Module dependency artifacts
+
+Declare modules in dependency-first order. During development, `compile-module`
+requires each dependency's compiled artifact to exist and match its current
+module contract, source, output bytes and transitive dependency hashes. Missing
+or stale dependency artifacts fail explicitly; compile the dependency first, or
+use the ordered project `compile` command. Admission uses the same freshness
+owner without building or repairing artifacts. Self-dependencies and reverse
+dependency edges fail before recursive hashing.
+
+Development admission is not publication. `freeze` requires every dependency
+to be frozen before it reads or creates publication records. Frozen dependencies
+retain the existing immutable artifact verification; development compilation
+does not manufacture a FreezeRecord or alter Active/Protected.
+
 ```text
 external AppSDK installation
   -> versioned Bundle: CLI / compiler / contracts / docs / rules / skills
@@ -142,6 +157,13 @@ Ignore:
 ```
 
 The lock is committed. A template may retain the two documented `replace-with-*` values while the project is `draft`; compile, promotion, and freeze reject those values with `SDK_LOCK_NOT_PINNED`. Running AppSDK 0.1.6 `pin-lock` is the explicit supported migration from project SDK 0.1.5 to 0.1.6. SDK canonical maps and project governance maps are separate resources. Before changing live maps, `pin-lock` classifies each map set: an exact 0.1.5 SDK canonical set is migrated to the 0.1.6 canonical set; a custom project set is snapshotted and retained in place. It validates the frozen ReviewRecord bindings, persists one immutable `.appsdk/migrations/0.1.5-to-0.1.6/` snapshot/record, then installs the 0.1.6 Bundle and writes the lock and project version. It must never overwrite custom project maps or hand-edit ReviewRecord hashes. A partially completed 0.1.6 pin may resume only through that exact migration record or an exact 0.1.5 source map set. Historical frozen reviews resolve their old hashes only through this snapshot; current reviews must bind live maps. Missing, mixed, drifted, or ambiguous migration truth fails closed. Other source versions fail with `UNSUPPORTED_SDK_MIGRATION`; runtime does not scan or infer a different SDK.
+
+For a later bundle refresh, a historical custom map's canonical target may
+differ from the current SDK manifest only when the lock witnesses the original
+bundle. The historical record and snapshot remain immutable, and each live
+custom map must still match its recorded target digest. A repeated pin uses the
+same previous-bundle witness; missing witnesses, malformed digests, altered
+snapshots and changed live maps fail explicitly.
 
 ## Runtime boundary
 

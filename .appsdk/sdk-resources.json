@@ -1,5 +1,5 @@
 {
-  "bundle_digest": "sha256:001d1fae6bca07bd10e15eaf793ab56caa1d256f7da28585efbb1ae48052a584",
+  "bundle_digest": "sha256:f25d72383a2571f9a819a68c0d07748f0d1b47a8872c720eecef1542a5b03b0f",
   "manifest_digest": "sha256:5e1977d7ee1d8ac2effc92bab780bdaf8c616782940f92177793e2be8751b3df",
   "resources": [
     {
@@ -34,37 +34,37 @@
     },
     {
       "class": "contracts",
-      "digest": "sha256:84007fa19a11784bbd04f42075e240e995a3193c3be53c9b12b0602576ae1519",
+      "digest": "sha256:6e939328d1881d2520279084d89b57b1cd5537c9969835a47cd410a950cce0d8",
       "path": ".appsdk/contracts/memory/memory-entry.schema.json",
       "source": "contracts/memory/memory-entry.schema.json"
     },
     {
       "class": "contracts",
-      "digest": "sha256:70f7d61a7a324b05cd39b06fadf50c530317b0a4c212ac6708bdfc22b202e94a",
+      "digest": "sha256:14a1a45658015389e52dcd51413b35f361a75fb3dd31caef3c46e403489d2ab4",
       "path": ".appsdk/contracts/maps/resource-map.json",
       "source": "contracts/maps/resource-map.json"
     },
     {
       "class": "contracts",
-      "digest": "sha256:a0e8598dccbea08e018bc4d5b192be6dbccdaabc4be4437f1a12047439c21315",
+      "digest": "sha256:cb6181e71192c3e12c21a5de0b0cc998f26dcd15313b41e91faa5811a7c2974c",
       "path": ".appsdk/contracts/maps/function-map.json",
       "source": "contracts/maps/function-map.json"
     },
     {
       "class": "contracts",
-      "digest": "sha256:6c47a33b43082e816fd51ab7b4eee1715be8c60a5d3b64e3b658708bc4da4ff6",
+      "digest": "sha256:8005b9be85f9db9a108f790ac3dce732d07a68340b8d9a91af4efda7741a01a3",
       "path": ".appsdk/contracts/maps/mainline-call-map.json",
       "source": "contracts/maps/mainline-call-map.json"
     },
     {
       "class": "contracts",
-      "digest": "sha256:0770cc01e6b43a5b3d4cb3ea6d2d17438b462e18eba8381b5bf61b07b824ddf1",
+      "digest": "sha256:dd33872824b7b1344f9e2b270dfcec33e63853a98d4871836a9e0ae66b3b9afe",
       "path": ".appsdk/contracts/maps/verification-map.json",
       "source": "contracts/maps/verification-map.json"
     },
     {
       "class": "contracts",
-      "digest": "sha256:548a673c8ac40a6b69ff68d9ae09a8930a969a88c4ea525da039b04f654bcff9",
+      "digest": "sha256:b373c072cf5d51c8fe74f47fe19066d054d0060d3da432b5f6a46a38f409d1f5",
       "path": ".appsdk/contracts/migrations/sdk-0.1.5-to-0.1.6.json",
       "source": "contracts/migrations/sdk-0.1.5-to-0.1.6.json"
     },
@@ -232,7 +232,7 @@
     },
     {
       "class": "docs",
-      "digest": "sha256:76d0142e517a2c934de1c0dcfa7fa3b394184aa2c60887a7ac7e5bd2b8ee60cb",
+      "digest": "sha256:aa14be9ecd0eed0223791eb72edee7aa59bb9ca20d3ca80e0ef702b6ed7912bb",
       "path": ".appsdk/docs/design/appsdk-project-integration.md",
       "source": "docs/design/appsdk-project-integration.md"
     },
@@ -274,19 +274,19 @@
     },
     {
       "class": "docs",
-      "digest": "sha256:136837de33c21db8d717f116d0ee3b3ce137929903e57a183f34e369c047033a",
+      "digest": "sha256:f74a3828d561c5718faa0868addb40145509e8f4245cfaffa51a1464ed562f83",
       "path": ".appsdk/docs/design/project-memory.md",
       "source": "docs/design/project-memory.md"
     },
     {
       "class": "rules",
-      "digest": "sha256:49c3939bd0d5c67be1bde95ca949d857a2b3c170cdcaf2a2f37b1780db6fb2a0",
+      "digest": "sha256:f19e42495809566d141d75eceaea4402c27019adfddb7b3e6274d04de465ca7f",
       "path": ".appsdk/rules/appsdk-project-governance.md",
       "source": "skills/appsdk-project-governance/SKILL.md"
     },
     {
       "class": "skills",
-      "digest": "sha256:49c3939bd0d5c67be1bde95ca949d857a2b3c170cdcaf2a2f37b1780db6fb2a0",
+      "digest": "sha256:f19e42495809566d141d75eceaea4402c27019adfddb7b3e6274d04de465ca7f",
       "path": ".appsdk/skills/appsdk-project-governance/SKILL.md",
       "source": "skills/appsdk-project-governance/SKILL.md"
     },
@@ -304,7 +304,7 @@
     },
     {
       "class": "skills",
-      "digest": "sha256:82e7fc37ebdf70e21055bcf14d81c59b1c428abb35cbc9f2e26253d0db58166e",
+      "digest": "sha256:181a53c36e0c596ec60066a82b283f57c02be1d2dcf2f66b8789a6d28f405d1b",
       "path": ".appsdk/skills/appsdk-project-governance/references/bootstrap-migration.md",
       "source": "skills/appsdk-project-governance/references/bootstrap-migration.md"
     },
@@ -340,7 +340,7 @@
     },
     {
       "class": "skills",
-      "digest": "sha256:54b5272117ef4b961cf19b86ea4c7f6a81229627c747dfacc0918cf3a4a324ee",
+      "digest": "sha256:da5685cdc5d28e009cdb64da88108953be815032c892be1e64056f7aeb13c8d7",
       "path": ".appsdk/skills/project-memory/SKILL.md",
       "source": "skills/project-memory/SKILL.md"
     }

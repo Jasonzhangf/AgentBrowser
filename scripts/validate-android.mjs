@@ -45,7 +45,7 @@ assert(!existsSync(candidatePath) && !existsSync(validationPath), 'Admission rec
 
 command('npm',['run','verify:ci'],`${directory}/whitebox.log`);
 command('bash',['scripts/android.sh','assembleDebugAndroidTest'],`${directory}/test-apk.log`);
-command('appsdk',['compile-module','--module',moduleId],`${directory}/module.log`);
+// Project compilation builds the declared connection dependency before Android.
 command('appsdk',['compile'],`${directory}/compile.log`);
 const artifactFile = `generated/modules/${moduleId}/module.compiled.json`;
 const artifact = JSON.parse(readFileSync(artifactFile,'utf8'));

@@ -1,6 +1,6 @@
 {
   "binary_ref": "project-sdk",
-  "bundle_digest": "sha256:001d1fae6bca07bd10e15eaf793ab56caa1d256f7da28585efbb1ae48052a584",
+  "bundle_digest": "sha256:f25d72383a2571f9a819a68c0d07748f0d1b47a8872c720eecef1542a5b03b0f",
   "bundle_manifest_digest": "sha256:5e1977d7ee1d8ac2effc92bab780bdaf8c616782940f92177793e2be8751b3df",
   "bundle_resources": {
     "contracts": [
@@ -69,9 +69,10 @@
       "skills/project-memory/SKILL.md"
     ]
   },
-  "compiler_digest": "sha256:26e909c1aeba4c6a27e748ae0785fa07e10d75c619391c11a3eccedf68aaa37c",
+  "compiler_digest": "sha256:0e26737d70593dceaf588382417f31a2f02b30730e2251798e813e781755e0c7",
   "contract_schema": 1,
-  "digest": "sha256:26e909c1aeba4c6a27e748ae0785fa07e10d75c619391c11a3eccedf68aaa37c",
+  "digest": "sha256:0e26737d70593dceaf588382417f31a2f02b30730e2251798e813e781755e0c7",
+  "previous_bundle_digest": "sha256:001d1fae6bca07bd10e15eaf793ab56caa1d256f7da28585efbb1ae48052a584",
   "sdk": "appsdk",
   "version": "0.1.6"
 }
