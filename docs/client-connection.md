@@ -1,9 +1,9 @@
-# AB-05 direct connection candidate
+# AB-05 native connection candidate
 
 Owner: `packages/client-connection/`, root Cargo workspace and `scripts/connection*`.
 Android native resources, UI, Relay and Obscura protocol remain separate owners.
 This first slice implements an explicitly prepaired direct WSS endpoint. It does
-not implement candidate selection, UDP, relay routing, automatic retries, JNI,
+not implement candidate selection, UDP, automatic retries, JNI,
 phone layout election or native displayed-frame acknowledgement.
 
 ## Runtime contract
@@ -38,6 +38,7 @@ No protocol definitions are copied here. Freeze must replace this mutable local
 binding with an actual immutable source/version; no milestone is admitted yet.
 
 ```sh
+npm --prefix services/relay ci
 python3 scripts/connection.py test
 python3 scripts/connection.py build
 node scripts/connection-admission.mjs
@@ -59,3 +60,29 @@ Tests start only their own temporary Host/endpoint and clean their fixtures.
 Android local-file decoding acceptance is a separate candidate. Network frames
 displayed by 15T, mobile input, resize/rotation and complete reconnect UX remain
 whole-flow integration work before baseline, milestone and memory rebuild.
+
+## Relay v1 client adapter
+
+`relay` is an additional transport adapter within the same native connection
+owner. The existing direct `Connector`, media framing and Obscura Browser ABI
+remain unchanged. Relay v1 semantics are owned by `protocol/relay`; private
+Rust wire types validate that protocol, not a second browser protocol.
+
+`RelayClient` logs in, registers an Ed25519 device, reads the account-scoped
+directory and revokes its token. Credentials and signing keys remain in native
+memory. `RelayConnector` fences previous connection generations and opens
+separate authorized control/media WSS tunnels. HTTPS and WSS require the
+configured CA, reject plaintext/redirects, and expose bounded connection and
+request failures. No automatic retry or downgrade is introduced. Relay TLS
+protects the connection to Relay; this adapter does not claim endpoint-to-
+endpoint encryption or interpret browser operations and video bytes.
+
+The connection build stages `relay-acceptance` beside `connection-acceptance`.
+Admission executes both exact compiled consumers: the existing real Host path
+and a real HTTPS/WSS Relay fixture covering wrong CA, account isolation,
+directory, separate binary channels, token revocation and generation fencing.
+Relay service sources, protocol and dependency lock are hashed as test inputs.
+The fixture requires the local Node/tsx runtime; these development consumers
+are not portable deployment artifacts. Client platform login UI, Host-side
+Relay publication, Browser ABI tunnel binding and device path selection remain
+integration work before complete M1 network acceptance.

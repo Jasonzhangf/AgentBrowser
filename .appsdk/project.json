@@ -126,7 +126,8 @@
       "active_artifact": "active/lib/client-connection",
       "artifact_paths": [
         "libagentbrowser_connection.rlib",
-        "connection-acceptance"
+        "connection-acceptance",
+        "relay-acceptance"
       ],
       "build": {
         "args": [
@@ -169,9 +170,13 @@
           "scripts/connection.py",
           "scripts/connection-admission.mjs",
           "Cargo.toml",
-          "Cargo.lock"
+          "Cargo.lock",
+          "protocol/relay/**",
+          "services/relay/src/**",
+          "services/relay/package.json",
+          "services/relay/package-lock.json"
         ],
-        "minimum_test_count": 6,
+        "minimum_test_count": 11,
         "ordinary_mode_after_freeze": "disabled",
         "reenable_on": [
           "source_change",
@@ -181,7 +186,7 @@
           "dependency_change"
         ],
         "required_before_freeze": true,
-        "suite_id": "connection-direct-wss"
+        "suite_id": "connection-direct-relay-wss"
       },
       "source_owner": "client-connection",
       "stage": "contract_bound"

@@ -8,7 +8,7 @@
     "owner": "client-connection",
     "owned_paths": ["packages/client-connection/**", "scripts/connection.py", "scripts/connection-admission.mjs", "Cargo.toml", "Cargo.lock"],
     "forbidden_paths": ["active/lib/**", "protected/**", "generated/**"],
-    "verification_gates": ["connection-direct-wss"]
+    "verification_gates": ["connection-direct-relay-wss"]
   }, {
     "module_id": "relay-service",
     "status": "contract_bound",

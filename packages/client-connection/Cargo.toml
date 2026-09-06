@@ -5,6 +5,13 @@ edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
+base64 = "0.22"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
 # Development binding is explicit via scripts/connection.py. The protocol is
 # owned by Obscura and is not published or mirrored by this crate.
 obscura-host-protocol = "=0.1.0"
@@ -17,5 +24,6 @@ url = "2"
 thiserror = "2"
 
 [dev-dependencies]
+rustls-pemfile = "2"
 rcgen = "0.13"
 uuid = { version = "1", features = ["v4"] }
