@@ -34,7 +34,7 @@ const environment = `${process.platform}/${process.arch}/${identity}`;
 const entrypoint = 'relay.tar:dist/services/relay/src/main.js serve (HTTPS/WSS)';
 const whiteProducer = {adapter: 'services/relay/validate-admission.mjs:whitebox', identity};
 const blackProducer = {adapter: 'services/relay/validate-admission.mjs:compiled-cli', identity};
-run('appsdk', ['compile'], `${directory}/compile.log`);
+run('appsdk', ['compile-module', '--module', moduleId], `${directory}/compile.log`);
 const artifactFile = `generated/modules/${moduleId}/module.compiled.json`;
 const artifactBytes = readFileSync(artifactFile);
 const artifact = JSON.parse(artifactBytes);

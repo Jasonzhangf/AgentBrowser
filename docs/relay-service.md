@@ -20,7 +20,7 @@ Collab 经 `appsdk init` 报告无 live tmux pane；task register 因当前根�
 npm --prefix services/relay ci
 npm --prefix services/relay run build
 npm --prefix services/relay test
-appsdk compile
+appsdk compile-module --module relay-service
 appsdk verify
 ```
 
