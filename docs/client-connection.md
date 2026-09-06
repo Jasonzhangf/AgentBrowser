@@ -117,3 +117,24 @@ are not portable deployment artifacts. Client platform login UI, direct-path
 selection and full installed product replay remain integration work before
 complete M1 network acceptance. The Host adapter CLI is a thin bridge, not
 proof that an installed client has completed the end-to-end Browser flow.
+
+The explicit real adapter replay is `apps/relay-host/tests/relay-host-replay.rs`
+and is ignored by ordinary Cargo runs because it starts external binaries. Run
+it only with validated Obscura binaries:
+
+```sh
+OBSCURA_PROTOCOL_ROOT=/path/to/obscura/protocol/browser
+cargo build -p agentbrowser-android --example device_fixture \
+  --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\""
+OBSCURA_BIN_DIR=/path/to/obscura/target/release \
+  cargo test -p agentbrowser-relay-host --test relay-host-replay \
+  --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\"" \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The replay starts the real Relay fixture, Host/endpoint/media fixture, Relay
+Host adapter and secure client. It proves the `Ready → Attach → media` order,
+Attach response, takeover, click receipt and a later media sequence. The
+endpoint's remote policy rejects `Evaluate`; this replay therefore does not
+claim DOM inspection or pixel-difference proof, nor does it prove installed
+product delivery.

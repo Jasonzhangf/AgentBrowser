@@ -44,9 +44,12 @@ version = "0.1.0"
 dependencies = [
  "agentbrowser-connection",
  "futures-util",
+ "rcgen",
  "rustls",
+ "rustls-pemfile",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",

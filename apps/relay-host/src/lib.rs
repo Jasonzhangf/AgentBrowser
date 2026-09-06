@@ -7,7 +7,7 @@
 use std::{sync::Arc, time::Duration};
 
 use agentbrowser_connection::{
-    protocol::{Request, Response, ResultValue},
+    protocol::{Command, Mode, Request, Response, ResultValue},
     relay::{
         HostSnapshot, RelayClient, RelayEndpoint, RelayFailure, RelayNetwork, RelayPeerBinding,
         RelayTlsServerIdentity, SecureRelayChannel, SecureRelayTunnel,
@@ -209,9 +209,38 @@ async fn probe_endpoint(
             )))
         }
     };
-    let request = Request {
+    let attach = Request {
         id: 1,
-        command: agentbrowser_connection::protocol::Command::Status {},
+        command: Command::Attach {
+            mode: Mode::Observe,
+            viewport: None,
+        },
+        operation: None,
+    };
+    send_endpoint_text(&mut control, &attach).await?;
+    match next_endpoint_message(&mut control).await? {
+        Message::Text(text) => match serde_json::from_str::<Response>(&text)
+            .map_err(|error| RelayHostError::Protocol(error.to_string()))?
+        {
+            Response::Result {
+                id: 1,
+                value: ResultValue::Status(status),
+            } if status.session_id == session_id && status.attachment_id.is_some() => {}
+            other => {
+                return Err(RelayHostError::Protocol(format!(
+                    "expected Obscura Attach response, got {other:?}"
+                )))
+            }
+        },
+        other => {
+            return Err(RelayHostError::Protocol(format!(
+                "expected Obscura control text, got {other:?}"
+            )))
+        }
+    }
+    let request = Request {
+        id: 2,
+        command: Command::Status {},
         operation: None,
     };
     send_endpoint_text(&mut control, &request).await?;
@@ -220,7 +249,7 @@ async fn probe_endpoint(
             .map_err(|error| RelayHostError::Protocol(error.to_string()))?
         {
             Response::Result {
-                id: 1,
+                id: 2,
                 value: ResultValue::Status(status),
             } => status,
             other => {
@@ -240,7 +269,7 @@ async fn probe_endpoint(
             "Obscura Ready and Status session mismatch".into(),
         ));
     }
-    Ok(HostSnapshot {
+    let snapshot = HostSnapshot {
         incarnation: session_id.clone(),
         // Relay revision fences directory projections, not Browser document state.
         revision: 1,
@@ -249,7 +278,12 @@ async fn probe_endpoint(
             url: endpoint_url.to_owned(),
         }],
         sessions: vec![agentbrowser_connection::relay::RelaySession { id: session_id }],
-    })
+    };
+    tokio::time::timeout(ENDPOINT_TIMEOUT, control.close(None))
+        .await
+        .map_err(|_| RelayHostError::Transport("Obscura probe close timed out".into()))?
+        .map_err(|error| RelayHostError::Transport(error.to_string()))?;
+    Ok(snapshot)
 }
 
 fn endpoint_url(origin: &str) -> Result<Url> {
@@ -422,17 +456,18 @@ async fn forward_tunnel(
         .send(ready.as_ref())
         .await
         .map_err(RelayHostError::from)?;
+    let (control_sink, control_stream) = control.split();
+    let control = EndpointChannel {
+        sink: Mutex::new(control_sink),
+        stream: Mutex::new(control_stream),
+    };
+    forward_control_until_attached(tunnel.control(), &control).await?;
     let media_token = media_token.ok_or_else(|| {
         RelayHostError::Protocol("Obscura control did not return media token".into())
     })?;
     let (media, _) =
         connect_endpoint(endpoint_url, endpoint_tls, "/media", Some(&media_token)).await?;
-    let (control_sink, control_stream) = control.split();
     let (media_sink, media_stream) = media.split();
-    let control = EndpointChannel {
-        sink: Mutex::new(control_sink),
-        stream: Mutex::new(control_stream),
-    };
     let media = EndpointChannel {
         sink: Mutex::new(media_sink),
         stream: Mutex::new(media_stream),
@@ -460,6 +495,85 @@ async fn endpoint_send(endpoint: &EndpointChannel, message: Message) -> Result<(
         .await
         .map_err(|_| RelayHostError::Transport("Obscura endpoint send timed out".into()))?
         .map_err(|error| RelayHostError::Transport(error.to_string()))
+}
+
+async fn forward_control_until_attached(
+    secure: &SecureRelayChannel,
+    endpoint: &EndpointChannel,
+) -> Result<()> {
+    let mut pending_attach_id = None;
+    loop {
+        tokio::select! {
+            frame = secure.recv() => {
+                let bytes = frame.map_err(RelayHostError::from)?;
+                let text = String::from_utf8(bytes)
+                    .map_err(|_| RelayHostError::Protocol("Relay control frame is not UTF-8".into()))?;
+                if text.len() > MAX_CONTROL_MESSAGE {
+                    return Err(RelayHostError::Protocol("Relay control frame exceeds limit".into()));
+                }
+                let request = serde_json::from_str::<Request>(&text)
+                    .map_err(|error| RelayHostError::Protocol(format!("invalid Relay control request: {error}")))?;
+                if matches!(request.command, Command::Attach { .. }) {
+                    pending_attach_id = Some(request.id);
+                }
+                endpoint_send(endpoint, Message::Text(text.into())).await?;
+            }
+            message = endpoint_recv(endpoint) => {
+                match message? {
+                    None | Some(Message::Close(_)) => {
+                        return Err(RelayHostError::Transport(
+                            "Obscura control closed before attachment".into(),
+                        ))
+                    }
+                    Some(Message::Ping(bytes)) => endpoint_send(endpoint, Message::Pong(bytes)).await?,
+                    Some(Message::Pong(_)) => {}
+                    Some(Message::Text(text)) => {
+                        let attached = attachment_response(&mut pending_attach_id, text.as_ref())?;
+                        secure.send(text.as_bytes()).await.map_err(RelayHostError::from)?;
+                        if attached {
+                            return Ok(());
+                        }
+                    }
+                    Some(Message::Binary(_)) => {
+                        return Err(RelayHostError::Protocol(
+                            "Obscura control sent binary".into(),
+                        ))
+                    }
+                    Some(_) => {
+                        return Err(RelayHostError::Protocol(
+                            "unexpected Obscura control frame".into(),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn attachment_response(pending_attach_id: &mut Option<u64>, text: &str) -> Result<bool> {
+    let Some(request_id) = *pending_attach_id else {
+        return Ok(false);
+    };
+    let response = serde_json::from_str::<Response>(text).map_err(|error| {
+        RelayHostError::Protocol(format!(
+            "invalid Obscura control response while waiting for Attach: {error}"
+        ))
+    })?;
+    match response {
+        Response::Result { id, value } if id == request_id => {
+            *pending_attach_id = None;
+            Ok(matches!(
+                value,
+                ResultValue::Status(status)
+                    if status.attachment_id.is_some() && status.mode.is_some()
+            ))
+        }
+        Response::Error { id, .. } if id == request_id => {
+            *pending_attach_id = None;
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
 }
 
 async fn forward_control(secure: &SecureRelayChannel, endpoint: EndpointChannel) -> Result<()> {
@@ -506,5 +620,56 @@ async fn forward_media(secure: &SecureRelayChannel, endpoint: EndpointChannel) -
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status_response(id: u64, attachment_id: Option<u64>, mode: Option<&str>) -> String {
+        serde_json::json!({
+            "type": "result",
+            "id": id,
+            "value": {
+                "session_id": "session",
+                "attachment_id": attachment_id,
+                "mode": mode,
+                "attachments": 1,
+                "agent_attached": false,
+                "operation_running": false,
+                "control": {"epoch": 0, "phase": {"type": "waiting", "attachment_id": 3}},
+                "fault": null,
+                "next_sequence": 0,
+                "viewport_revision": 0,
+                "document_revision": 0,
+                "viewport": null,
+                "viewport_owner": null,
+                "viewport_pending": false,
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn media_gate_waits_for_matching_successful_attach() {
+        let mut pending = Some(7);
+        assert!(
+            !attachment_response(&mut pending, &status_response(8, Some(3), Some("observe")),)
+                .expect("parse unrelated response")
+        );
+        assert_eq!(pending, Some(7));
+        assert!(
+            !attachment_response(&mut pending, &status_response(7, None, None),)
+                .expect("parse unsuccessful response")
+        );
+        assert_eq!(pending, None);
+
+        let mut pending = Some(9);
+        assert!(
+            attachment_response(&mut pending, &status_response(9, Some(4), Some("observe")),)
+                .expect("parse successful response")
+        );
+        assert_eq!(pending, None);
     }
 }

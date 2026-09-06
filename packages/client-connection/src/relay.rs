@@ -33,7 +33,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf},
     net::TcpStream,
     sync::{watch, Mutex},
     task::JoinHandle,
@@ -1042,10 +1042,72 @@ impl SecureRelayTunnel {
     }
 }
 
+struct SecureFrameReader<R> {
+    reader: R,
+    header: [u8; 4],
+    header_filled: usize,
+    payload: Vec<u8>,
+    payload_filled: usize,
+}
+
+impl<R: AsyncRead + Unpin> SecureFrameReader<R> {
+    fn new(reader: R) -> Self {
+        Self {
+            reader,
+            header: [0; 4],
+            header_filled: 0,
+            payload: Vec::new(),
+            payload_filled: 0,
+        }
+    }
+
+    async fn read_frame(&mut self, kind: RelayChannelKind) -> Result<Vec<u8>> {
+        while self.header_filled < self.header.len() {
+            let read = self
+                .reader
+                .read(&mut self.header[self.header_filled..])
+                .await
+                .map_err(|error| RelayFailure::Transport(error.to_string()))?;
+            if read == 0 {
+                return Err(RelayFailure::Transport(
+                    "secure frame ended before length header".into(),
+                ));
+            }
+            self.header_filled += read;
+        }
+        if self.payload.is_empty() && self.payload_filled == 0 {
+            let length = u32::from_be_bytes(self.header) as usize;
+            if length > channel_limit(kind) {
+                return Err(RelayFailure::Limit(format!(
+                    "{} payload exceeds limit",
+                    channel_name(kind)
+                )));
+            }
+            self.payload = vec![0; length];
+        }
+        while self.payload_filled < self.payload.len() {
+            let read = self
+                .reader
+                .read(&mut self.payload[self.payload_filled..])
+                .await
+                .map_err(|error| RelayFailure::Transport(error.to_string()))?;
+            if read == 0 {
+                return Err(RelayFailure::Transport(
+                    "secure frame ended before payload".into(),
+                ));
+            }
+            self.payload_filled += read;
+        }
+        self.header_filled = 0;
+        self.payload_filled = 0;
+        Ok(std::mem::take(&mut self.payload))
+    }
+}
+
 pub struct SecureRelayChannel {
     kind: RelayChannelKind,
     writer: Mutex<WriteHalf<TlsStream<DuplexStream>>>,
-    reader: Mutex<ReadHalf<TlsStream<DuplexStream>>>,
+    reader: Mutex<SecureFrameReader<ReadHalf<TlsStream<DuplexStream>>>>,
     _bridge: Arc<RelayBridge>,
     guard: GenerationGuard,
 }
@@ -1083,24 +1145,7 @@ impl SecureRelayChannel {
     pub async fn recv(&self) -> Result<Vec<u8>> {
         self.guard.check()?;
         let mut reader = self.reader.lock().await;
-        let mut length = [0u8; 4];
-        reader
-            .read_exact(&mut length)
-            .await
-            .map_err(|error| RelayFailure::Transport(error.to_string()))?;
-        let length = u32::from_be_bytes(length) as usize;
-        if length > channel_limit(self.kind) {
-            return Err(RelayFailure::Limit(format!(
-                "{} payload exceeds limit",
-                channel_name(self.kind)
-            )));
-        }
-        let mut bytes = vec![0u8; length];
-        reader
-            .read_exact(&mut bytes)
-            .await
-            .map_err(|error| RelayFailure::Transport(error.to_string()))?;
-        Ok(bytes)
+        reader.read_frame(self.kind).await
     }
 }
 
@@ -1469,7 +1514,7 @@ async fn secure_channel(
     Ok(SecureRelayChannel {
         kind,
         writer: Mutex::new(writer),
-        reader: Mutex::new(reader),
+        reader: Mutex::new(SecureFrameReader::new(reader)),
         _bridge: bridge,
         guard,
     })
@@ -2374,6 +2419,45 @@ mod tests {
         assert_ne!(
             channel_name(RelayChannelKind::Control),
             channel_name(RelayChannelKind::Media)
+        );
+    }
+
+    #[tokio::test]
+    async fn secure_frame_reader_preserves_partial_frames_after_cancellation() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let mut framed = SecureFrameReader::new(reader);
+        writer.write_all(&[0, 0]).await.expect("partial header");
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                framed.read_frame(RelayChannelKind::Control),
+            )
+            .await
+            .is_err(),
+            "partial header must wait for the rest of the frame"
+        );
+        writer
+            .write_all(&[0, 3, b'a'])
+            .await
+            .expect("partial payload");
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                framed.read_frame(RelayChannelKind::Control),
+            )
+            .await
+            .is_err(),
+            "partial payload must wait for the rest of the frame"
+        );
+        writer.write_all(b"bc").await.expect("remaining payload");
+        assert_eq!(
+            framed
+                .read_frame(RelayChannelKind::Control)
+                .await
+                .expect("complete frame"),
+            b"abc"
         );
     }
 
