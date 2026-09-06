@@ -137,6 +137,12 @@ final class NetworkSession {
                 String result=NativeConnection.command(nativeHandle,op,epoch,ticket,x,y,dx,dy,text==null?"":text);
                 JSONObject status=new JSONObject(op<=2||op==6?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
                 synchronized(this){if(current(expected)){host=status;commandPending=false;flushViewport();}}
+            }catch(HostCommandException rejection){
+                try{
+                    synchronized(this){if(!current(expected))return;}
+                    JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
+                    synchronized(this){if(current(expected)){host=status;commandPending=false;error=rejection.toString();flushViewport();}}
+                }catch(Exception failure){failure.addSuppressed(rejection);terminate(expected,failure);}
             }catch(Exception failure){terminate(expected,failure);}
         });
     }

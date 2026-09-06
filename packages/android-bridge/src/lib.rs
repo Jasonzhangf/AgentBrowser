@@ -1,8 +1,8 @@
 //! JNI owns native handle lifetime and displayed-frame acknowledgement only.
 //! TLS, browser ABI and control arbitration stay in their existing owners.
 use std::{collections::{HashMap,VecDeque}, sync::{Arc, Mutex, OnceLock}, time::Duration};
-use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Input, Pairing, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
-use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
+use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Failure, Input, Pairing, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
+use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
 
 struct Session {
     // Retain the connector: dropping it fences its Connection.
@@ -35,6 +35,29 @@ fn session(handle: jlong) -> Result<Arc<Mutex<Session>>> {
 fn fail(env: &mut JNIEnv, message: String) {
     // Preserve a pending JVM exception (for example allocation failure).
     if !env.exception_check().unwrap_or(true) { let _ = env.throw_new("java/lang/IllegalStateException", message); }
+}
+
+enum CommandFailure { Local(String), Connection(Failure) }
+impl From<String> for CommandFailure { fn from(value: String) -> Self { Self::Local(value) } }
+impl From<&str> for CommandFailure { fn from(value: &str) -> Self { Self::Local(value.into()) } }
+impl From<Failure> for CommandFailure { fn from(value: Failure) -> Self { Self::Connection(value) } }
+
+fn fail_command(env: &mut JNIEnv, failure: CommandFailure) {
+    match failure {
+        CommandFailure::Connection(Failure::Host { code, message }) => {
+            if env.exception_check().unwrap_or(true) { return; }
+            let raised = (|| -> jni::errors::Result<()> {
+                let code = JObject::from(env.new_string(code)?);
+                let message = JObject::from(env.new_string(message)?);
+                let exception = env.new_object("com/agentbrowser/probe/HostCommandException",
+                    "(Ljava/lang/String;Ljava/lang/String;)V", &[JValue::Object(&code), JValue::Object(&message)])?;
+                env.throw(JThrowable::from(exception))
+            })();
+            if let Err(error) = raised { fail(env, error.to_string()); }
+        }
+        CommandFailure::Connection(failure) => fail(env, error(failure)),
+        CommandFailure::Local(message) => fail(env, message),
+    }
 }
 
 #[no_mangle]
@@ -110,14 +133,14 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_command(
     mut env: JNIEnv, _: JClass, handle: jlong, op: jint, epoch: jlong, ticket: jlong,
     x: jdouble, y: jdouble, dx: jdouble, dy: jdouble, text: JString,
 ) -> jstring {
-    let result = (|| -> Result<jstring> {
+    let result = (|| -> std::result::Result<jstring, CommandFailure> {
         if epoch < 0 { return Err("Invalid control epoch".into()); }
         let text: String = env.get_string(&text).map_err(error)?.into();
         let session = session(handle)?; let session = session.lock().map_err(error)?;
         let connection = &session.connection;
-        let response = runtime()?.block_on(async {
+        let response: std::result::Result<String, CommandFailure> = runtime()?.block_on(async {
             match op {
-                0 => serde_json::to_string(&connection.status().await.map_err(error)?).map_err(error),
+                0 => Ok(serde_json::to_string(&connection.status().await?).map_err(error)?),
                 6 => {
                     if x <= 0.0 || y <= 0.0 || x > 4096.0 || y > 4096.0 || x * y > 4_194_304.0 {
                         return Err("INVALID_VIEWPORT".into());
@@ -128,28 +151,28 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_command(
                         css_height: y as u32,
                         orientation: if dx != 0.0 { Orientation::Landscape } else { Orientation::Portrait },
                     };
-                    serde_json::to_string(&connection.declare_viewport(viewport).await.map_err(error)?).map_err(error)
+                    Ok(serde_json::to_string(&connection.declare_viewport(viewport).await?).map_err(error)?)
                 }
-                1 => serde_json::to_string(&connection.takeover(epoch as u64).await.map_err(error)?).map_err(error),
-                2 => serde_json::to_string(&connection.release(epoch as u64).await.map_err(error)?).map_err(error),
+                1 => Ok(serde_json::to_string(&connection.takeover(epoch as u64).await?).map_err(error)?),
+                2 => Ok(serde_json::to_string(&connection.release(epoch as u64).await?).map_err(error)?),
                 3..=5 => {
                     if ![x,y,dx,dy].iter().all(|number| number.is_finite()) { return Err("Nonfinite input coordinates".into()); }
                     let frame = session.displayed.iter().find(|(id,_)|ticket>0&&*id==ticket as u64)
                         .map(|(_,frame)|frame.clone()).ok_or("No retained acknowledged displayed frame")?;
                     let input = match op { 3 => Input::Click { x,y }, 4 => Input::Text(text), _ => Input::Scroll { x,y,delta_x:dx,delta_y:dy } };
-                    connection.input(input, frame, epoch as u64).await.map_err(error)?;
+                    connection.input(input, frame, epoch as u64).await?;
                     // The Host receipt is represented by the successful typed API;
                     // subsequent status remains a separate authoritative read.
-                    serde_json::to_string(&agentbrowser_connection::protocol::ResultValue::Input {
+                    Ok(serde_json::to_string(&agentbrowser_connection::protocol::ResultValue::Input {
                         input: agentbrowser_connection::protocol::InputReceipt { state: agentbrowser_connection::protocol::InputState::Succeeded }
-                    }).map_err(error)
+                    }).map_err(error)?)
                 }
                 _ => Err("Unknown native command".into()),
             }
-        })?;
-        Ok(env.new_string(response).map_err(error)?.into_raw())
+        });
+        Ok(env.new_string(response?).map_err(error)?.into_raw())
     })();
-    match result { Ok(value) => value, Err(message) => { fail(&mut env, message); std::ptr::null_mut() } }
+    match result { Ok(value) => value, Err(failure) => { fail_command(&mut env, failure); std::ptr::null_mut() } }
 }
 
 #[no_mangle]

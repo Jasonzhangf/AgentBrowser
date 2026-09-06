@@ -16,6 +16,18 @@ public final class NativeSmoke {
             Files.readAllBytes(pairing.resolve("ca.der")), Files.readAllBytes(pairing.resolve("client.der")),
             Files.readAllBytes(pairing.resolve("key.der")));
         try {
+            try {
+                NativeConnection.command(handle, 1, Long.MAX_VALUE, 0, 0, 0, 0, 0, "");
+                throw new AssertionError("Expected stale takeover rejection");
+            } catch (IllegalStateException expected) {
+                if (!(expected instanceof HostCommandException rejection))
+                    throw new AssertionError("Host rejection lost its native type", expected);
+                if (!rejection.code.equals("STALE_CONTROL"))
+                    throw new AssertionError("Host rejection lost its code", expected);
+            }
+            String afterRejection = NativeConnection.command(handle, 0, 0, 0, 0, 0, 0, 0, "");
+            if (!afterRejection.contains("session_id"))
+                throw new AssertionError("Rejected command must leave status readable");
             rejected(() -> NativeConnection.acknowledge(handle, 1));
             rejected(() -> NativeConnection.command(handle, 3, 0, 0, 30, 30, 0, 0, ""));
             NetworkFrame frame = null;
@@ -30,7 +42,7 @@ public final class NativeSmoke {
             rejected(() -> NativeConnection.acknowledge(handle, received.ticket));
             String status = NativeConnection.command(handle, 0, 0, 0, 0, 0, 0, 0, "");
             if (!status.contains("session_id")) throw new AssertionError("Expected Host status");
-            System.out.println("JNI real endpoint PASS: framing, acknowledgement and stale ticket rejection");
+            System.out.println("JNI real endpoint PASS: typed Host rejection, continued status, framing and stale tickets");
         } finally { NativeConnection.close(handle); }
         rejected(() -> NativeConnection.frame(handle));
         rejected(() -> NativeConnection.acknowledge(handle, 1));

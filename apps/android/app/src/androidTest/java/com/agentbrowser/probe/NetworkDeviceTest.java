@@ -98,6 +98,12 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             until("document.body.innerText.includes('观察模式')",5000);
             JSONObject viewport=viewport();
             String session=js(STATUS+".sessionId");
+            long framesBeforeRejection=activity.annex.snapshot().getLong("renderedFrames");
+            getInstrumentation().runOnMainSync(()->activity.network.command(1,Long.MAX_VALUE,0,0,0,0,""));
+            until("String("+STATUS+".error).includes('STALE_CONTROL')",6000);
+            assertEquals("Host rejection keeps the connection", "\"connected\"",js(STATUS+".connectionState"));
+            assertEquals("Host rejection keeps the Session",session,js(STATUS+".sessionId"));
+            until(STATUS+".renderedFrames>"+framesBeforeRejection+" && "+STATUS+".inputReady",6000);
             Bitmap before=capture("before");
             assertTrue("Real red Host button",Color.red(before.getPixel(30,30))>160&&Color.green(before.getPixel(30,30))<100);
             touch(30,30);SystemClock.sleep(500);
@@ -151,6 +157,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
                 .put("viewport",viewport)
                 .put("busyViewportCoalesced",true)
+                .put("hostRejectionKeepsConnection",true)
                 .put("reconnectPreservesDocument",true).put("backgroundRelease",true).put("staleCallbacksFenced",true)
                 .put("textSubmitted",true).put("sessionId",new org.json.JSONTokener(session).nextValue());
             result.put("textPainted",true).put("inputGlyphsBefore",emptyGlyphs).put("inputGlyphsAfter",paintedGlyphs);

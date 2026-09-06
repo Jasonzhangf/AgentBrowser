@@ -26,6 +26,12 @@ change and release. UI supplies its observed control epoch. Host alone grants
 takeover and completes atomic operations. Closing Android resources closes its
 connection, preserving the independent Host document.
 
+Correlated Host command errors cross JNI as `HostCommandException` with the
+original code and message. Android reports the failed operation, refreshes Host
+status, and retains the connection; it never retries the rejected operation.
+Transport/protocol failures and unknown outcomes retain the fatal path. A failed
+status refresh after a rejection also ends the connection explicitly.
+
 The phone declares the measured page stage in CSS pixels, excluding local
 chrome and system bars. Only a change to stage bounds declares a new size;
 decoded-frame layout does not redeclare it. `NetworkSession` retains the latest
@@ -69,6 +75,15 @@ JNI carries document and viewport revisions from the actual media source into
 the immutable frame. Java exposes those revisions only after native display
 and acknowledgement, and allows input only when they match the Host status.
 The device test observes this invariant during waits, including viewport changes.
+
+The network test also submits a stale takeover epoch and verifies that the
+reported rejection leaves the same Session connected with continuing frames,
+before exercising a valid takeover. `packages/android-bridge/tests/run-smoke.py`
+is the narrower real JVM/JNI/TLS regression; pass explicit `--library-dir` and
+`--fixture-bin`, with `JAVA_HOME`, `OBSCURA_BIN_DIR` and
+`OBSCURA_ENDPOINT_BIND_IP` set. It checks the structured rejection and a
+subsequent status read using a private Host fixture; it does not prove Android
+UI or native display behavior.
 
 This remains a direct prepaired WSS integration slice. UDP/Relay selection,
 production account enrollment, multiple-client viewport election, complete
