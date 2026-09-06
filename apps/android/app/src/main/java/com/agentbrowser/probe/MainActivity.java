@@ -25,6 +25,7 @@ public final class MainActivity extends Activity {
     private MediaProbe probe;
     AnnexBDecoder annex;
     NetworkSession network;
+    AccountSession account;
     private boolean annexSelected;
     private boolean networkSelected;
     private FrameLayout stage;
@@ -42,6 +43,7 @@ public final class MainActivity extends Activity {
         probe = new MediaProbe(this);
         annex = new AnnexBDecoder();
         network = new NetworkSession(this, this::submitNetworkFrame, () -> annex.stop());
+        account = new AccountSession(this);
         layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setBackgroundColor(Color.rgb(245,247,244));
@@ -219,6 +221,9 @@ public final class MainActivity extends Activity {
         }
         return network.snapshot(annex.snapshot()).toString();
     }
+    String dispatchAccount(org.json.JSONObject value) throws Exception {
+        return account.request(value).toString();
+    }
     private void reportViewport() {
         if (!networkSelected || stage.getWidth()<=0 || stage.getHeight()<=0) return;
         float density = getResources().getDisplayMetrics().density;
@@ -242,6 +247,11 @@ public final class MainActivity extends Activity {
             try {
                 org.json.JSONObject json = new org.json.JSONObject(raw);
                 String op = json.optString("op", "");
+                if (java.util.Set.of("account_status", "account_login", "account_register_device", "account_refresh", "account_logout").contains(op)) {
+                    var task = new java.util.concurrent.FutureTask<String>(() -> dispatchAccount(json));
+                    runOnUiThread(task);
+                    return task.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                }
                 if (java.util.Set.of("connect", "disconnect", "observe", "takeover", "release", "navigate", "click", "input_text", "scroll").contains(op)
                         || ("status".equals(op) && networkSelected)) {
                     var task = new java.util.concurrent.FutureTask<String>(() -> dispatchNetwork(json));
@@ -265,6 +275,7 @@ public final class MainActivity extends Activity {
         probe.close();
         annex.close();
         network.close();
+        account.close();
         webView.removeJavascriptInterface("ProbeNative");
         webView.destroy();
         super.onDestroy();

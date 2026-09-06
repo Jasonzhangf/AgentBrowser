@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Context } from '@cordisjs/core';
 import { androidPort, type ProbeCommand, type ProbeSnapshot } from '../client-domain/probe';
+import { accountPort } from '../client-domain/account-directory';
 import { createKernel } from '../ui-kernel/kernel';
+import { AccountDirectory } from './account-directory';
 import './probe.css';
 
 declare global { interface Window { ProbeNative?: {request(raw: string): string} } }
@@ -51,7 +53,8 @@ function Panel({ctx}: {ctx: Context}) {
   const canEdit = connected && snapshot.controlMode === 'control';
   const canNavigate = canEdit && Boolean(snapshot.inputReady);
   const canSubmit = canEdit && Boolean(snapshot.inputReady) && composition !== 'composing' && composition !== 'cancelled' && text.length > 0;
-  return <section className={network ? 'remote' : ''} data-state={snapshot.state} data-released={String(snapshot.released)} data-frames={snapshot.renderedFrames}>
+  return <>
+  <section className={network ? 'remote' : ''} data-state={snapshot.state} data-released={String(snapshot.released)} data-frames={snapshot.renderedFrames}>
     <h1>AgentBrowser</h1><p className="intro">{network ? '远程浏览器 · 页面保留在 Host' : snapshot.source === 'annexb' ? '原生视频验证' : '连接浏览器，或检查本机视频显示'}</p>
     <div className="status" role="status"><strong>{labels[snapshot.state]}</strong><span>{snapshot.renderedFrames} 帧呈现</span></div>
     <div className="actions local-probe"><button id="play" disabled={busy || connected} onClick={() => request({op:'play',sample:'portrait'})}>播放样本</button><button id="stop" className="secondary" disabled={!busy} onClick={() => request({op:'stop'})}>停止并释放</button></div>
@@ -63,11 +66,14 @@ function Panel({ctx}: {ctx: Context}) {
       <form className="address-entry" onSubmit={event => { event.preventDefault(); if (!canNavigate || url.length === 0) return; request({op:'navigate',epoch:snapshot.epoch!,url}); }}><input id="address" aria-label="远程页面地址" value={url} onChange={event => setUrl(event.currentTarget.value)} placeholder="输入 https://、http:// 或 data:text/html 地址" disabled={!canNavigate} /><button id="navigate" type="submit" disabled={!canNavigate || url.length === 0}>打开</button></form>
       <div className="text-entry" data-composition={composition} data-composition-started={String(composition !== 'idle')} data-composition-committed={String(composition === 'committed')} data-composition-cancelled={String(composition === 'cancelled')}><input ref={inputRef} id="input-text" aria-label="输入到远程页面的文字" value={text} maxLength={4096} onChange={event => { setText(event.target.value); if (compositionRef.current !== 'composing') setCompositionPhase('idle'); }} onCompositionStart={() => { if (!canEdit) return; compositionCancelled.current = false; setCompositionPhase('composing'); }} onCompositionEnd={event => { if (compositionCancelled.current || !canEdit) { setText(''); setCompositionPhase('cancelled'); return; } setText(event.currentTarget.value); setCompositionPhase('committed'); }} onKeyDown={event => { if (event.key === 'Escape' && compositionRef.current === 'composing') { event.preventDefault(); cancelComposition(); } }} onBlur={() => { if (compositionRef.current === 'composing') cancelComposition(); }} placeholder="先点击页面中的输入框" disabled={!canEdit} /><button id="send-text" disabled={!canSubmit} onClick={() => { if (compositionRef.current === 'composing' || compositionRef.current === 'cancelled') return; request({op:'input_text',epoch:snapshot.epoch!,text}); }}>发送</button></div>
     </section>
-  </section>;
+  </section>
+  <AccountDirectory port={ctx.accountDirectory}/>
+  </>;
 }
 async function boot() {
   const host = document.getElementById('root')!;
   const port = androidPort(window.ProbeNative);
+  const account = accountPort(window.ProbeNative);
   const shell = document.createElement('div');
   const slot = document.createElement('div');
   const footer = document.createElement('footer');
@@ -77,7 +83,7 @@ async function boot() {
   note.textContent = '断开连接后，远程页面仍保留。';
   footer.append(toggle, note); shell.append(slot, footer); host.append(shell);
   function mount(ctx: Context) { const root = createRoot(slot); root.render(<Panel ctx={ctx}/>); ctx.on('dispose', () => root.unmount()); }
-  let kernel = await createKernel(port, mount);
+  let kernel = await createKernel(port, account, mount);
   toggle.textContent = '卸载 UI 插件'; toggle.dataset.mounted = 'true';
   toggle.onclick = async () => {
     toggle.disabled = true;
@@ -90,7 +96,7 @@ async function boot() {
           await new Promise(resolve => setTimeout(resolve, 50));
         }
         await kernel.dispose(); slot.textContent = 'UI 插件已卸载，原生资源已释放。';
-      } else { slot.textContent = ''; kernel = await createKernel(port, mount); }
+      } else { slot.textContent = ''; kernel = await createKernel(port, account, mount); }
       toggle.dataset.mounted = String(kernel.mounted);
       toggle.textContent = kernel.mounted ? '卸载 UI 插件' : '重新加载 UI 插件';
     } catch (error) { note.textContent = String(error); }
