@@ -426,7 +426,7 @@ async function main() {
     assertFile(fixtureExecutable);
     const fixtureEnvironment = {OBSCURA_BIN_DIR: binaryRoot, OBSCURA_ENDPOINT_BIND_IP: bindIp};
     fixture = startFixture(fixtureExecutable, directory, fixtureEnvironment);
-    const fixtureInfo = JSON.parse(await fixture.nextLine());
+    const fixtureInfo = JSON.parse(await fixture.nextLine(60_000));
     assert.match(fixtureInfo.fixture, /^\/tmp\/an-[a-z0-9]+$/);
     assert.match(fixtureInfo.endpoint, /^wss:\/\/127\.0\.0\.1:\d+$/);
     assert.equal(typeof fixtureInfo.session, 'string');
