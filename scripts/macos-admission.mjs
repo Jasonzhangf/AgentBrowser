@@ -358,6 +358,7 @@ async function main() {
     assert.equal(processRows(installedExecutable).length, 0, 'A prior installed AppBrowser process is still running');
     const firstApp = launchApp('app-first');
     await waitForWindow(firstApp);
+    await sleep(1_500);
     screenshots.push(captureWindow(join(directory, 'waiting.png'), false));
     pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
     await sleep(4_000);
