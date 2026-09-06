@@ -223,6 +223,14 @@ async fn exercise() {
         .unwrap();
     connection
         .input(
+            Input::Click { x: 30., y: 90. },
+            changed_displayed.clone(),
+            human.control.epoch,
+        )
+        .await
+        .unwrap();
+    connection
+        .input(
             Input::Scroll {
                 x: 100.,
                 y: 100.,
