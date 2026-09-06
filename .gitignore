@@ -8,3 +8,22 @@
 # Local worktrees and private execution evidence
 /playground/
 /.agent-collab/
+node_modules/
+dist/
+.gradle/
+build/
+local.properties
+/evidence/
+/.appsdk/records/evidence/android-probe/
+/.appsdk/records/fix-candidate-record-android-probe.json
+/.appsdk/records/pre-review-validation-record-android-probe.json
+/target/
+/.appsdk/records/evidence/client-connection/
+/.appsdk/records/fix-candidate-record-client-connection.json
+/.appsdk/records/pre-review-validation-record-client-connection.json
+/.appsdk/records/evidence/relay-service/
+/.appsdk/records/fix-candidate-record-relay-service.json
+/.appsdk/records/pre-review-validation-record-relay-service.json
+/.appsdk/records/evidence/host-service/
+/.appsdk/records/fix-candidate-record-host-service.json
+/.appsdk/records/pre-review-validation-record-host-service.json
