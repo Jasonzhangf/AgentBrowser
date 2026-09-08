@@ -50,6 +50,7 @@ MAX_BRIDGE_HEADER_BYTES = 1_048_576
 MAX_BRIDGE_FRAME_BYTES = 4 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 45.0
 DEFAULT_POLL_SECONDS = 0.2
+RELEASE_INSPECT_SETTLE_SECONDS = 0.05
 DEFAULT_TEXT = "你好，Mac 输入"
 LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
 
@@ -1445,6 +1446,35 @@ class Runner:
                     "atomic_operations",
                     "INPUT_NOT_READY_AFTER_OPERATION",
                 )
+        release = self._require_bridge_snapshot(
+            bridge.command_response({"op": "release", "epoch": epoch}, self.args.timeout),
+            "atomic_operations",
+            "release",
+        )
+        if release.get("connectionState") != "connected" or release.get("controlMode") not in {"observe", "waiting"}:
+            self.abort(
+                "RELEASE_FAILED",
+                f"release did not return a connected non-control snapshot: {release!r}",
+                owner="AgentBrowser Host control owner",
+                next_action="preserve the typed release response before fixture inspection",
+                stage="atomic_operations",
+            )
+        self.operation_receipts.append(
+            {
+                "operation": "release",
+                "command": {"op": "release", "epoch": epoch},
+                "before": after,
+                "after": release,
+                "receipt": "bridge response snapshot",
+            }
+        )
+        self.stage_log("atomic_operations", f"receipt release: {json_text(release)}")
+        self.prove("control_released_for_inspect", "bridge released Host control before independent fixture inspection", stage="atomic_operations")
+        time.sleep(RELEASE_INSPECT_SETTLE_SECONDS)
+        self.stage_log(
+            "atomic_operations",
+            f"release-to-inspect settle: {RELEASE_INSPECT_SETTLE_SECONDS:.2f}s",
+        )
         inspect = self.fixture_request("inspect", "atomic_operations")
         snapshot = fixture_snapshot(inspect)
         if snapshot is None:
@@ -1480,7 +1510,11 @@ class Runner:
         self.stage_finish(
             "atomic_operations",
             "passed",
-            {"receipts": self.operation_receipts, "fixture_inspect": snapshot},
+            {
+                "receipts": self.operation_receipts,
+                "fixture_inspect": snapshot,
+                "release_to_inspect_settle_seconds": RELEASE_INSPECT_SETTLE_SECONDS,
+            },
         )
         self.prove(
             "atomic_operation_receipts",
