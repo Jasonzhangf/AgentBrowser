@@ -64,6 +64,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentbrowser-macos-bridge"
+version = "0.1.0"
+dependencies = [
+ "agentbrowser-connection",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "agentbrowser-relay-host"
 version = "0.1.0"
 dependencies = [
@@ -80,15 +89,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "url",
-]
-
-[[package]]
-name = "agentbrowser-macos-bridge"
-version = "0.1.0"
-dependencies = [
- "agentbrowser-connection",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
