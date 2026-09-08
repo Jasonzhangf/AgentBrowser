@@ -1,5 +1,8 @@
 /** Relay ABI owner. Browser operations and page payloads are opaque here. */
-export const RELAY_PROTOCOL_VERSION = 2;
+export const RELAY_ABI_ID = 'agentbrowser-relay-v0' as const;
+
+/** Source compatibility for adapters that still import the draft constant. */
+export const RELAY_PROTOCOL_VERSION = 0;
 
 export class RelayError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 400) {
@@ -11,6 +14,14 @@ export function object(value: unknown, keys: readonly string[]): Record<string, 
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new RelayError('INVALID_MESSAGE', 'Expected object');
   const result = value as Record<string, unknown>;
   if (Object.keys(result).some(key => !keys.includes(key))) throw new RelayError('UNKNOWN_FIELD', 'Unknown control field');
+  return result;
+}
+
+/** Validate the closed control envelope before interpreting its payload. */
+export function envelope(value: unknown, type: string, keys: readonly string[]): Record<string, unknown> {
+  const result = object(value, ['type', 'abi', ...keys]);
+  if (result.type !== type) throw new RelayError('UNKNOWN_MESSAGE', `Expected ${type}`);
+  if (result.abi !== RELAY_ABI_ID) throw new RelayError('RELAY_ABI_ID_MISMATCH', 'Unsupported relay ABI');
   return result;
 }
 
@@ -55,6 +66,61 @@ export function snapshot(value: unknown): HostSnapshot {
 
 export type Channel = 'control' | 'media';
 
+export interface AuthChallenge {
+  type: 'auth.challenge';
+  abi: typeof RELAY_ABI_ID;
+  nonce: string;
+  path: string;
+}
+
+export interface AuthProve {
+  type: 'auth.prove';
+  abi: typeof RELAY_ABI_ID;
+  token: string;
+  deviceId: string;
+  signature: string;
+}
+
+export interface AuthOk {
+  type: 'auth.ok';
+  abi: typeof RELAY_ABI_ID;
+  deviceId: string;
+}
+
+export interface DirectoryHost {
+  hostId: string;
+  deviceId: string;
+  deviceName: string;
+  snapshot: HostSnapshot;
+}
+
+export interface DirectorySnapshot {
+  type: 'directory.snapshot';
+  abi: typeof RELAY_ABI_ID;
+  hosts: DirectoryHost[];
+}
+
+export interface SignalSend {
+  type: 'signal.send';
+  abi: typeof RELAY_ABI_ID;
+  peerDeviceId: string;
+  data: string;
+}
+
+export interface SignalReceived {
+  type: 'signal.received';
+  abi: typeof RELAY_ABI_ID;
+  peerDeviceId: string;
+  data: string;
+}
+
+export interface TunnelOpen {
+  type: 'tunnel.open';
+  abi: typeof RELAY_ABI_ID;
+  hostId: string;
+  sessionId: string;
+}
+
 export const TUNNEL_REJECT_REASONS = ['UNKNOWN_PEER', 'CAPACITY'] as const;
 export type TunnelRejectReason = typeof TUNNEL_REJECT_REASONS[number];
 
@@ -72,7 +138,7 @@ export function hostRejectedTunnelReason(reason: TunnelRejectReason): `HOST_REJE
 
 export interface TunnelOffer {
   type: 'tunnel.offer';
-  version: 2;
+  abi: typeof RELAY_ABI_ID;
   tunnelId: string;
   hostId: string;
   sessionId: string;
@@ -84,22 +150,38 @@ export interface TunnelOffer {
 
 export interface TunnelReject {
   type: 'tunnel.reject';
+  abi: typeof RELAY_ABI_ID;
   tunnelId: string;
   reason: TunnelRejectReason;
 }
 
 export interface TunnelClosed {
   type: 'tunnel.closed';
+  abi: typeof RELAY_ABI_ID;
   tunnelId: string;
   reason: string;
 }
 
+export interface ChannelReady {
+  type: 'channel.ready';
+  abi: typeof RELAY_ABI_ID;
+  tunnelId: string;
+  channel: Channel;
+}
+
+export interface RelayErrorEnvelope {
+  type: 'error';
+  abi: typeof RELAY_ABI_ID;
+  code: string;
+  message: string;
+}
+
 /** Signature binds this connection challenge, endpoint, device and bearer digest. */
 export function authTranscript(nonce: string, path: string, deviceId: string, tokenDigest: string): Buffer {
-  return Buffer.from(JSON.stringify(['agentbrowser-relay-v2', nonce, path, deviceId, tokenDigest]));
+  return Buffer.from(JSON.stringify([RELAY_ABI_ID, nonce, path, deviceId, tokenDigest]));
 }
 
 /** Inner TunnelHello transcript owner. Relay never receives or verifies this payload. */
 export function tunnelHelloTranscript(fields: readonly unknown[]): Buffer {
-  return Buffer.from(JSON.stringify(['agentbrowser-relay-v2-tunnel-hello', ...fields]));
+  return Buffer.from(JSON.stringify([`${RELAY_ABI_ID}-tunnel-hello`, ...fields]));
 }

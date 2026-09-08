@@ -1,1 +1,11 @@
-{"name":"@agentbrowser/relay-protocol","version":"0.1.0","private":true,"type":"module"}
+{
+  "name": "@agentbrowser/relay-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "build": "node validate.mjs --build",
+    "test": "node --test test.mjs"
+  }
+}

@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 // tsc must succeed before packaging. Only ws is needed at runtime.
+execFileSync(process.execPath, [fileURLToPath(new URL('../../protocol/relay/validate.mjs', import.meta.url)), '--check']);
 const source = new URL('./', import.meta.url);
 const output = new URL('../../generated/modules/relay-service/lib/', source);
 mkdirSync(output, {recursive: true});

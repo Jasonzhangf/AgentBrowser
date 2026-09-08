@@ -10,7 +10,7 @@ import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import {createRelayServer} from '../src/server.js';
 import {RelayStore, digest} from '../src/store.js';
-import {authTranscript, type TunnelOffer} from '../../../protocol/relay/index.js';
+import {RELAY_ABI_ID, authTranscript, type TunnelOffer} from '../../../protocol/relay/index.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'relay-tls-test-'));
 const keyFile = join(dir, 'key.pem'), certFile = join(dir, 'cert.pem');
@@ -36,13 +36,20 @@ class Inbox {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       const index = this.items.findIndex(item => type === 'binary' ? item.binary : !item.binary && item.value.type === type);
-      if (index >= 0) return this.items.splice(index, 1)[0]!.value;
+      if (index >= 0) {
+        const item = this.items.splice(index, 1)[0]!;
+        if (!item.binary) assert.equal(item.value.abi, RELAY_ABI_ID, `Missing relay ABI on ${type}`);
+        return item.value;
+      }
       await new Promise(resolve => setTimeout(resolve, 5));
     }
     throw new Error(`Timed out waiting for ${type}: ${JSON.stringify(this.items)}`);
   }
 }
 interface Identity {id: string; privateKey: KeyObject; token: string}
+function control(type: string, fields: Record<string, unknown> = {}) {
+  return JSON.stringify({type, abi: RELAY_ABI_ID, ...fields});
+}
 async function enroll(base: string, token: string, name: string): Promise<Identity> {
   const pair = generateKeyPairSync('ed25519');
   const result = await api(base, '/v2/devices', 'POST', token, {name, publicKey: pair.publicKey.export({type: 'spki', format: 'pem'}).toString()});
@@ -53,7 +60,7 @@ async function connect(base: string, path: string, device: Identity, wrongSignat
   const ws = new WebSocket(base.replace('https:', 'wss:') + path, {ca: cert}); const inbox = new Inbox(ws);
   const challenge = await inbox.take('auth.challenge');
   const signature = sign(null, authTranscript(challenge.nonce, path, device.id, digest(device.token)), wrongSignature ? generateKeyPairSync('ed25519').privateKey : device.privateKey).toString('base64url');
-  ws.send(JSON.stringify({type: 'auth.prove', token: device.token, deviceId: device.id, signature}));
+  ws.send(control('auth.prove', {token: device.token, deviceId: device.id, signature}));
   return inbox;
 }
 
@@ -73,26 +80,26 @@ test('real TLS/WSS: account isolation, signed devices, directory, signal and sep
     assert.equal((await api(base, '/v2/hosts', 'POST', bobToken, {deviceId: hostDevice.id})).status, 404);
     const bad = await connect(base, '/v2/control/client', clientDevice, true);
     assert.equal((await bad.take('error')).code, 'UNAUTHORIZED');
-    const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice); await host.take('auth.ready');
-    const client = await connect(base, '/v2/control/client', clientDevice); await client.take('auth.ready');
-    const bob = await connect(base, '/v2/control/client', bobDevice); await bob.take('auth.ready');
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'boot1', revision: 0, endpoints: [], sessions: [{id: 'tab-a'}]}}));
+    const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice); await host.take('auth.ok');
+    const client = await connect(base, '/v2/control/client', clientDevice); await client.take('auth.ok');
+    const bob = await connect(base, '/v2/control/client', bobDevice); await bob.take('auth.ok');
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'boot1', revision: 0, endpoints: [], sessions: [{id: 'tab-a'}]}}));
     let result;
     do { result = await client.take('directory.snapshot'); } while (!result.hosts.length);
     assert.equal(result.hosts[0].snapshot.sessions[0].id, 'tab-a');
     assert.deepEqual((await api(base, '/v2/directory', 'GET', bobToken)).body.hosts, []);
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'boot1', revision: 1, endpoints: [], sessions: []}}));
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'boot1', revision: 1, endpoints: [], sessions: []}}));
     const replacement = await client.take('directory.snapshot');
     assert.deepEqual(replacement.hosts[0].snapshot.sessions, []);
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'boot1', revision: 0, endpoints: [], sessions: [{id: 'stale'}]}}));
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'boot1', revision: 0, endpoints: [], sessions: [{id: 'stale'}]}}));
     assert.equal((await host.take('error')).code, 'STALE_SNAPSHOT');
-    client.ws.send(JSON.stringify({type: 'signal.send', peerDeviceId: hostDevice.id, data: 'sdp-offer'}));
+    client.ws.send(control('signal.send', {peerDeviceId: hostDevice.id, data: 'sdp-offer'}));
     assert.equal((await host.take('signal.received')).data, 'sdp-offer');
-    bob.ws.send(JSON.stringify({type: 'signal.send', peerDeviceId: hostDevice.id, data: 'cross-account'}));
+    bob.ws.send(control('signal.send', {peerDeviceId: hostDevice.id, data: 'cross-account'}));
     assert.equal((await bob.take('error')).code, 'PEER_UNAVAILABLE');
-    bob.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'tab-a'})); assert.equal((await bob.take('error')).code, 'HOST_UNAVAILABLE');
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'boot1', revision: 2, endpoints: [], sessions: [{id: 'tab-a'}]}}));
-    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'tab-a'}));
+    bob.ws.send(control('tunnel.open', {hostId, sessionId: 'tab-a'})); assert.equal((await bob.take('error')).code, 'HOST_UNAVAILABLE');
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'boot1', revision: 2, endpoints: [], sessions: [{id: 'tab-a'}]}}));
+    client.ws.send(control('tunnel.open', {hostId, sessionId: 'tab-a'}));
     const offers = [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
     const channels: Record<string, Inbox[]> = {};
     for (const name of ['control', 'media'] as const) {
@@ -115,6 +122,35 @@ test('real TLS/WSS: account isolation, signed devices, directory, signal and sep
   } finally { await relay.close(); store.close(); }
 });
 
+test('control wire requires the locked ABI and binds Host publish identity', {timeout: 10000}, async () => {
+  const store = new RelayStore(':memory:');
+  const relay = createRelayServer({store, tls: {cert, key}});
+  const base = await relay.listen();
+  try {
+    await store.createAccount('alice', 'alice password long');
+    const token = (await store.login('alice', 'alice password long')).token;
+    const device = await enroll(base, token, 'host');
+    const hostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: device.id})).body.id;
+    const legacy = new WebSocket(base.replace('https:', 'wss:') + `/v2/control/host/${hostId}`, {ca: cert});
+    const legacyInbox = new Inbox(legacy);
+    const challenge = await legacyInbox.take('auth.challenge');
+    assert.equal(challenge.abi, RELAY_ABI_ID);
+    assert.equal(challenge.path, `/v2/control/host/${hostId}`);
+    const signature = sign(null, authTranscript(challenge.nonce, challenge.path, device.id, digest(token)), device.privateKey).toString('base64url');
+    legacy.send(JSON.stringify({type: 'auth.prove', token, deviceId: device.id, signature}));
+    assert.equal((await legacyInbox.take('error')).code, 'RELAY_ABI_ID_MISMATCH');
+    legacy.close();
+
+    const host = await connect(base, `/v2/control/host/${hostId}`, device);
+    await host.take('auth.ok');
+    host.ws.send('null');
+    assert.equal((await host.take('error')).code, 'INVALID_MESSAGE');
+    host.ws.send(control('host.publish', {hostId: 'another-host', snapshot: {incarnation: 'identity-check', revision: 0, endpoints: [], sessions: []}}));
+    assert.equal((await host.take('error')).code, 'FORBIDDEN');
+    host.ws.close();
+  } finally { await relay.close(); store.close(); }
+});
+
 test('directory expiry retains revision fencing; token expiry closes connections', {timeout: 10000}, async () => {
   let now = 0;
   const store = new RelayStore(':memory:', {now: () => now, tokenTtlMs: 1000});
@@ -123,12 +159,12 @@ test('directory expiry retains revision fencing; token expiry closes connections
   try {
     await store.createAccount('alice', 'alice password long'); const token = (await store.login('alice', 'alice password long')).token;
     const device = await enroll(base, token, 'mac'); const id = (await api(base, '/v2/hosts', 'POST', token, {deviceId: device.id})).body.id;
-    const host = await connect(base, `/v2/control/host/${id}`, device); await host.take('auth.ready');
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'boot', revision: 3, endpoints: [], sessions: []}}));
+    const host = await connect(base, `/v2/control/host/${id}`, device); await host.take('auth.ok');
+    host.ws.send(control('host.publish', {hostId: id, snapshot: {incarnation: 'boot', revision: 3, endpoints: [], sessions: []}}));
     let result; do { result = await host.take('directory.snapshot'); } while (!result.hosts.length);
     now = 200;
     assert.deepEqual((await host.take('directory.snapshot')).hosts, []);
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'boot', revision: 2, endpoints: [], sessions: []}}));
+    host.ws.send(control('host.publish', {hostId: id, snapshot: {incarnation: 'boot', revision: 2, endpoints: [], sessions: []}}));
     assert.equal((await host.take('error')).code, 'STALE_SNAPSHOT');
     const closed = once(host.ws, 'close'); now = 1000;
     assert.equal((await closed)[0], 4401);
@@ -146,13 +182,13 @@ test('expired Host snapshots reject tunnels before the sweep runs', {timeout: 10
     const hostDevice = await enroll(base, token, 'host');
     const clientDevice = await enroll(base, token, 'client');
     const hostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: hostDevice.id})).body.id;
-    const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice); await host.take('auth.ready');
-    const client = await connect(base, '/v2/control/client', clientDevice); await client.take('auth.ready');
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'expired-host', revision: 1, endpoints: [], sessions: [{id: 'expired-session'}]}}));
+    const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice); await host.take('auth.ok');
+    const client = await connect(base, '/v2/control/client', clientDevice); await client.take('auth.ok');
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'expired-host', revision: 1, endpoints: [], sessions: [{id: 'expired-session'}]}}));
     let directory;
     do { directory = await client.take('directory.snapshot'); } while (!directory.hosts.some((item: {hostId: string}) => item.hostId === hostId));
     now = 101;
-    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'expired-session'}));
+    client.ws.send(control('tunnel.open', {hostId, sessionId: 'expired-session'}));
     assert.equal((await client.take('error')).code, 'SESSION_UNAVAILABLE');
   } finally { await relay.close(); store.close(); }
 });
@@ -176,10 +212,10 @@ test('compiled CLI provisions account and serves real HTTPS entrypoint', {timeou
     const token = login.body.token;
     const hd = await enroll(address, token, 'mac'), cd = await enroll(address, token, 'phone');
     const hostId = (await api(address, '/v2/hosts', 'POST', token, {deviceId: hd.id})).body.id;
-    const host = await connect(address, `/v2/control/host/${hostId}`, hd); await host.take('auth.ready');
-    const client = await connect(address, '/v2/control/client', cd); await client.take('auth.ready');
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'artifact-host', revision: 1, endpoints: [], sessions: [{id: 'artifact-session'}]}}));
-    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'artifact-session'}));
+    const host = await connect(address, `/v2/control/host/${hostId}`, hd); await host.take('auth.ok');
+    const client = await connect(address, '/v2/control/client', cd); await client.take('auth.ok');
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'artifact-host', revision: 1, endpoints: [], sessions: [{id: 'artifact-session'}]}}));
+    client.ws.send(control('tunnel.open', {hostId, sessionId: 'artifact-session'}));
     const offers = [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
     for (const name of ['control', 'media'] as const) {
       const pair = offers.map(item => new Inbox(new WebSocket(address.replace('https:', 'wss:') + item.channels[name].path, {ca: cert, headers: {authorization: `Bearer ${item.channels[name].ticket}`}})));
@@ -187,9 +223,9 @@ test('compiled CLI provisions account and serves real HTTPS entrypoint', {timeou
       const bytes = Buffer.from(`artifact-${name}`);
       pair[0]!.ws.send(bytes); assert.deepEqual(await pair[1]!.take('binary'), bytes);
     }
-    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'artifact-session'}));
+    client.ws.send(control('tunnel.open', {hostId, sessionId: 'artifact-session'}));
     const rejected = [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
-    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejected[1]!.tunnelId, reason: 'CAPACITY'}));
+    host.ws.send(control('tunnel.reject', {tunnelId: rejected[1]!.tunnelId, reason: 'CAPACITY'}));
     assert.equal((await client.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
     assert.equal((await host.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
     assert.equal((await api(address, '/v2/token', 'DELETE', token)).status, 200);
@@ -209,14 +245,14 @@ test('tunnel tickets bind exact paths, expire, reject invalid frames and close o
     const token = (await store.login('alice', 'alice password long')).token;
     const hd = await enroll(base, token, 'host'), cd = await enroll(base, token, 'client');
     const hostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: hd.id})).body.id;
-    const host = await connect(base, `/v2/control/host/${hostId}`, hd); await host.take('auth.ready');
-    const client = await connect(base, '/v2/control/client', cd); await client.take('auth.ready');
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'ticket-host', revision: 1, endpoints: [], sessions: [{id: 'ticket-session'}]}}));
+    const host = await connect(base, `/v2/control/host/${hostId}`, hd); await host.take('auth.ok');
+    const client = await connect(base, '/v2/control/client', cd); await client.take('auth.ok');
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'ticket-host', revision: 1, endpoints: [], sessions: [{id: 'ticket-session'}]}}));
     const duplicate = await connect(base, `/v2/control/host/${hostId}`, hd);
     assert.equal((await duplicate.take('error')).code, 'HOST_CONFLICT');
     client.ws.send('{'); assert.equal((await client.take('error')).code, 'INVALID_JSON');
     async function offer() {
-      client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'ticket-session'}));
+      client.ws.send(control('tunnel.open', {hostId, sessionId: 'ticket-session'}));
       return [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
     }
     function channel(item: TunnelOffer, name: 'control' | 'media') {
@@ -264,26 +300,26 @@ test('Host rejection is authenticated, typed, pending-only and tunnel-isolated',
     const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice);
     const otherHost = await connect(base, `/v2/control/host/${otherHostId}`, otherHostDevice);
     const client = await connect(base, '/v2/control/client', clientDevice);
-    await Promise.all([host.take('auth.ready'), otherHost.take('auth.ready'), client.take('auth.ready')]);
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'reject-host', revision: 1, endpoints: [], sessions: [{id: 'reject-session'}]}}));
+    await Promise.all([host.take('auth.ok'), otherHost.take('auth.ok'), client.take('auth.ok')]);
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'reject-host', revision: 1, endpoints: [], sessions: [{id: 'reject-session'}]}}));
     while (!(await client.take('directory.snapshot')).hosts.some((item: {hostId: string}) => item.hostId === hostId)) {}
 
     async function offer() {
-      client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'reject-session'}));
+      client.ws.send(control('tunnel.open', {hostId, sessionId: 'reject-session'}));
       return [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
     }
     const rejectedUnknownPeer = await offer();
-    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejectedUnknownPeer[1]!.tunnelId, reason: 'UNKNOWN_PEER'}));
+    host.ws.send(control('tunnel.reject', {tunnelId: rejectedUnknownPeer[1]!.tunnelId, reason: 'UNKNOWN_PEER'}));
     assert.equal((await client.take('tunnel.closed')).reason, 'HOST_REJECTED_UNKNOWN_PEER');
     assert.equal((await host.take('tunnel.closed')).reason, 'HOST_REJECTED_UNKNOWN_PEER');
 
-    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: 'missing-tunnel', reason: 'CAPACITY'}));
+    host.ws.send(control('tunnel.reject', {tunnelId: 'missing-tunnel', reason: 'CAPACITY'}));
     assert.equal((await host.take('error')).code, 'TUNNEL_NOT_PENDING');
 
     const rejectedCapacity = await offer();
-    otherHost.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejectedCapacity[1]!.tunnelId, reason: 'CAPACITY'}));
+    otherHost.ws.send(control('tunnel.reject', {tunnelId: rejectedCapacity[1]!.tunnelId, reason: 'CAPACITY'}));
     assert.equal((await otherHost.take('error')).code, 'FORBIDDEN');
-    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: rejectedCapacity[1]!.tunnelId, reason: 'CAPACITY'}));
+    host.ws.send(control('tunnel.reject', {tunnelId: rejectedCapacity[1]!.tunnelId, reason: 'CAPACITY'}));
     assert.equal((await client.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
     assert.equal((await host.take('tunnel.closed')).reason, 'HOST_REJECTED_CAPACITY');
 
@@ -291,15 +327,15 @@ test('Host rejection is authenticated, typed, pending-only and tunnel-isolated',
     function channel(offer: TunnelOffer, name: 'control' | 'media') {
       return new Inbox(new WebSocket(base.replace('https:', 'wss:') + offer.channels[name].path, {ca: cert, headers: {authorization: `Bearer ${offer.channels[name].ticket}`}}));
     }
-    const control = active.map(offer => channel(offer, 'control'));
+    const controlChannels = active.map(offer => channel(offer, 'control'));
     const media = active.map(offer => channel(offer, 'media'));
-    await Promise.all([...control, ...media].map(item => item.take('channel.ready')));
-    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: active[1]!.tunnelId, reason: 'UNKNOWN_PEER'}));
+    await Promise.all([...controlChannels, ...media].map(item => item.take('channel.ready')));
+    host.ws.send(control('tunnel.reject', {tunnelId: active[1]!.tunnelId, reason: 'UNKNOWN_PEER'}));
     assert.equal((await host.take('error')).code, 'TUNNEL_NOT_PENDING');
     const payload = Buffer.from('established tunnel survives rejected request');
-    control[0]!.ws.send(payload);
-    assert.deepEqual(await control[1]!.take('binary'), payload);
-    control[0]!.ws.close();
+    controlChannels[0]!.ws.send(payload);
+    assert.deepEqual(await controlChannels[1]!.take('binary'), payload);
+    controlChannels[0]!.ws.close();
     await client.take('tunnel.closed');
     await host.take('tunnel.closed');
   } finally { await relay.close(); store.close(); }
@@ -318,13 +354,13 @@ test('expired tunnel rejection closes only expired pending tunnel', {timeout: 10
     const hostId = (await api(base, '/v2/hosts', 'POST', token, {deviceId: hostDevice.id})).body.id;
     const host = await connect(base, `/v2/control/host/${hostId}`, hostDevice);
     const client = await connect(base, '/v2/control/client', clientDevice);
-    await Promise.all([host.take('auth.ready'), client.take('auth.ready')]);
-    host.ws.send(JSON.stringify({type: 'host.publish', snapshot: {incarnation: 'expired-host', revision: 1, endpoints: [], sessions: [{id: 'expired-session'}]}}));
+    await Promise.all([host.take('auth.ok'), client.take('auth.ok')]);
+    host.ws.send(control('host.publish', {hostId, snapshot: {incarnation: 'expired-host', revision: 1, endpoints: [], sessions: [{id: 'expired-session'}]}}));
     while (!(await client.take('directory.snapshot')).hosts.some((item: {hostId: string}) => item.hostId === hostId)) {}
-    client.ws.send(JSON.stringify({type: 'tunnel.open', hostId, sessionId: 'expired-session'}));
+    client.ws.send(control('tunnel.open', {hostId, sessionId: 'expired-session'}));
     const offers = [await client.take('tunnel.offer'), await host.take('tunnel.offer')] as TunnelOffer[];
     now = 101;
-    host.ws.send(JSON.stringify({type: 'tunnel.reject', tunnelId: offers[1]!.tunnelId, reason: 'CAPACITY'}));
+    host.ws.send(control('tunnel.reject', {tunnelId: offers[1]!.tunnelId, reason: 'CAPACITY'}));
     assert.equal((await client.take('tunnel.closed')).reason, 'PAIRING_TIMEOUT');
     assert.equal((await host.take('tunnel.closed')).reason, 'PAIRING_TIMEOUT');
   } finally { await relay.close(); store.close(); }
