@@ -511,6 +511,30 @@ async fn dispatch(
             session.status = status;
             Ok(snapshot(app))
         }
+        "navigate" => {
+            fields(
+                object,
+                &["op", "epoch", "url"],
+                &["op", "epoch", "url"],
+            )?;
+            let epoch = u64_value(object, "epoch")?;
+            let url = object
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("URL_REQUIRED")?;
+            let result = {
+                let session = app.session.as_mut().ok_or("NETWORK_NOT_CONNECTED")?;
+                clear_session_error(session);
+                session.connection.navigate(url.to_owned(), epoch).await
+            };
+            let status = match result {
+                Ok(status) => status,
+                Err(error) => return Err(command_failure(app, error)),
+            };
+            let session = app.session.as_mut().ok_or("NETWORK_NOT_CONNECTED")?;
+            session.status = status;
+            Ok(snapshot(app))
+        }
         "input_text" => {
             fields(object, &["op", "epoch", "text"], &["op", "epoch", "text"])?;
             let epoch = u64_value(object, "epoch")?;
@@ -1107,6 +1131,35 @@ mod tests {
         let value = serde_json::json!({"op":"connect", "extra":true});
         assert_eq!(
             fields(value.as_object().unwrap(), &["op"], &["op"]),
+            Err("UNKNOWN_COMMAND_FIELD".into())
+        );
+    }
+
+    #[test]
+    fn navigate_command_requires_only_typed_fields() {
+        let value = serde_json::json!({
+            "op":"navigate",
+            "epoch":7,
+            "url":"data:text/html,navigate"
+        });
+        assert!(fields(
+            value.as_object().unwrap(),
+            &["op", "epoch", "url"],
+            &["op", "epoch", "url"]
+        )
+        .is_ok());
+        let extra = serde_json::json!({
+            "op":"navigate",
+            "epoch":7,
+            "url":"data:text/html,navigate",
+            "metadata":"control must not be mirrored"
+        });
+        assert_eq!(
+            fields(
+                extra.as_object().unwrap(),
+                &["op", "epoch", "url"],
+                &["op", "epoch", "url"]
+            ),
             Err("UNKNOWN_COMMAND_FIELD".into())
         );
     }

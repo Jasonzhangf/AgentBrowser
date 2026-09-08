@@ -361,8 +361,10 @@ private final class VideoSurfaceView: NSView {
         guard inputReady?() == true, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point), event.scrollingDeltaX.isFinite, event.scrollingDeltaY.isFinite else { return }
-        let dx = String(format: "%.4f", event.scrollingDeltaX)
-        let dy = String(format: "%.4f", event.scrollingDeltaY)
+        // AppKit reports the physical wheel direction; browser wheel input
+        // uses positive deltas to advance the page toward right/down.
+        let dx = String(format: "%.4f", -event.scrollingDeltaX)
+        let dy = String(format: "%.4f", -event.scrollingDeltaY)
         onInput?("{\"op\":\"scroll\",\"epoch\":\(epoch),\"x\":\(coordinates.x),\"y\":\(coordinates.y),\"dx\":\(dx),\"dy\":\(dy)}")
     }
 

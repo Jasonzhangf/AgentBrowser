@@ -38,6 +38,14 @@ xcrun swiftc -O apps/macos/Sources/main.swift \
   -framework CoreImage \
   -framework QuartzCore
 
+# AppSDK consumes the exact built bundle from the generated module artifact.
+artifact_dir="$root_dir/generated/modules/macos-shell/lib"
+mkdir -p "$artifact_dir"
+rm -rf "$artifact_dir/AgentBrowserMac.app"
+cp -R "$app_dir" "$artifact_dir/AgentBrowserMac.app"
+ditto -c -k --norsrc --keepParent \
+  "$app_dir" "$artifact_dir/AgentBrowserMac.app.zip"
+
 if [[ "$mode" == "run" ]]; then
   shift
   exec "$app_dir/Contents/MacOS/AgentBrowserMac" "$@"

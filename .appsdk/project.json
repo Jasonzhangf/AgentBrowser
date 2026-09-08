@@ -345,7 +345,7 @@
     {
       "active_artifact": "active/lib/macos-shell",
       "artifact_paths": [
-        "AgentBrowserMac.app"
+        "AgentBrowserMac.app.zip"
       ],
       "build": {
         "args": [
@@ -362,15 +362,20 @@
       "dependency_modules": [
         "client-connection"
       ],
-      "deployment_operations": [],
+      "deployment_operations": [
+        "install",
+        "restart"
+      ],
       "generated_outputs": [
-        "apps/macos/build/**"
+        "apps/macos/build/**",
+        "generated/modules/macos-shell/**"
       ],
       "module_id": "macos-shell",
       "owned_paths": [
         "apps/macos/**",
         "scripts/build-macos.sh",
         "scripts/build-macos-ui.mjs",
+        "scripts/macos-admission.mjs",
         "docs/macos-client.md"
       ],
       "regression": {

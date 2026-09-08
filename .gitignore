@@ -28,3 +28,6 @@ local.properties
 /.appsdk/records/evidence/host-service/
 /.appsdk/records/fix-candidate-record-host-service.json
 /.appsdk/records/pre-review-validation-record-host-service.json
+/.appsdk/records/evidence/macos-shell/
+/.appsdk/records/fix-candidate-record-macos-shell.json
+/.appsdk/records/pre-review-validation-record-macos-shell.json
