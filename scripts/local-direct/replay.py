@@ -186,7 +186,9 @@ def command_matches(row: Optional[Mapping[str, Any]], executable: pathlib.Path) 
     raw = str(row.get("command", "")).strip()
     expected = str(executable.resolve(strict=False))
     variants = {expected}
-    if expected.startswith("/tmp/"):
+    if expected.startswith("/private/"):
+        variants.add(expected[len("/private"):])
+    elif expected.startswith("/") and not expected.startswith("/private"):
         variants.add(f"/private{expected}")
     return any(raw == candidate or raw.startswith(f"{candidate} ") for candidate in variants)
 
