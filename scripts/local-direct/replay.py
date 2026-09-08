@@ -51,6 +51,8 @@ MAX_BRIDGE_FRAME_BYTES = 4 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 45.0
 DEFAULT_POLL_SECONDS = 0.2
 RELEASE_INSPECT_SETTLE_SECONDS = 0.05
+PROCESS_ROW_VISIBILITY_TIMEOUT_SECONDS = 0.5
+PROCESS_ROW_VISIBILITY_POLL_SECONDS = 0.05
 DEFAULT_TEXT = "你好，Mac 输入"
 LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
 
@@ -178,6 +180,18 @@ def process_rows() -> list[dict[str, Any]]:
 
 def process_row(pid: int) -> Optional[dict[str, Any]]:
     return next((row for row in process_rows() if row["pid"] == pid), None)
+
+
+def wait_for_process_row(pid: int) -> Optional[dict[str, Any]]:
+    deadline = time.monotonic() + PROCESS_ROW_VISIBILITY_TIMEOUT_SECONDS
+    while True:
+        row = process_row(pid)
+        if row is not None:
+            return row
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(PROCESS_ROW_VISIBILITY_POLL_SECONDS, remaining))
 
 
 def command_matches(row: Optional[Mapping[str, Any]], executable: pathlib.Path) -> bool:
@@ -1188,7 +1202,7 @@ class Runner:
             "pid": self.agent.pid,
             "command": self.agent.command,
         }
-        if not command_matches(process_row(self.agent.pid), self.agent.executable):
+        if not command_matches(wait_for_process_row(self.agent.pid), self.agent.executable):
             self.abort(
                 "AGENT_PROCESS_IDENTITY_MISMATCH",
                 f"ps command for pid {self.agent.pid} does not match {self.agent.executable}",
@@ -1244,7 +1258,7 @@ class Runner:
             "pid": self.ui_driver.pid,
             "command": self.ui_driver.command,
         }
-        if not command_matches(process_row(self.ui_driver.pid), self.ui_driver.executable):
+        if not command_matches(wait_for_process_row(self.ui_driver.pid), self.ui_driver.executable):
             self.abort(
                 "UI_DRIVER_PROCESS_IDENTITY_MISMATCH",
                 f"ps command for pid {self.ui_driver.pid} does not match {self.ui_driver.executable}",
