@@ -601,6 +601,7 @@ async function main() {
   let reconnect;
   let blackbox;
   let cleanup;
+  let whiteTime;
 
   try {
     command('npm', ['run', 'verify:local'], {env: admissionEnv, log: join(directory, 'whitebox.log')});
@@ -628,6 +629,7 @@ async function main() {
     const appExecutable = join(appSource, 'Contents/MacOS', appExecutableName);
     const bridgeExecutable = join(appSource, 'Contents/MacOS/AgentBrowserMacBridge');
     assertFile(appExecutable); assertFile(bridgeExecutable);
+    whiteTime = now();
 
     const installRoot = resolve(mkdtempPath('abmac-admission-'));
     const installApplications = join(installRoot, 'Applications');
@@ -713,7 +715,24 @@ async function main() {
     const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid, false);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
-    await pressAccessibilityButton(firstApp.pid, '接管页面', join(directory, 'takeover.log'));
+    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-before-restart.log'));
+    await sleep(1_000);
+    await observeHostStatus('disconnect_before_restart', 1, 'agent');
+    const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
+    const secondApp = await launchApp('app-restarted');
+    await waitForWindow(secondApp);
+    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
+    await sleep(4_000);
+    const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
+    screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), secondApp.pid, false));
+    assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
+    restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
+      restarted: {pid: secondApp.pid, executable: installedExecutable},
+      exact_executable_hash: installedExecutableHash, different_pid: firstApp.pid !== secondApp.pid,
+      host_status: {after_reconnect: restartReconnectStatus}, restarted_at: now()};
+    assert(restart.different_pid);
+
+    await pressAccessibilityButton(secondApp.pid, '接管页面', join(directory, 'takeover.log'));
     await sleep(1_000);
     const takeoverStatus = await observeHostStatus('takeover', 2, 'human');
     assert(Array.isArray(takeoverStatus.viewport) && takeoverStatus.viewport.length === 2,
@@ -723,25 +742,25 @@ async function main() {
       && viewport.width > 0 && viewport.height > 0, `Invalid Host viewport: ${JSON.stringify(takeoverStatus.viewport)}`);
     const page = '<body style="margin:0;background:white"><h1 id="title" style="height:45px;margin:0">中文导航验收</h1><button id="target" style="display:block;width:180px;height:100px;background:red" onclick="window.clicked=(window.clicked||0)+1;this.style.background=\'lime\'">touch</button><input id="field" style="display:block;width:220px;height:50px"><div style="height:1400px;background:blue"></div><script>window.maxScroll=0;window.addEventListener(\'scroll\',()=>window.maxScroll=Math.max(window.maxScroll,window.scrollY));</script></body>';
     const url = `data:text/html,${encodeURIComponent(page)}`;
-    focusAccessibilityTextField(firstApp.pid, '远程页面地址', join(directory, 'address-focus.log'));
-    postUnicodeText(firstApp.pid, url, join(directory, 'address-input.log'));
+    focusAccessibilityTextField(secondApp.pid, '远程页面地址', join(directory, 'address-focus.log'));
+    postUnicodeText(secondApp.pid, url, join(directory, 'address-input.log'));
     await sleep(500);
-    await pressAccessibilityButton(firstApp.pid, '打开', join(directory, 'navigate.log'));
+    await pressAccessibilityButton(secondApp.pid, '打开', join(directory, 'navigate.log'));
     await sleep(4_000);
-    clickPage(firstApp.pid, viewport, 90, 95, join(directory, 'button-surface-geometry.log'), join(directory, 'button-click.log'));
+    clickPage(secondApp.pid, viewport, 90, 95, join(directory, 'button-surface-geometry.log'), join(directory, 'button-click.log'));
     await sleep(1_000);
-    clickPage(firstApp.pid, viewport, 110, 170, join(directory, 'input-surface-geometry.log'), join(directory, 'input-click.log'));
+    clickPage(secondApp.pid, viewport, 110, 170, join(directory, 'input-surface-geometry.log'), join(directory, 'input-click.log'));
     await sleep(400);
     const inputText = '你好，Mac 输入';
-    focusAccessibilityTextField(firstApp.pid, '输入到远程页面的文字', join(directory, 'input-focus.log'));
-    postUnicodeText(firstApp.pid, inputText, join(directory, 'input-set.log'));
+    focusAccessibilityTextField(secondApp.pid, '输入到远程页面的文字', join(directory, 'input-focus.log'));
+    postUnicodeText(secondApp.pid, inputText, join(directory, 'input-set.log'));
     await sleep(400);
-    await pressAccessibilityButton(firstApp.pid, '发送', join(directory, 'send-text.log'));
+    await pressAccessibilityButton(secondApp.pid, '发送', join(directory, 'send-text.log'));
     await sleep(2_000);
-    postSurfaceScroll(firstApp.pid, viewport, 180, 500, -20, join(directory, 'scroll-surface-geometry.log'), join(directory, 'scroll.log'));
+    postSurfaceScroll(secondApp.pid, viewport, 180, 500, -20, join(directory, 'scroll-surface-geometry.log'), join(directory, 'scroll.log'));
     await sleep(2_000);
-    screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), firstApp.pid, true));
-    await pressAccessibilityButton(firstApp.pid, '返回观察', join(directory, 'release.log'));
+    screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), secondApp.pid, true));
+    await pressAccessibilityButton(secondApp.pid, '返回观察', join(directory, 'release.log'));
     await sleep(2_000);
     await observeHostStatus('release', 2, 'agent');
     const inspection = fixtureResponseValue(await fixture.request('inspect'));
@@ -749,46 +768,31 @@ async function main() {
       {clicked: 1, text: inputText});
     assert(Number.isFinite(inspection.scrollY) && inspection.scrollY > 0);
     assert(Number.isFinite(inspection.maxScroll) && inspection.maxScroll > 0);
-    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect.log'));
+    await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'disconnect.log'));
     await sleep(1_500);
     const disconnectedStatus = await observeHostStatus('disconnect', 1, 'agent');
     const reconnectStart = now();
-    await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'reconnect.log'));
+    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'reconnect.log'));
     await sleep(4_000);
     const reconnectStatus = await observeHostStatus('reconnect', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'reconnect.png'), firstApp.pid, false));
+    screenshots.push(captureWindow(join(directory, 'reconnect.png'), secondApp.pid, false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Reconnect produced no displayed frame');
-    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
+    await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
     await sleep(1_000);
     const disconnectedAfterReconnectStatus = await observeHostStatus('disconnect_after_reconnect', 1, 'agent');
-    reconnect = {at: reconnectStart, app_pid: firstApp.pid, fixture_session: fixtureInfo.session,
+    reconnect = {at: reconnectStart, app_pid: secondApp.pid, fixture_session: fixtureInfo.session,
       displayed_screenshot: screenshots.at(-1), disconnected_before_reconnect: true,
       host_status: {after_disconnect: disconnectedStatus, after_reconnect: reconnectStatus,
         after_disconnect_again: disconnectedAfterReconnectStatus}};
     persist(join(directory, 'reconnect.json'), reconnect);
 
-    const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
-    const secondApp = await launchApp('app-restarted');
-    await waitForWindow(secondApp);
-    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
-    await sleep(4_000);
-    const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), secondApp.pid, false));
-    assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
-    await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'restart-disconnect.log'));
-    await sleep(1_000);
-    const restartDisconnectedStatus = await observeHostStatus('disconnect_after_restart', 1, 'agent');
     const secondExit = await terminateOwned(secondApp, installedExecutable, join(directory, 'second-app-exit.json'));
-    restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
-      restarted: {pid: secondApp.pid, executable: installedExecutable, exit: secondExit},
-      exact_executable_hash: installedExecutableHash, different_pid: firstApp.pid !== secondApp.pid,
-      host_status: {after_reconnect: restartReconnectStatus, after_disconnect: restartDisconnectedStatus},
-      restarted_at: now()};
-    assert(restart.different_pid);
+    restart.restarted.exit = secondExit;
+    restart.host_status.after_disconnect = disconnectedAfterReconnectStatus;
     persist(join(directory, 'restart.json'), restart);
     blackbox = {entrypoint, fixture: install.fixture, inspection, host_status: hostStatuses,
       screenshots: screenshotLog(screenshots),
-      app_pids: [firstApp.pid, secondApp.pid], operations: ['connect', 'h264_display', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'inspect_after_release', 'disconnect', 'reconnect', 'restart', 'reconnect_after_restart']};
+      app_pids: [firstApp.pid, secondApp.pid], operations: ['connect', 'h264_display', 'disconnect_before_restart', 'restart', 'reconnect_after_restart', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'inspect_after_release', 'disconnect', 'reconnect']};
     persist(join(directory, 'blackbox.json'), blackbox);
     cleanup = {fixture_quit_requested: false, app_pids: [firstApp.pid, secondApp.pid]};
     await quitFixture(fixture);
@@ -816,8 +820,12 @@ async function main() {
   }
 
   assert(restart && reconnect && blackbox, 'Admission flow did not produce complete runtime receipts');
-  const whiteTime = now();
   const blackTime = now();
+  assert(Date.parse(candidateTime) <= Date.parse(whiteTime), 'Candidate must precede whitebox completion');
+  assert(Date.parse(whiteTime) <= Date.parse(install.installed_at), 'Whitebox must precede installation');
+  assert(Date.parse(install.installed_at) <= Date.parse(restart.restarted_at), 'Installation must precede restart');
+  assert(Date.parse(restart.restarted_at) <= Date.parse(reconnect.at), 'Restart must precede reconnect replay');
+  assert(Date.parse(reconnect.at) <= Date.parse(blackTime), 'Reconnect must precede blackbox completion');
   const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, reconnect: `reconnect-${prefix}`, black: `blackbox-${prefix}`};
   function evidence(id, phase, kind, time, log, surface) {
     persist(`${records}/${id}.json`, {evidence_id: id, issue_id: issueId, experiment_id: `${issueId}-${prefix}`, phase, kind,
