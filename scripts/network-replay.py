@@ -57,6 +57,7 @@ with (evidence / "network-host.log").open("wb") as log:
         ready = record(fixture, 15)
         pairing = ready["fixture"]
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
+        subprocess.run(["bash", "scripts/device.sh", "prepare"], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
             "com.agentbrowser.probe.NetworkDeviceTest", "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
