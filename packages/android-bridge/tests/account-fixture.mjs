@@ -11,7 +11,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const require = createRequire(pathToFileURL(join(root, 'services/relay/package.json')));
 const {RelayStore, digest} = await import(pathToFileURL(join(root, 'services/relay/src/store.ts')).href);
 const {createRelayServer} = await import(pathToFileURL(join(root, 'services/relay/src/server.ts')).href);
-const {authTranscript} = await import(pathToFileURL(join(root, 'protocol/relay/index.ts')).href);
+const {RELAY_ABI_ID, authTranscript} = await import(pathToFileURL(join(root, 'protocol/relay/index.ts')).href);
 
 const bindHost = process.env.ACCOUNT_RELAY_BIND_HOST;
 const advertiseHost = process.env.ACCOUNT_RELAY_ADVERTISE_HOST;
@@ -106,17 +106,21 @@ async function startHost() {
     hostControl.on('message', raw => {
       const message = JSON.parse(raw.toString());
       if (message.type === 'auth.challenge') {
+        if (message.abi !== RELAY_ABI_ID) throw new Error('ACCOUNT_FIXTURE_ABI_MISMATCH');
+        if (message.path !== `/v2/control/host/${host.id}`) throw new Error('ACCOUNT_FIXTURE_AUTH_PATH_MISMATCH');
         const signature = sign(
           null,
           authTranscript(message.nonce, `/v2/control/host/${host.id}`, hostDevice.id, digest(hostLogin.token)),
           hostKeys.privateKey,
         ).toString('base64url');
         hostControl.send(JSON.stringify({
-          type: 'auth.prove', token: hostLogin.token, deviceId: hostDevice.id, signature,
+          type: 'auth.prove', abi: RELAY_ABI_ID, token: hostLogin.token, deviceId: hostDevice.id, signature,
         }));
-      } else if (message.type === 'auth.ready' && !ready) {
+      } else if (message.type === 'auth.ok') {
+        if (message.abi !== RELAY_ABI_ID) throw new Error('ACCOUNT_FIXTURE_ABI_MISMATCH');
+        if (ready) return;
         ready = true;
-        hostControl.send(JSON.stringify({type: 'host.publish', snapshot: {
+        hostControl.send(JSON.stringify({type: 'host.publish', abi: RELAY_ABI_ID, hostId: host.id, snapshot: {
           incarnation: 'account-fixture', revision: 1, endpoints: [], sessions: [{id: 'account-fixture-session'}],
         }}));
         resolveReady();

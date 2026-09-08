@@ -1,4 +1,4 @@
-//! Authenticated client/Host adapter for the AgentBrowser Relay v2 ABI.
+//! Authenticated client/Host adapter for the AgentBrowser Relay v0 ABI.
 //!
 //! This module owns client credentials, Relay directory projection, connection
 //! generations, and the two opaque tunnel channels. Browser operation and media
@@ -57,12 +57,13 @@ const MAX_CONTROL_PAYLOAD: usize = 64 * 1024;
 const MAX_MEDIA_PAYLOAD: usize = 1024 * 1024;
 const MAX_ID: usize = 128;
 const MAX_PENDING_OFFERS: usize = 128;
-const RELAY_PROTOCOL_VERSION: u64 = 2;
+const RELAY_ABI_ID: &str = "agentbrowser-relay-v0";
+const TUNNEL_HELLO_VERSION: u64 = 0;
 const CLIENT_CONTROL_PATH: &str = "/v2/control/client";
 const TUNNEL_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_TUNNEL_HELLO: usize = 16 * 1024;
 const INNER_BRIDGE_BUFFER: usize = 256 * 1024;
-const TUNNEL_EXPORTER_LABEL: &[u8] = b"EXPORTER-AgentBrowser-Relay-v2-TunnelHello";
+const TUNNEL_EXPORTER_LABEL: &[u8] = b"EXPORTER-AgentBrowser-Relay-v0-TunnelHello";
 
 type Socket = WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
 
@@ -484,14 +485,8 @@ impl DeviceIdentity {
 
     fn sign(&self, nonce: &str, path: &str, device_id: &str, token: &str) -> String {
         let token_digest = hex_lower(&Sha256::digest(token.as_bytes()));
-        let transcript = serde_json::to_vec(&[
-            "agentbrowser-relay-v2",
-            nonce,
-            path,
-            device_id,
-            &token_digest,
-        ])
-        .expect("fixed transcript is serializable");
+        let transcript = serde_json::to_vec(&[RELAY_ABI_ID, nonce, path, device_id, &token_digest])
+            .expect("fixed transcript is serializable");
         URL_SAFE_NO_PAD.encode(self.signing_key.sign(&transcript).to_bytes())
     }
 
@@ -669,6 +664,7 @@ impl RelayConnection {
                 &mut socket,
                 &TunnelOpenRequest {
                     kind: "tunnel.open",
+                    abi: RELAY_ABI_ID,
                     host_id,
                     session_id,
                 },
@@ -686,8 +682,7 @@ impl RelayConnection {
                 let kind = message_type(&text)?;
                 match kind.as_str() {
                     "directory.snapshot" => {
-                        let directory = serde_json::from_str::<DirectoryEvent>(&text)
-                            .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                        let directory: DirectoryEvent = parse_typed(&text, "directory.snapshot")?;
                         let _ = parse_directory(DirectoryResponse {
                             hosts: directory.hosts,
                         })?;
@@ -748,8 +743,8 @@ impl RelayConnection {
                     };
                     match message_type(&text)?.as_str() {
                         "directory.snapshot" => {
-                            let directory = serde_json::from_str::<DirectoryEvent>(&text)
-                                .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                            let directory: DirectoryEvent =
+                                parse_typed(&text, "directory.snapshot")?;
                             let _ = parse_directory(DirectoryResponse { hosts: directory.hosts })?;
                         }
                         "tunnel.closed" => {
@@ -846,6 +841,8 @@ impl RelayHostConnection {
             &mut sink,
             &HostPublishRequest {
                 kind: "host.publish",
+                abi: RELAY_ABI_ID,
+                host_id: &self.host_id,
                 snapshot: snapshot.clone(),
             },
         )
@@ -905,8 +902,7 @@ impl RelayHostConnection {
             };
             match message_type(&text)?.as_str() {
                 "directory.snapshot" => {
-                    let directory = serde_json::from_str::<DirectoryEvent>(&text)
-                        .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                    let directory: DirectoryEvent = parse_typed(&text, "directory.snapshot")?;
                     let _ = parse_directory(DirectoryResponse {
                         hosts: directory.hosts,
                     })?;
@@ -945,6 +941,7 @@ impl RelayHostConnection {
                 &mut sink,
                 &TunnelRejectRequest {
                     kind: "tunnel.reject",
+                    abi: RELAY_ABI_ID,
                     tunnel_id: &offer.tunnel_id,
                     reason,
                 },
@@ -983,8 +980,7 @@ impl RelayHostConnection {
                 };
                 match message_type(&text)?.as_str() {
                     "directory.snapshot" => {
-                        let directory = serde_json::from_str::<DirectoryEvent>(&text)
-                            .map_err(|error| RelayFailure::Protocol(error.to_string()))?;
+                        let directory: DirectoryEvent = parse_typed(&text, "directory.snapshot")?;
                         let _ = parse_directory(DirectoryResponse {
                             hosts: directory.hosts,
                         })?;
@@ -1443,10 +1439,10 @@ async fn establish_control(
     let mut socket = relay.config.open_ws(path, None).await?;
     let challenge_text = next_text(&mut socket).await?;
     let challenge: AuthChallenge = parse_typed(&challenge_text, "auth.challenge")?;
-    if challenge.version != RELAY_PROTOCOL_VERSION {
+    if challenge.path != path {
         return Err(RelayFailure::Protocol(format!(
-            "unsupported Relay auth version {}",
-            challenge.version
+            "Relay auth challenge path mismatch: expected {path}, got {}",
+            challenge.path
         )));
     }
     validate_text(&challenge.nonce, "auth nonce", 256)?;
@@ -1454,6 +1450,7 @@ async fn establish_control(
         &mut socket,
         &AuthProve {
             kind: "auth.prove",
+            abi: RELAY_ABI_ID,
             token,
             device_id: &device.id,
             signature: device
@@ -1463,7 +1460,7 @@ async fn establish_control(
     )
     .await?;
     let ready_text = next_text(&mut socket).await?;
-    let ready: AuthReady = parse_typed(&ready_text, "auth.ready")?;
+    let ready: AuthOk = parse_typed(&ready_text, "auth.ok")?;
     if ready.device_id != device.id {
         return Err(RelayFailure::Protocol(
             "Relay returned another device identity".into(),
@@ -1830,7 +1827,7 @@ fn make_tunnel_hello(
 ) -> Result<TunnelHello> {
     let mut hello = TunnelHello {
         kind: "tunnel.hello".into(),
-        version: RELAY_PROTOCOL_VERSION,
+        version: TUNNEL_HELLO_VERSION,
         role: role.as_str().into(),
         tunnel_id: tunnel_id.into(),
         host_id: host_id.into(),
@@ -1849,7 +1846,7 @@ fn make_tunnel_hello(
 
 fn tunnel_hello_transcript(hello: &TunnelHello, exporter: &[u8; 32]) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!([
-        "agentbrowser-relay-v2-tunnel-hello",
+        "agentbrowser-relay-v0-tunnel-hello",
         hello.version,
         hello.role,
         hello.tunnel_id,
@@ -1922,7 +1919,7 @@ fn verify_tunnel_hello(
     exporter: &[u8; 32],
 ) -> Result<()> {
     if hello.kind != "tunnel.hello"
-        || hello.version != RELAY_PROTOCOL_VERSION
+        || hello.version != TUNNEL_HELLO_VERSION
         || hello.role != role.peer().as_str()
         || hello.tunnel_id != tunnel_id
         || hello.host_id != host_id
@@ -2014,12 +2011,19 @@ async fn next_message(socket: &mut Socket) -> Result<Message> {
 }
 
 fn parse_typed<T: DeserializeOwned>(text: &str, expected: &str) -> Result<T> {
-    if message_type(text)? != expected {
+    let value: Value = serde_json::from_str(text)
+        .map_err(|error| RelayFailure::Protocol(format!("invalid Relay JSON: {error}")))?;
+    if value.get("type").and_then(Value::as_str) != Some(expected) {
         return Err(RelayFailure::Protocol(format!(
             "expected {expected} message"
         )));
     }
-    serde_json::from_str(text).map_err(|error| RelayFailure::Protocol(error.to_string()))
+    match value.get("abi").and_then(Value::as_str) {
+        Some(RELAY_ABI_ID) => {}
+        Some(_) => return Err(RelayFailure::Protocol("unsupported Relay ABI".into())),
+        None => return Err(RelayFailure::Protocol("Relay ABI is missing".into())),
+    }
+    serde_json::from_value(value).map_err(|error| RelayFailure::Protocol(error.to_string()))
 }
 
 fn message_type(text: &str) -> Result<String> {
@@ -2068,12 +2072,6 @@ fn parse_tunnel_offer(
     expected_session_id: Option<&str>,
 ) -> Result<RelayTunnelOffer> {
     let offer: TunnelOfferWire = parse_typed(text, "tunnel.offer")?;
-    if offer.version != RELAY_PROTOCOL_VERSION {
-        return Err(RelayFailure::Protocol(format!(
-            "unsupported Relay tunnel version {}",
-            offer.version
-        )));
-    }
     validate_text(&offer.tunnel_id, "tunnel id", MAX_ID)?;
     validate_text(&offer.host_id, "host id", MAX_ID)?;
     validate_text(&offer.session_id, "session id", MAX_ID)?;
@@ -2334,9 +2332,12 @@ struct RegisterHostRequest<'a> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct HostPublishRequest {
+struct HostPublishRequest<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
+    abi: &'static str,
+    #[serde(rename = "hostId")]
+    host_id: &'a str,
     snapshot: HostSnapshot,
 }
 
@@ -2370,8 +2371,10 @@ struct HttpError {
 struct AuthChallenge {
     #[serde(rename = "type")]
     _kind: String,
-    version: u64,
+    #[serde(rename = "abi")]
+    _abi: String,
     nonce: String,
+    path: String,
 }
 
 #[derive(Serialize)]
@@ -2379,6 +2382,7 @@ struct AuthChallenge {
 struct AuthProve<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
+    abi: &'static str,
     token: &'a str,
     device_id: &'a str,
     signature: String,
@@ -2386,9 +2390,11 @@ struct AuthProve<'a> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AuthReady {
+struct AuthOk {
     #[serde(rename = "type")]
     _kind: String,
+    #[serde(rename = "abi")]
+    _abi: String,
     #[serde(rename = "deviceId")]
     device_id: String,
 }
@@ -2398,6 +2404,7 @@ struct AuthReady {
 struct TunnelOpenRequest<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
+    abi: &'static str,
     host_id: &'a str,
     session_id: &'a str,
 }
@@ -2407,6 +2414,7 @@ struct TunnelOpenRequest<'a> {
 struct TunnelRejectRequest<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
+    abi: &'static str,
     tunnel_id: &'a str,
     reason: RelayRejectReason,
 }
@@ -2416,6 +2424,8 @@ struct TunnelRejectRequest<'a> {
 struct WireError {
     #[serde(rename = "type")]
     _kind: String,
+    #[serde(rename = "abi")]
+    _abi: String,
     code: String,
     message: String,
 }
@@ -2431,6 +2441,8 @@ struct DirectoryResponse {
 struct DirectoryEvent {
     #[serde(rename = "type")]
     _kind: String,
+    #[serde(rename = "abi")]
+    _abi: String,
     hosts: Vec<DirectoryHostWire>,
 }
 
@@ -2473,7 +2485,8 @@ struct SessionWire {
 struct TunnelOfferWire {
     #[serde(rename = "type")]
     _kind: String,
-    version: u64,
+    #[serde(rename = "abi")]
+    _abi: String,
     #[serde(rename = "tunnelId")]
     tunnel_id: String,
     #[serde(rename = "hostId")]
@@ -2507,6 +2520,8 @@ struct TunnelChannel {
 struct ChannelReady {
     #[serde(rename = "type")]
     _kind: String,
+    #[serde(rename = "abi")]
+    _abi: String,
     #[serde(rename = "tunnelId")]
     tunnel_id: String,
     channel: String,
@@ -2517,6 +2532,8 @@ struct ChannelReady {
 struct TunnelClosed {
     #[serde(rename = "type")]
     _kind: String,
+    #[serde(rename = "abi")]
+    _abi: String,
     #[serde(rename = "tunnelId")]
     tunnel_id: String,
     #[serde(rename = "reason")]
@@ -2688,5 +2705,70 @@ mod tests {
         values.sort_unstable();
         assert_eq!(values, (1..=16).collect::<Vec<_>>());
         assert_eq!(*sender.borrow(), 16);
+    }
+
+    #[test]
+    fn relay_control_wire_is_v0_and_legacy_auth_is_rejected() {
+        let open = json_text(&TunnelOpenRequest {
+            kind: "tunnel.open",
+            abi: RELAY_ABI_ID,
+            host_id: "host-1",
+            session_id: "session-1",
+        })
+        .expect("serialize v0 tunnel.open");
+        assert_eq!(
+            open,
+            r#"{"type":"tunnel.open","abi":"agentbrowser-relay-v0","hostId":"host-1","sessionId":"session-1"}"#
+        );
+        let publish = json_text(&HostPublishRequest {
+            kind: "host.publish",
+            abi: RELAY_ABI_ID,
+            host_id: "host-1",
+            snapshot: HostSnapshot {
+                incarnation: "boot-1".into(),
+                revision: 0,
+                endpoints: vec![],
+                sessions: vec![],
+            },
+        })
+        .expect("serialize v0 host.publish");
+        assert!(publish.contains(r#""abi":"agentbrowser-relay-v0""#));
+        assert!(publish.contains(r#""hostId":"host-1""#));
+        let reject = json_text(&TunnelRejectRequest {
+            kind: "tunnel.reject",
+            abi: RELAY_ABI_ID,
+            tunnel_id: "tunnel-1",
+            reason: RelayRejectReason::Capacity,
+        })
+        .expect("serialize v0 tunnel.reject");
+        assert_eq!(
+            reject,
+            r#"{"type":"tunnel.reject","abi":"agentbrowser-relay-v0","tunnelId":"tunnel-1","reason":"CAPACITY"}"#
+        );
+        let prove = json_text(&AuthProve {
+            kind: "auth.prove",
+            abi: RELAY_ABI_ID,
+            token: "token-1",
+            device_id: "device-1",
+            signature: "signature-1".into(),
+        })
+        .expect("serialize v0 auth.prove");
+        assert_eq!(
+            prove,
+            r#"{"type":"auth.prove","abi":"agentbrowser-relay-v0","token":"token-1","deviceId":"device-1","signature":"signature-1"}"#
+        );
+        assert!(
+            parse_typed::<AuthOk>(r#"{"type":"auth.ok","deviceId":"device-1"}"#, "auth.ok")
+                .is_err()
+        );
+        assert!(
+            parse_typed::<AuthOk>(r#"{"type":"auth.ready","deviceId":"device-1"}"#, "auth.ok")
+                .is_err()
+        );
+        assert!(parse_typed::<AuthOk>(
+            r#"{"type":"auth.ok","abi":"agentbrowser-relay-v1","deviceId":"device-1"}"#,
+            "auth.ok"
+        )
+        .is_err());
     }
 }
