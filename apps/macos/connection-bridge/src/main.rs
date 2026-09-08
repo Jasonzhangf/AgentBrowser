@@ -458,6 +458,11 @@ async fn dispatch(
         .and_then(serde_json::Value::as_str)
         .ok_or("MISSING_COMMAND")?;
     match op {
+        "account_status"
+        | "account_login"
+        | "account_register_device"
+        | "account_refresh"
+        | "account_logout" => account_command(object),
         "status" => {
             fields(object, &["op"], &["op"])?;
             refresh_status(app).await;
@@ -1088,6 +1093,68 @@ fn rejection(error: &str) -> String {
     serde_json::json!({"rejection": error}).to_string()
 }
 
+fn account_command(object: &serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
+    let op = object
+        .get("op")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("MISSING_COMMAND")?;
+    match op {
+        "account_status" => {
+            fields(object, &["op"], &["op"])?;
+            Ok(account_snapshot("signed_out", None))
+        }
+        "account_login" => {
+            fields(
+                object,
+                &["op", "username", "password"],
+                &["op", "username", "password"],
+            )?;
+            account_text(object, "username", 64)?;
+            account_text(object, "password", 1024)?;
+            Ok(account_snapshot("error", Some("ACCOUNT_NOT_CONFIGURED")))
+        }
+        "account_register_device" => {
+            fields(object, &["op", "name"], &["op", "name"])?;
+            account_text(object, "name", 64)?;
+            Ok(account_snapshot("error", Some("ACCOUNT_NOT_CONFIGURED")))
+        }
+        "account_refresh" | "account_logout" => {
+            fields(object, &["op"], &["op"])?;
+            Ok(account_snapshot("error", Some("ACCOUNT_NOT_CONFIGURED")))
+        }
+        _ => Err("UNKNOWN_ACCOUNT_COMMAND".into()),
+    }
+}
+
+fn account_text(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    max: usize,
+) -> Result<(), String> {
+    let value = object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("INVALID_ACCOUNT_{key}"))?;
+    if value.is_empty() || value.len() > max {
+        return Err(format!("INVALID_ACCOUNT_{key}"));
+    }
+    Ok(())
+}
+
+fn account_snapshot(state: &str, error: Option<&str>) -> String {
+    serde_json::json!({
+        "accountState": state,
+        "generation": 0,
+        "pending": false,
+        "error": error,
+        "expiresAtMs": 0,
+        "deviceId": null,
+        "directoryState": "empty",
+        "hosts": [],
+    })
+    .to_string()
+}
+
 fn pairing_dir() -> Option<PathBuf> {
     std::env::var_os("AGENTBROWSER_MAC_PAIRING").map(PathBuf::from)
 }
@@ -1200,6 +1267,43 @@ mod tests {
                 value.get(field).is_none(),
                 "{field} must be omitted when unavailable"
             );
+        }
+    }
+
+    #[test]
+    fn account_status_snapshot_matches_client_domain_abi() {
+        let command = serde_json::json!({"op":"account_status"});
+        let value = account_command(command.as_object().unwrap()).expect("account status");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&value).unwrap(),
+            serde_json::json!({
+                "accountState": "signed_out",
+                "generation": 0,
+                "pending": false,
+                "error": null,
+                "expiresAtMs": 0,
+                "deviceId": null,
+                "directoryState": "empty",
+                "hosts": [],
+            })
+        );
+    }
+
+    #[test]
+    fn unconfigured_account_mutations_return_typed_errors() {
+        let commands = [
+            serde_json::json!({"op":"account_login", "username":"alice", "password":"secret"}),
+            serde_json::json!({"op":"account_register_device", "name":"Mac"}),
+            serde_json::json!({"op":"account_refresh"}),
+            serde_json::json!({"op":"account_logout"}),
+        ];
+        for command in commands {
+            let value = account_command(command.as_object().unwrap()).expect("account mutation");
+            let snapshot = serde_json::from_str::<serde_json::Value>(&value).unwrap();
+            assert_eq!(snapshot["accountState"], "error");
+            assert_eq!(snapshot["error"], "ACCOUNT_NOT_CONFIGURED");
+            assert_eq!(snapshot["pending"], false);
+            assert_eq!(snapshot["hosts"], serde_json::json!([]));
         }
     }
 }
