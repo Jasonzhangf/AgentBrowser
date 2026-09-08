@@ -29,6 +29,27 @@ second browser, select a route, or retry a mutation. A failed/unknown mutation
 is returned as an explicit rejection. `connect` always attaches in Host
 observation mode; takeover and release remain Host operations.
 
+## Protocol binding
+
+The browser protocol input for this slice is the clean, read-only Obscura
+candidate at `/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908`.
+The binding is reproducible from these Git identities:
+
+| Object | Git identity |
+| --- | --- |
+| Obscura candidate commit | `fc0bc1fdf9a494d0edaff4068ade15b7446a4271` |
+| Obscura candidate tree | `b1bc9c9c92c7bec45e000d2ebae97bd5582cd95a` |
+| `protocol/browser` commit | `b0d6eaa72fa713b845c07726a84a486e6be97db6` |
+| `protocol/browser` tree | `820b576a81a69d13252d3a1c782fc627e50dcad1` |
+| `protocol/browser/Cargo.toml` blob | `81d38b19a6cc9467337f4591a0928ff6a7d49089` |
+| `protocol/browser/src/lib.rs` blob | `25c1803c159e1fc9b6d6cd45c152c1293a5c7ee8` |
+
+This binding includes the typed `VideoPacket::EncoderUnavailable` terminal
+marker. The Mac media consumer must surface that marker as an explicit encoder
+failure and stop the media attempt; `VideoPacket::Unavailable` remains the
+recoverable Host capture/page availability marker. The two cases must not be
+collapsed into a successful startup or silently retried path.
+
 ## Pairing and build
 
 Pairing is a private directory containing `endpoint.txt`, `ca.der`,
@@ -41,7 +62,7 @@ Build the app bundle with the checked-out Browser ABI owner and this worktree's
 Cargo target:
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/protocol/browser \
   scripts/build-macos.sh build
 ```
 
@@ -52,7 +73,7 @@ module's local entrypoint. For AppSDK consumers, the same build also emits the
 complete bundle as `generated/modules/macos-shell/lib/AgentBrowserMac.app.zip`.
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/protocol/browser \
   scripts/build-macos.sh run --pairing-dir /private/path/to/pairing
 ```
 
@@ -64,10 +85,10 @@ run it on `127.0.0.1` with Obscura binaries already validated by the Obscura
 owner:
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation-integration/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/protocol/browser \
   cargo build --release --locked -p agentbrowser-android --example device_fixture \
   --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\""
-OBSCURA_BIN_DIR=/Volumes/extension/code/AgentBrowser/playground/obscura-fork/playground/m1-navigation/target/release \
+OBSCURA_BIN_DIR=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/target/release \
 OBSCURA_ENDPOINT_BIND_IP=127.0.0.1 \
   target/release/examples/device_fixture
 ```
