@@ -72,6 +72,13 @@ fn parse_webrtc_bind_ip(value: &str) -> Result<IpAddr> {
     Ok(ip)
 }
 
+fn encoder_unavailable_error(session_id: &str, message: &str) -> String {
+    error(Failure::Host {
+        code: "ENCODER_UNAVAILABLE".into(),
+        message: format!("Encoder for session {session_id} is unavailable: {message}"),
+    })
+}
+
 fn pairing(env: &mut JNIEnv, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray) -> Result<Pairing> {
     Ok(Pairing {
         endpoint: env.get_string(&endpoint).map_err(error)?.into(),
@@ -123,7 +130,7 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_openWebRtc(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_webrtc_bind_ip;
+    use super::{encoder_unavailable_error, parse_webrtc_bind_ip};
     use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
@@ -136,6 +143,14 @@ mod tests {
         for value in ["not-an-ip", "0.0.0.0", "224.0.0.1", "::"] {
             assert!(parse_webrtc_bind_ip(value).is_err(), "accepted {value}");
         }
+    }
+
+    #[test]
+    fn encoder_unavailable_media_marker_preserves_typed_terminal_error() {
+        assert_eq!(
+            encoder_unavailable_error("android-session", "configured encoder exited"),
+            "Host ENCODER_UNAVAILABLE: Encoder for session android-session is unavailable: configured encoder exited"
+        );
     }
 }
 
@@ -151,6 +166,7 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_frame(mut en
         match &video.packet {
             VideoPacket::Waiting { .. } => Ok(std::ptr::null_mut()),
             VideoPacket::Unavailable { message, .. } => Err(format!("Host media unavailable: {message}")),
+            VideoPacket::EncoderUnavailable { session_id, message } => Err(encoder_unavailable_error(session_id, message)),
             VideoPacket::Closed { .. } => Err("Host media closed".into()),
             VideoPacket::AccessUnit { source, pts_us, coded_width, coded_height, .. } => {
                 if video.bytes.len() > 1024 * 1024 { return Err("Access unit exceeds Android decoder 1MiB limit".into()); }
