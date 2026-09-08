@@ -341,6 +341,75 @@
       },
       "source_owner": "host-service",
       "stage": "contract_bound"
+    },
+    {
+      "active_artifact": "active/lib/macos-shell",
+      "artifact_paths": [
+        "AgentBrowserMac.app"
+      ],
+      "build": {
+        "args": [
+          "scripts/build-macos.sh",
+          "build"
+        ],
+        "program": "bash",
+        "working_directory": "."
+      },
+      "contract_paths": [
+        "docs/macos-client.md",
+        "docs/architecture.md"
+      ],
+      "dependency_modules": [
+        "client-connection"
+      ],
+      "deployment_operations": [],
+      "generated_outputs": [
+        "apps/macos/build/**"
+      ],
+      "module_id": "macos-shell",
+      "owned_paths": [
+        "apps/macos/**",
+        "scripts/build-macos.sh",
+        "scripts/build-macos-ui.mjs",
+        "docs/macos-client.md"
+      ],
+      "regression": {
+        "allow_skipped": false,
+        "command": {
+          "args": [
+            "scripts/build-macos.sh",
+            "build"
+          ],
+          "program": "bash",
+          "working_directory": "."
+        },
+        "input_paths": [
+          "apps/macos/**",
+          "scripts/build-macos.sh",
+          "scripts/build-macos-ui.mjs",
+          "docs/macos-client.md",
+          "packages/client-connection/**",
+          "packages/ui-kernel/**",
+          "packages/ui-plugins/**",
+          "packages/client-domain/**",
+          "Cargo.toml",
+          "Cargo.lock",
+          "package-lock.json"
+        ],
+        "minimum_test_count": 1,
+        "ordinary_mode_after_freeze": "disabled",
+        "reenable_on": [
+          "source_change",
+          "contract_change",
+          "public_api_change",
+          "artifact_change",
+          "dependency_change"
+        ],
+        "required_before_freeze": false,
+        "suite_id": "macos-native-h264"
+      },
+      "source_owner": "macos-shell",
+      "stage": "contract_bound"
     }
   ],
   "project_id": "agentbrowser",

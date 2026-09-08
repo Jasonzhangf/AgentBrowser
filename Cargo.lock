@@ -83,6 +83,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentbrowser-macos-bridge"
+version = "0.1.0"
+dependencies = [
+ "agentbrowser-connection",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

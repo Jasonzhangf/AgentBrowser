@@ -23,5 +23,12 @@
     "owned_paths": ["scripts/host-service/**", "docs/host-service.md", "docs/architecture.md"],
     "forbidden_paths": ["active/lib/**", "protected/**", "generated/**", "apps/macos/**", "packages/client-connection/**"],
     "verification_gates": ["development_whitebox", "deployment_receipts", "deployed_blackbox_effectiveness"]
+  }, {
+    "module_id": "macos-shell",
+    "status": "contract_bound",
+    "owner": "macos-shell",
+    "owned_paths": ["apps/macos/**", "scripts/build-macos.sh", "scripts/build-macos-ui.mjs", "docs/macos-client.md"],
+    "forbidden_paths": ["active/lib/**", "protected/**", "generated/**", "apps/android/**", "packages/android-bridge/**"],
+    "verification_gates": ["macos-native-h264"]
   }]
 }
