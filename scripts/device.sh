@@ -15,24 +15,24 @@ prepare_device() {
   for _ in {1..40}; do
     power_state=$(adb -s "$ANDROID_SERIAL" shell dumpsys power)
     policy_state=$(adb -s "$ANDROID_SERIAL" shell dumpsys window policy)
-    if printf '%s\n' "$power_state" | rg -q '^[[:space:]]*mWakefulness=Awake$' \
-        && printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+showing=false$' \
-        && printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+inputRestricted=false$' \
-        && printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+screenState=SCREEN_STATE_ON$' \
-        && printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+interactiveState=INTERACTIVE_STATE_AWAKE$'; then
+    if printf '%s\n' "$power_state" | rg '^[[:space:]]*mWakefulness=Awake$' >/dev/null \
+        && printf '%s\n' "$policy_state" | rg '^[[:space:]]+showing=false$' >/dev/null \
+        && printf '%s\n' "$policy_state" | rg '^[[:space:]]+inputRestricted=false$' >/dev/null \
+        && printf '%s\n' "$policy_state" | rg '^[[:space:]]+screenState=SCREEN_STATE_ON$' >/dev/null \
+        && printf '%s\n' "$policy_state" | rg '^[[:space:]]+interactiveState=INTERACTIVE_STATE_AWAKE$' >/dev/null; then
       break
     fi
     sleep 0.1
   done
 
-  if ! printf '%s\n' "$power_state" | rg -q '^[[:space:]]*mWakefulness=Awake$'; then
+  if ! printf '%s\n' "$power_state" | rg '^[[:space:]]*mWakefulness=Awake$' >/dev/null; then
     echo "Android replay preflight failed: display is not awake (mWakefulness=Awake not observed)" >&2
     return 1
   fi
-  if ! printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+showing=false$' \
-      || ! printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+inputRestricted=false$' \
-      || ! printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+screenState=SCREEN_STATE_ON$' \
-      || ! printf '%s\n' "$policy_state" | rg -q '^[[:space:]]+interactiveState=INTERACTIVE_STATE_AWAKE$'; then
+  if ! printf '%s\n' "$policy_state" | rg '^[[:space:]]+showing=false$' >/dev/null \
+      || ! printf '%s\n' "$policy_state" | rg '^[[:space:]]+inputRestricted=false$' >/dev/null \
+      || ! printf '%s\n' "$policy_state" | rg '^[[:space:]]+screenState=SCREEN_STATE_ON$' >/dev/null \
+      || ! printf '%s\n' "$policy_state" | rg '^[[:space:]]+interactiveState=INTERACTIVE_STATE_AWAKE$' >/dev/null; then
     echo "Android replay preflight failed: keyguard or display policy is still blocking input" >&2
     return 1
   fi
@@ -40,8 +40,8 @@ prepare_device() {
   adb -s "$ANDROID_SERIAL" shell am start -W -n "$app/.MainActivity"
   for _ in {1..40}; do
     window_state=$(adb -s "$ANDROID_SERIAL" shell dumpsys window)
-    if printf '%s\n' "$window_state" | rg -q 'mCurrentFocus=.*com\.agentbrowser\.probe/com\.agentbrowser\.probe\.MainActivity' \
-        && printf '%s\n' "$window_state" | rg -q 'mFocusedApp=.*com\.agentbrowser\.probe/\.MainActivity'; then
+    if printf '%s\n' "$window_state" | rg 'mCurrentFocus=.*com\.agentbrowser\.probe/com\.agentbrowser\.probe\.MainActivity' >/dev/null \
+        && printf '%s\n' "$window_state" | rg 'mFocusedApp=.*com\.agentbrowser\.probe/\.MainActivity' >/dev/null; then
       echo "Android replay preflight PASS: display awake, keyguard clear, probe Activity focused"
       return 0
     fi
