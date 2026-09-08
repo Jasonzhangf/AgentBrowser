@@ -179,7 +179,20 @@ def process_rows() -> list[dict[str, Any]]:
 
 
 def process_row(pid: int) -> Optional[dict[str, Any]]:
-    return next((row for row in process_rows() if row["pid"] == pid), None)
+    code, output = command_result(("ps", "-p", str(pid), "-o", "pid=,ppid=,command="), pathlib.Path.cwd())
+    if code != 0:
+        return None
+    for line in output.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
+            continue
+        try:
+            row = {"pid": int(parts[0]), "ppid": int(parts[1]), "command": parts[2]}
+        except ValueError:
+            continue
+        if row["pid"] == pid:
+            return row
+    return None
 
 
 def wait_for_process_row(pid: int) -> Optional[dict[str, Any]]:
@@ -194,17 +207,42 @@ def wait_for_process_row(pid: int) -> Optional[dict[str, Any]]:
         time.sleep(min(PROCESS_ROW_VISIBILITY_POLL_SECONDS, remaining))
 
 
-def command_matches(row: Optional[Mapping[str, Any]], executable: pathlib.Path) -> bool:
+def command_matches(
+    row: Optional[Mapping[str, Any]], command: pathlib.Path | Sequence[str] | str
+) -> bool:
     if row is None:
         return False
     raw = str(row.get("command", "")).strip()
-    expected = str(executable.resolve(strict=False))
-    variants = {expected}
-    if expected.startswith("/private/"):
-        variants.add(expected[len("/private"):])
-    elif expected.startswith("/") and not expected.startswith("/private"):
-        variants.add(f"/private{expected}")
-    return any(raw == candidate or raw.startswith(f"{candidate} ") for candidate in variants)
+    if not raw:
+        return False
+    if isinstance(command, str):
+        expected = command.strip()
+        if not expected:
+            return False
+        variants = {expected}
+        if expected.startswith("/private/"):
+            variants.add(expected[len("/private"):])
+        elif expected.startswith("/") and expected != "/":
+            variants.add(f"/private{expected}")
+        return raw in variants
+    if isinstance(command, pathlib.Path):
+        values = (str(command),)
+    else:
+        values = tuple(str(value) for value in command)
+    if not values or not values[0]:
+        return False
+    executable = pathlib.Path(values[0]).expanduser()
+    expected_executable = str(executable.resolve(strict=False)) if executable.is_absolute() else str(executable)
+    expected_arguments = " ".join(values[1:])
+    variants = {expected_executable}
+    if expected_executable.startswith("/private/"):
+        variants.add(expected_executable[len("/private"):])
+    elif expected_executable.startswith("/") and expected_executable != "/":
+        variants.add(f"/private{expected_executable}")
+    expected_commands = {
+        f"{variant} {expected_arguments}" if expected_arguments else variant for variant in variants
+    }
+    return raw in expected_commands
 
 
 def descendants(pid: int, rows: Optional[Iterable[Mapping[str, Any]]] = None) -> list[dict[str, Any]]:
@@ -1202,7 +1240,7 @@ class Runner:
             "pid": self.agent.pid,
             "command": self.agent.command,
         }
-        if not command_matches(wait_for_process_row(self.agent.pid), self.agent.executable):
+        if not command_matches(wait_for_process_row(self.agent.pid), self.agent.command):
             self.abort(
                 "AGENT_PROCESS_IDENTITY_MISMATCH",
                 f"ps command for pid {self.agent.pid} does not match {self.agent.executable}",
@@ -1258,7 +1296,7 @@ class Runner:
             "pid": self.ui_driver.pid,
             "command": self.ui_driver.command,
         }
-        if not command_matches(wait_for_process_row(self.ui_driver.pid), self.ui_driver.executable):
+        if not command_matches(wait_for_process_row(self.ui_driver.pid), self.ui_driver.command):
             self.abort(
                 "UI_DRIVER_PROCESS_IDENTITY_MISMATCH",
                 f"ps command for pid {self.ui_driver.pid} does not match {self.ui_driver.executable}",
@@ -2012,21 +2050,25 @@ class Runner:
             if not isinstance(pid, int) or not isinstance(binary, str):
                 results.append({"pid": pid, "result": "identity_unavailable"})
                 continue
+            command = item.get("command")
+            if not isinstance(command, str) or not command.strip():
+                results.append({"pid": pid, "result": "identity_unavailable"})
+                continue
             row = process_row(pid)
             if row is None:
                 results.append({"pid": pid, "result": "already_exited"})
                 continue
             executable = pathlib.Path(binary)
-            if not command_matches(row, executable):
+            if not command_matches(row, command):
                 results.append({"pid": pid, "result": "identity_mismatch", "command": row.get("command")})
                 continue
-            results.append(self._terminate_pid(pid, executable, "daemon"))
+            results.append(self._terminate_pid(pid, executable, "daemon", command=command))
         return results
 
     def _terminate_process(self, process: ProcessPipes, label: str) -> dict[str, Any]:
         if process.proc.poll() is not None:
             return {"pid": process.pid, "label": label, "result": "already_exited", "exit_code": process.proc.returncode}
-        return self._terminate_pid(process.pid, process.executable, label, process=process)
+        return self._terminate_pid(process.pid, process.executable, label, process=process, command=process.command)
 
     def _terminate_pid(
         self,
@@ -2035,10 +2077,12 @@ class Runner:
         label: str,
         *,
         process: Optional[ProcessPipes] = None,
+        command: pathlib.Path | Sequence[str] | str | None = None,
     ) -> dict[str, Any]:
         row = process_row(pid)
         result: dict[str, Any] = {"pid": pid, "label": label, "executable": str(executable), "command_before": row}
-        if not command_matches(row, executable):
+        expected_command = executable if command is None else command
+        if not command_matches(row, expected_command):
             result["result"] = "identity_mismatch_not_signalled"
             return result
         try:
@@ -2061,7 +2105,7 @@ class Runner:
                 return result
             time.sleep(0.1)
         row = process_row(pid)
-        if not command_matches(row, executable):
+        if not command_matches(row, expected_command):
             result["result"] = "identity_changed_before_sigkill"
             return result
         try:
