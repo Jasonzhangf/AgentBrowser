@@ -1450,6 +1450,44 @@ class Runner:
 
     def run_bridge_operations(self, bridge: BridgeProcess) -> None:
         self.stage_start("atomic_operations")
+        observed = self._require_bridge_snapshot(
+            bridge.command_response({"op": "status"}, self.args.timeout),
+            "atomic_operations",
+            "status before takeover",
+        )
+        epoch = observed.get("epoch")
+        if not isinstance(epoch, int):
+            self.abort(
+                "CONTROL_EPOCH_MISSING",
+                f"status before takeover has no integer epoch: {observed!r}",
+                owner="AgentBrowser Host control owner",
+                next_action="return the Host control epoch before requesting takeover",
+                stage="atomic_operations",
+            )
+        takeover = self._require_bridge_snapshot(
+            bridge.command_response({"op": "takeover", "epoch": epoch}, self.args.timeout),
+            "atomic_operations",
+            "takeover",
+        )
+        if takeover.get("connectionState") != "connected" or takeover.get("controlMode") != "control":
+            self.abort(
+                "TAKEOVER_FAILED",
+                f"takeover did not grant Host control: {takeover!r}",
+                owner="AgentBrowser Host control owner",
+                next_action="preserve the typed takeover response and current Host control state",
+                stage="atomic_operations",
+            )
+        self.operation_receipts.append(
+            {
+                "operation": "takeover",
+                "command": {"op": "takeover", "epoch": epoch},
+                "before": observed,
+                "after": takeover,
+                "receipt": "bridge response snapshot",
+            }
+        )
+        self.stage_log("atomic_operations", f"receipt takeover: {json_text(takeover)}")
+        self.prove("takeover_granted", "bridge entered Host control mode through the typed takeover operation", stage="atomic_operations")
         ready = self._wait_bridge_snapshot(lambda value: value.get("inputReady") is True, "atomic_operations", "INPUT_NOT_READY")
         epoch = ready.get("epoch")
         if not isinstance(epoch, int):
