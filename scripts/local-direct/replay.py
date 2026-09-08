@@ -431,10 +431,15 @@ class BridgeProcess(ProcessPipes):
         self.next_request_id = 0
         self.pending_responses: dict[int, Any] = {}
         self.ack_requests: dict[int, tuple[Any, int]] = {}
+        self.fenced_ack_requests: dict[int, tuple[Any, int]] = {}
         self.ack_requested: set[tuple[Any, int]] = set()
         self.acked_tickets: set[tuple[Any, int]] = set()
         self.frames: list[dict[str, Any]] = []
         self.ack_receipts: list[dict[str, Any]] = []
+        self.active_generation: Optional[int] = None
+        self.fenced_generations: set[int] = set()
+        self.stale_frame_drops: list[dict[str, Any]] = []
+        self.stale_ack_rejections: list[dict[str, Any]] = []
 
     def _parse_event(self) -> Optional[dict[str, Any]]:
         data = self.stdout_buffer
@@ -512,9 +517,13 @@ class BridgeProcess(ProcessPipes):
         return value
 
     def command_response(self, command: Mapping[str, Any], timeout: float) -> Any:
+        if command.get("op") == "disconnect":
+            self.fence_active_generation()
         request_id = self.send_command(command)
         if request_id in self.pending_responses:
-            return self.pending_responses.pop(request_id)
+            value = self.pending_responses.pop(request_id)
+            self.observe_snapshot(value)
+            return value
         deadline = time.monotonic() + max(0.0, timeout)
         while True:
             remaining = deadline - time.monotonic()
@@ -532,7 +541,23 @@ class BridgeProcess(ProcessPipes):
             if not isinstance(response_id, int):
                 raise ProcessProtocolError("BRIDGE_RESPONSE_ID_INVALID", repr(response_id))
             frame_key = self.ack_requests.pop(response_id, None)
+            fenced = False
+            if frame_key is None:
+                frame_key = self.fenced_ack_requests.pop(response_id, None)
+                fenced = frame_key is not None
             if frame_key is not None:
+                if fenced or frame_key[0] in self.fenced_generations:
+                    if is_rejection(value):
+                        self.stale_ack_rejections.append(
+                            {
+                                "request_id": response_id,
+                                "generation": frame_key[0],
+                                "ticket": frame_key[1],
+                                "response": value,
+                                "reason": "generation_fenced",
+                            }
+                        )
+                    continue
                 if is_rejection(value):
                     raise ProcessProtocolError("BRIDGE_FRAME_ACK_REJECTED", json_text(value))
                 self.acked_tickets.add(frame_key)
@@ -541,8 +566,25 @@ class BridgeProcess(ProcessPipes):
                 )
                 continue
             if response_id == request_id:
+                self.observe_snapshot(value)
                 return value
             self.pending_responses[response_id] = value
+
+    def observe_snapshot(self, value: Any) -> None:
+        if not isinstance(value, Mapping):
+            return
+        generation = value.get("generation")
+        if isinstance(generation, int) and generation >= 0:
+            self.active_generation = generation
+
+    def fence_active_generation(self) -> None:
+        generation = self.active_generation
+        if not isinstance(generation, int) or generation < 0:
+            return
+        self.fenced_generations.add(generation)
+        for request_id, frame_key in list(self.ack_requests.items()):
+            if frame_key[0] == generation:
+                self.fenced_ack_requests[request_id] = self.ack_requests.pop(request_id)
 
     def _handle_frame(self, event: Mapping[str, Any]) -> None:
         header = event.get("header")
@@ -551,7 +593,10 @@ class BridgeProcess(ProcessPipes):
         ticket = header.get("ticket")
         if not isinstance(ticket, int) or ticket <= 0:
             raise ProcessProtocolError("BRIDGE_FRAME_TICKET_INVALID", repr(ticket))
-        frame_key = (header.get("generation"), ticket)
+        generation = header.get("generation")
+        if not isinstance(generation, int) or generation < 0:
+            raise ProcessProtocolError("BRIDGE_FRAME_GENERATION_INVALID", repr(generation))
+        frame_key = (generation, ticket)
         self.frames.append(
             {
                 "ticket": ticket,
@@ -568,6 +613,25 @@ class BridgeProcess(ProcessPipes):
                 "byte_length": len(event.get("payload", b"")),
             }
         )
+        if generation in self.fenced_generations:
+            self.stale_frame_drops.append(
+                {
+                    "generation": generation,
+                    "ticket": ticket,
+                    "reason": "generation_fenced",
+                }
+            )
+            return
+        if self.active_generation is not None and generation != self.active_generation:
+            self.stale_frame_drops.append(
+                {
+                    "generation": generation,
+                    "ticket": ticket,
+                    "active_generation": self.active_generation,
+                    "reason": "generation_mismatch",
+                }
+            )
+            return
         if frame_key in self.ack_requested:
             return
         ack_id = self.send_command({"op": "ack_frame", "ticket": ticket})
@@ -2190,6 +2254,12 @@ class Runner:
         if self.args.mode == "appkit":
             self.know_unknown("bridge_binary_framing", "AppKit mode delegates native bridge framing to the supplied UI process")
         self.evidence["agent"]["operation_receipts"] = self.operation_receipts
+        if isinstance(self.agent, BridgeProcess):
+            self.evidence["agent"]["frame_ack"] = {
+                "acknowledged": self.agent.ack_receipts,
+                "stale_frames_dropped": self.agent.stale_frame_drops,
+                "stale_ack_rejections": self.agent.stale_ack_rejections,
+            }
         self.evidence["fixture"]["inspections"] = self.fixture_inspections
         for label, process in (("fixture", self.fixture), ("agent", self.agent), ("ui_driver", self.ui_driver)):
             if process is not None:
