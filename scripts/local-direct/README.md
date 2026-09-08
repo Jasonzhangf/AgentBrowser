@@ -19,17 +19,22 @@ fixture endpoint fails with `RELAY_ENDPOINT_REJECTED`.
 ## Commands
 
 `build-fixture.sh` is the build entrypoint for the real Rust fixture. It runs
-the exact workspace command `cargo build --example device_fixture -p
-agentbrowser-android`, writes compiler output to stderr, and prints only the
-resulting executable path to stdout. Set `LOCAL_DIRECT_MANIFEST_PATH` or
-`LOCAL_DIRECT_TARGET_DIR` when the Android bridge workspace uses a non-default
-location. A missing workspace, source file, or output executable is an explicit
-failure; the wrapper never creates a substitute fixture.
+`cargo build --example device_fixture -p agentbrowser-android` with an explicit
+Cargo patch for the Obscura protocol owner, writes compiler output to stderr,
+and prints only the resulting executable path to stdout. The wrapper passes
+the selected target directory to Cargo. Set either
+`OBSCURA_PROTOCOL_ROOT` or `LOCAL_DIRECT_PROTOCOL_ROOT` to the protocol crate
+root; it must contain `Cargo.toml` and `src/lib.rs`. Set
+`LOCAL_DIRECT_MANIFEST_PATH` or `LOCAL_DIRECT_TARGET_DIR` when the Android
+bridge workspace uses a non-default location. A missing protocol, workspace,
+source file, or output executable is an explicit failure; the wrapper never
+copies a protocol or creates a substitute fixture.
 
 Build the fixture and pass its path to the runner:
 
 ```sh
-fixture_bin=$(scripts/local-direct/build-fixture.sh)
+protocol_root=/path/to/obscura/protocol/browser
+fixture_bin=$(OBSCURA_PROTOCOL_ROOT="$protocol_root" scripts/local-direct/build-fixture.sh)
 python3 scripts/local-direct/replay.py \
   --fixture-bin "$fixture_bin" \
   --obscura-bin-dir /path/to/obscura/target/release \
@@ -37,9 +42,10 @@ python3 scripts/local-direct/replay.py \
 ```
 
 The `origin/main` design baseline currently has no Cargo workspace or Android
-bridge package, so this wrapper reports that missing manifest until the
-Android bridge package owner supplies those inputs. That failure is retained
-as build evidence rather than treated as a fixture pass.
+bridge package. With no protocol variable the wrapper reports the missing
+protocol explicitly; with a protocol variable it then reports any missing
+workspace or package input. These failures are retained as build evidence
+rather than treated as a fixture pass.
 
 Bridge mode drives the framed `AgentBrowserMacBridge` process and checks the
 direct connection, an acknowledged Annex B frame, click/input/scroll response
