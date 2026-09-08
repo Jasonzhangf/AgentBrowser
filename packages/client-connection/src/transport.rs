@@ -724,6 +724,40 @@ mod tests {
         }
     }
 
+    struct EncoderUnavailableBackend {
+        status: SessionStatus,
+        closed: Arc<AtomicUsize>,
+    }
+
+    impl Backend for EncoderUnavailableBackend {
+        fn request<'a>(&'a mut self, request: Request) -> BackendFuture<'a, Response> {
+            let status = self.status.clone();
+            Box::pin(async move {
+                Ok(Response::Result {
+                    id: request.id,
+                    value: ResultValue::Status(status),
+                })
+            })
+        }
+
+        fn next_video<'a>(&'a mut self) -> BackendFuture<'a, Video> {
+            Box::pin(async {
+                Ok(Video {
+                    packet: crate::protocol::VideoPacket::EncoderUnavailable {
+                        session_id: "session".into(),
+                        message: "configured encoder exited".into(),
+                    },
+                    bytes: Vec::new(),
+                })
+            })
+        }
+
+        fn close<'a>(&'a mut self) -> BackendFuture<'a, ()> {
+            self.closed.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
     fn pending_video_status() -> SessionStatus {
         SessionStatus {
             session_id: "session".into(),
@@ -781,6 +815,48 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(closed.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn encoder_unavailable_marker_ends_worker_with_typed_failure() {
+        let closed = Arc::new(AtomicUsize::new(0));
+        let status = pending_video_status();
+        let (_generation_sender, changed) = watch::channel(1);
+        let connection = spawn_connection(
+            1,
+            status,
+            EncoderUnavailableBackend {
+                closed: Arc::clone(&closed),
+                status: pending_video_status(),
+            },
+            0,
+            changed,
+        );
+        let mut failure = connection.failure.clone();
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            failure.wait_for(|value| value.is_some()),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .clone()
+        .unwrap();
+        assert!(matches!(
+            error,
+            Failure::Host { code, message }
+                if code == "ENCODER_UNAVAILABLE"
+                    && message == "Encoder for session session is unavailable: configured encoder exited"
+        ));
+        assert_eq!(closed.load(Ordering::Relaxed), 1);
+
+        let mut media = connection.media.clone();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), media.changed())
+                .await
+                .unwrap()
+                .is_err()
+        );
     }
 
     async fn pair() -> (

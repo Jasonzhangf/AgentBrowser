@@ -17,7 +17,10 @@ use agentbrowser_connection::{
     },
     Connection, Connector, DisplayedFrame, Failure, Input, Pairing, Video,
 };
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -299,7 +302,12 @@ fn handle_event(
             app.pending_connect = None;
             let status = connection.initial_status.clone();
             let actual_generation = connection.generation;
-            spawn_media_pump(&connection, generation, event_sender.clone());
+            spawn_media_pump(
+                connection.media.clone(),
+                connection.failure.clone(),
+                generation,
+                event_sender.clone(),
+            );
             app.session = Some(Session {
                 _connector: connector,
                 connection,
@@ -341,17 +349,17 @@ fn handle_event(
     }
 }
 
-fn spawn_media_pump(connection: &Connection, generation: u64, sender: mpsc::Sender<Event>) {
-    let mut media = connection.media.clone();
+fn spawn_media_pump(
+    mut media: watch::Receiver<Option<Arc<Video>>>,
+    failure: watch::Receiver<Option<Failure>>,
+    generation: u64,
+    sender: mpsc::Sender<Event>,
+) {
     tokio::spawn(async move {
         loop {
             if media.changed().await.is_err() {
-                let _ = sender
-                    .send(Event::MediaEnded {
-                        generation,
-                        error: "MEDIA_STREAM_CLOSED".into(),
-                    })
-                    .await;
+                let error = terminal_media_error(&failure);
+                let _ = sender.send(Event::MediaEnded { generation, error }).await;
                 break;
             }
             let Some(video) = media.borrow_and_update().clone() else {
@@ -366,6 +374,16 @@ fn spawn_media_pump(connection: &Connection, generation: u64, sender: mpsc::Send
             }
         }
     });
+}
+
+fn terminal_media_error(failure: &watch::Receiver<Option<Failure>>) -> String {
+    if let Some(error) = failure.borrow().clone() {
+        return error.to_string();
+    }
+    if failure.has_changed().is_err() {
+        return Failure::Closed.to_string();
+    }
+    "MEDIA_STREAM_CLOSED".into()
 }
 
 fn handle_media(
@@ -1207,6 +1225,72 @@ fn read_pairing_file(root: &Path, name: &str, max: u64) -> Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn media_termination_forwards_transport_typed_error() {
+        let (media_sender, media) = watch::channel(None);
+        let (failure_sender, failure) = watch::channel(None);
+        let (sender, mut events) = mpsc::channel(1);
+
+        spawn_media_pump(media, failure, 7, sender);
+        failure_sender.send_replace(Some(Failure::Host {
+            code: "ENCODER_UNAVAILABLE".into(),
+            message: "Encoder for session macos-session is unavailable: configured encoder exited"
+                .into(),
+        }));
+        drop(media_sender);
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            Event::MediaEnded { generation: 7, error }
+                if error == "Host ENCODER_UNAVAILABLE: Encoder for session macos-session is unavailable: configured encoder exited"
+        ));
+    }
+
+    #[tokio::test]
+    async fn media_termination_without_failure_forwards_stream_closed() {
+        let (media_sender, media) = watch::channel(None);
+        let (_failure_sender, failure) = watch::channel(None);
+        let (sender, mut events) = mpsc::channel(1);
+
+        spawn_media_pump(media, failure, 8, sender);
+        drop(media_sender);
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            Event::MediaEnded { generation: 8, error }
+                if error == "MEDIA_STREAM_CLOSED"
+        ));
+    }
+
+    #[tokio::test]
+    async fn media_termination_with_closed_failure_watch_remains_explicit() {
+        let (media_sender, media) = watch::channel(None);
+        let (failure_sender, failure) = watch::channel(None);
+        let (sender, mut events) = mpsc::channel(1);
+
+        spawn_media_pump(media, failure, 9, sender);
+        drop(failure_sender);
+        drop(media_sender);
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            Event::MediaEnded { generation: 9, error }
+                if error == "Connection ended or was superseded"
+        ));
+    }
 
     #[test]
     fn encoder_unavailable_media_marker_preserves_typed_terminal_error() {
