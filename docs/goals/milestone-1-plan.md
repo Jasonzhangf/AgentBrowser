@@ -182,3 +182,25 @@ fallback。review PASS 后才按用户授权串行 merge/push；两仓分别记�
 产品验收、main 交付、版本/产物 baseline、资源释放、project-memory 重建是独立
 状态，必须逐项有证据。未满足 M1 DoD 时 goal 保持 active，不能以 worker 数量、计划
 完成或局部 PASS 收尾。
+
+## 当前执行快照（2026-09-08）
+
+主组合：`playground/m1-relay-account-combined`，branch
+`codex/m1-relay-account-combined`，HEAD `eb2a5f0`，相对 `origin/main` ahead 88，
+工作树 clean。已集成的最小变更是 AppSDK `bug_triage` 合同同步和 Mac bridge
+`account_status` typed ABI；两者只证明定向源码验证，不证明 admission 或 M1。
+
+当前首个质量门禁仍是组合 worktree 的 `appsdk verify` 返回
+`DECLARED_RECORD_CONTRACT_MISMATCH`；禁止手改 records、lock、hash 或 validation
+产物。当前 Mac 正式 admission 必须从 `eb2a5f0` 重新构建 exact bundle；旧失败证据
+只用于根因对照，不能复用为当前 PASS。Obscura 候选为
+`playground/obscura-fork/playground/m1-obscura-m1-integration @ 9926ec0`，已有
+raw RGBA→H.264、loopback WebRTC/WSS 和 persistent 定向 PASS，仍需验证 pending
+viewport detach 与 `Unavailable` 错误边界。15T 当前实时设备不在线，恢复后必须从
+当前组合重新 build/install/restart；旧 Android PASS 不可复用。
+
+当前并行 lanes：AppSDK 合同跟进、Mac formal admission、Obscura 边界测试、Relay
+WSS data plane、Android admission 准备。每 lane 使用新的 Luna session 和独立
+`playground/<task>` worktree；主线程按依赖串行 cherry-pick/集成。由于组合 worktree
+没有 `.agent-collab` live identity，`appsdk goal subscribe` 当前观测为
+`subscribed_failed/collab_failed`；goal 仍由主线程手动调度，不能报告周期订阅已激活。
