@@ -281,14 +281,15 @@ RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
 let point = CGPoint(x: ${target.x}, y: ${target.y})
 let source = CGEventSource(stateID: .hidSystemState)!
 let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
-move.postToPid(pid)
+move.post(tap: .cghidEventTap)
 let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)!
-down.postToPid(pid)
+down.post(tap: .cghidEventTap)
+Thread.sleep(forTimeInterval: 0.05)
 let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!
-up.postToPid(pid)
+up.post(tap: .cghidEventTap)
 `;
   command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'pid', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
