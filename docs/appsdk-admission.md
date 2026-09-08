@@ -15,13 +15,18 @@ OBSCURA_PROTOCOL_ROOT=/absolute/path/to/obscura/protocol/browser \
 ```
 
 `OBSCURA_PROTOCOL_ROOT` may also be supplied as `--protocol-root`. The path
-must be a directory in a clean Obscura Git checkout containing both
-`Cargo.toml` and `src/lib.rs`. The harness records the Obscura repository
-commit/tree and the protocol source subtree tree. It passes the exact absolute
-path through the environment; it never copies protocol source into
-AgentBrowser. If `scripts/connection.py` exists, the harness requires its
-explicit `OBSCURA_PROTOCOL_ROOT` binding and a Cargo path patch. A design-only
-checkout with no Rust manifest records that adapter as not applicable.
+may be either a direct crate root containing `Cargo.toml` and `src/lib.rs`, or
+the complete Obscura checkout containing
+`protocol/browser/Cargo.toml` and `protocol/browser/src/lib.rs`. For a complete
+checkout, the harness resolves `protocol/browser` as the crate root, records
+the supplied checkout and the resolved crate root, and passes only the crate
+root through `OBSCURA_PROTOCOL_ROOT` to downstream commands. The input must be
+inside a clean Obscura Git checkout. The harness records the Obscura repository
+commit/tree, the protocol source subtree tree, and source file hashes. It
+never copies protocol source into AgentBrowser. If `scripts/connection.py`
+exists, the harness requires its explicit `OBSCURA_PROTOCOL_ROOT` binding and
+a Cargo path patch. A design-only checkout with no Rust manifest records that
+adapter as not applicable.
 
 The serial order is:
 

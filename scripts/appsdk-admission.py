@@ -189,17 +189,42 @@ def protocol_identity(project_root: Path, raw_root: str | None) -> dict[str, Any
             {"path": str(protocol_root)},
         )
 
-    required = [protocol_root / "Cargo.toml", protocol_root / "src/lib.rs"]
-    missing = [str(path) for path in required if not path.is_file()]
-    if missing:
+    input_root = protocol_root
+    direct_required = [input_root / "Cargo.toml", input_root / "src/lib.rs"]
+    checkout_protocol_root = input_root / "protocol/browser"
+    checkout_required = [
+        checkout_protocol_root / "Cargo.toml",
+        checkout_protocol_root / "src/lib.rs",
+    ]
+    if all(path.is_file() for path in direct_required):
+        input_kind = "crate_root"
+        required = direct_required
+    elif all(path.is_file() for path in checkout_required):
+        input_kind = "checkout_root"
+        protocol_root = checkout_protocol_root.resolve()
+        required = checkout_required
+    else:
         raise StageFailure(
             "protocol_binding",
             "OBSCURA_PROTOCOL_SOURCE_MISSING",
-            "Obscura protocol root must contain Cargo.toml and src/lib.rs",
-            {"path": str(protocol_root), "missing": missing},
+            "Obscura input must be a protocol crate root or contain protocol/browser/Cargo.toml and protocol/browser/src/lib.rs",
+            {
+                "path": str(protocol_root),
+                "missing": [str(path) for path in direct_required if not path.is_file()],
+                "checkout_protocol_root": str(checkout_protocol_root),
+                "checkout_missing": [
+                    str(path) for path in checkout_required if not path.is_file()
+                ],
+            },
         )
 
-    repo_root_result = run_command(["git", "rev-parse", "--show-toplevel"], protocol_root)
+    # Resolve Git metadata from the supplied input path.  The input can be a
+    # checkout root, while AppSDK and Cargo must receive the nested crate root.
+    repo_root_result = run_command(
+        ["git", "-C", str(input_root), "rev-parse", "--show-toplevel"],
+        project_root,
+        keep_output=True,
+    )
     if repo_root_result["exit_code"] != 0:
         raise StageFailure(
             "protocol_binding",
@@ -248,6 +273,8 @@ def protocol_identity(project_root: Path, raw_root: str | None) -> dict[str, Any
     return {
         "root": str(protocol_root),
         "repository_root": str(repo_root),
+        "input_root": str(input_root),
+        "input_kind": input_kind,
         "source_path": source_rel.as_posix() or ".",
         "source_commit": commit,
         "repository_tree": repository_tree,
@@ -576,7 +603,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--protocol-root",
         default=os.environ.get("OBSCURA_PROTOCOL_ROOT"),
-        help="Obscura protocol source root; defaults to OBSCURA_PROTOCOL_ROOT",
+        help="Obscura crate root or checkout root; defaults to OBSCURA_PROTOCOL_ROOT",
     )
     parser.add_argument(
         "--evidence-dir",
