@@ -376,9 +376,9 @@ class BridgeProcess(ProcessPipes):
         super().__init__(command, cwd, env, binary_stdout=True)
         self.next_request_id = 0
         self.pending_responses: dict[int, Any] = {}
-        self.ack_requests: dict[int, int] = {}
-        self.ack_requested: set[int] = set()
-        self.acked_tickets: set[int] = set()
+        self.ack_requests: dict[int, tuple[Any, int]] = {}
+        self.ack_requested: set[tuple[Any, int]] = set()
+        self.acked_tickets: set[tuple[Any, int]] = set()
         self.frames: list[dict[str, Any]] = []
         self.ack_receipts: list[dict[str, Any]] = []
 
@@ -477,12 +477,14 @@ class BridgeProcess(ProcessPipes):
             value = self.response_value(event)
             if not isinstance(response_id, int):
                 raise ProcessProtocolError("BRIDGE_RESPONSE_ID_INVALID", repr(response_id))
-            ticket = self.ack_requests.pop(response_id, None)
-            if ticket is not None:
+            frame_key = self.ack_requests.pop(response_id, None)
+            if frame_key is not None:
                 if is_rejection(value):
                     raise ProcessProtocolError("BRIDGE_FRAME_ACK_REJECTED", json_text(value))
-                self.acked_tickets.add(ticket)
-                self.ack_receipts.append({"ticket": ticket, "response": value})
+                self.acked_tickets.add(frame_key)
+                self.ack_receipts.append(
+                    {"generation": frame_key[0], "ticket": frame_key[1], "response": value}
+                )
                 continue
             if response_id == request_id:
                 return value
@@ -495,6 +497,7 @@ class BridgeProcess(ProcessPipes):
         ticket = header.get("ticket")
         if not isinstance(ticket, int) or ticket <= 0:
             raise ProcessProtocolError("BRIDGE_FRAME_TICKET_INVALID", repr(ticket))
+        frame_key = (header.get("generation"), ticket)
         self.frames.append(
             {
                 "ticket": ticket,
@@ -511,11 +514,11 @@ class BridgeProcess(ProcessPipes):
                 "byte_length": len(event.get("payload", b"")),
             }
         )
-        if ticket in self.ack_requested:
+        if frame_key in self.ack_requested:
             return
         ack_id = self.send_command({"op": "ack_frame", "ticket": ticket})
-        self.ack_requested.add(ticket)
-        self.ack_requests[ack_id] = ticket
+        self.ack_requested.add(frame_key)
+        self.ack_requests[ack_id] = frame_key
 
 
 def is_rejection(value: Any) -> bool:
