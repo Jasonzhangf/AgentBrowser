@@ -394,11 +394,26 @@ fn handle_media(
             app.lifecycle = Lifecycle::Error;
             app.error = Some(format!("Host media unavailable: {message}"));
         }
+        VideoPacket::EncoderUnavailable {
+            session_id,
+            message,
+        } => {
+            app.lifecycle = Lifecycle::Error;
+            app.error = Some(encoder_unavailable_error(session_id, message));
+        }
         VideoPacket::Closed { .. } => {
             app.lifecycle = Lifecycle::Error;
             app.error = Some("Host media closed".into());
         }
     }
+}
+
+fn encoder_unavailable_error(session_id: &str, message: &str) -> String {
+    Failure::Host {
+        code: "ENCODER_UNAVAILABLE".into(),
+        message: format!("Encoder for session {session_id} is unavailable: {message}"),
+    }
+    .to_string()
 }
 
 fn offer_frame(
@@ -1192,6 +1207,14 @@ fn read_pairing_file(root: &Path, name: &str, max: u64) -> Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoder_unavailable_media_marker_preserves_typed_terminal_error() {
+        assert_eq!(
+            encoder_unavailable_error("macos-session", "configured encoder exited"),
+            "Host ENCODER_UNAVAILABLE: Encoder for session macos-session is unavailable: configured encoder exited"
+        );
+    }
 
     #[test]
     fn local_command_fields_are_closed() {
