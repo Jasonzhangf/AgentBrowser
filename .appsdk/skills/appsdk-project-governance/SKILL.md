@@ -1,6 +1,16 @@
 ---
 name: appsdk-project-governance
-description: Apply AppSDK engineering quality gates, project contracts and lifecycle evidence. Use optional Guidance for planning; keep automatic multi-worker Collab separate from quality admission.
+description: >
+  AppSDK engineering quality gates and Universal Bug Tracking
+  (appsdk bug new/list/show/comment/close): all user inputs (features &
+  defects) are tracked as bugs. Master triages via `appsdk bug list -q`,
+  reopens or creates `appsdk bug new -t -m -l "P0,mod"`, manages Kanban
+  priorities, and dispatches workers. Worker inspects `appsdk bug show`, stays
+  focused, reports new discoveries via `appsdk bug new` without auto-fixing,
+  reports blockers to master, and closes with `appsdk bug close ID -m
+  "Solution: ..."`. Dependency managed via `appsdk setup-deps [--check]`. Use
+  optional Guidance for planning; keep automatic Collab separate from quality
+  admission.
 ---
 
 # AppSDK Project Governance
@@ -119,6 +129,77 @@ is not evidence that delivery, review, install, restart, or freeze happened.
 7. Deliver within authorization. Report test, review, merge, install, publish
    and resource cleanup as separate achieved states.
 
+## Mainline delivery gate
+
+Every AppSDK or runtime change uses this order:
+
+```text
+clean playground worktree
+  -> candidate tests/build
+  -> independent review
+  -> clean main integration
+  -> main tests/build
+  -> push + remote receipt
+  -> official global install
+  -> exact service-scoped restart
+  -> deployed public-entrypoint replay
+  -> task/worktree cleanup and close
+```
+
+These are separate evidence states. A candidate, review PASS, local merge,
+remote push, installed binary, daemon restart, live replay, or cleanup receipt
+does not imply any other state. Never install or restart from a worker branch.
+
+### Required delivery procedure
+
+1. Create `playground/<slug>` from current `origin/main`. The worker never
+   edits `main` or shares a worktree.
+2. Run focused tests, relevant full suite, formatter, diff check, and release
+   build. Record the candidate commit, tree, artifact, and exact commands.
+3. Use an independent review and replay the unchanged-source effectiveness
+   case. Review PASS is required before integration.
+4. Integrate only into a clean local `main`. If tracked or untracked user
+   changes exist, stop and report exact paths; never reset, restore, stash,
+   overwrite, or silently absorb them.
+5. Re-run affected tests, full tests, formatter, diff check, and release build
+   on the exact merged commit. Record the merge commit and artifact hash.
+6. Push only that tested main commit. Verify remote truth with
+   `git ls-remote <remote> <ref>`; a local tracking ref is not publication.
+7. Install through the canonical AppSDK entry point:
+
+   ```bash
+   scripts/install-global-appsdk.sh
+   appsdk version
+   shasum -a 256 "$(command -v appsdk)"
+   ```
+
+   Preserve source commit, installed path, version, and digest. Do not copy a
+   binary by hand or leave a second global SDK entry.
+8. Restart only affected services with their official service-scoped command.
+   For Collab, use exactly:
+
+   ```bash
+   env -u TMUX_PANE collab down
+   env -u TMUX_PANE collab up
+   ```
+
+   Run this once per exact project root. Record old/new PID, socket, binary
+   path, and digest. Never use `pkill`, `killall`, `xargs kill`, or broad PID
+   commands.
+9. Run the deployed public-entrypoint replay and negative path. For Collab,
+   verify `collab who`, `collab context`, `collab task status`, `collab inbox`,
+   one real notification/consume path, and single-daemon identity after
+   restart. Source tests are not live replay evidence.
+10. Only after remote receipt, install/restart, and replay pass may the owner
+    release its claim and clean its own worktree through the official task
+    close operation. Cleanup records the removed path and receipt; it never
+    deletes another task's worktree, mailbox, journal, or token.
+
+If a gate fails, preserve the exact error and leave the task explicitly
+blocked with owner, unblock condition, next check, and recovery trigger. Never
+report deployed from a candidate branch, merged from a local-only ref, or
+complete from tests without mainline, install, restart, and replay evidence.
+
 ## Optional Guidance
 
 Use `appsdk guide status/init/plan/update/next/close` when the user/project
@@ -138,6 +219,11 @@ auditing rules does not require running initialization or changing setup.
 
 ## Automatic Collab
 
+Persistent subagents and project-specific notification policy:
+[subagents-config.md](references/subagents-config.md). All policies live in
+`~/.appsdk/config.toml`; `appsdk config` shows effective configuration.
+`appsdk subagent start/list/status/send/close` delegates to the Collab owner.
+
 `appsdk init` attempts official `collab init` once in a live tmux peer, preserving
 the inherited environment. Successful initialization registers identity and the
 finite direct-message subscription. Do not duplicate that initialization.
@@ -150,6 +236,73 @@ independent work continues, while operations requiring shared ownership wait.
 Keep automatic communication and file/task collaboration enabled; a serial
 merge queue is required only when the project selects that integration mode.
 Its ownership and tested-integration protections remain mandatory.
+
+## Universal Bug Tracking & Defect Governance
+
+All user inputs—whether bug reports or new feature requests—are tracked through `appsdk bug` backed by `git-bug`.
+
+### 1. Requirements Triage & Kanban Management
+- **Master Role**:
+  - Receives user inputs / feature requests / bug reports.
+  - Queries existing issues first: `appsdk bug list -q "<keyword>" -l "<label>" --json`.
+  - If an existing related issue is found, **reopen** it and append details.
+  - If new, creates a new issue:
+    ```bash
+    appsdk bug new -t "<title>" -m "<requirements & reproduction>" -l "<priority>,<module>"
+    ```
+  - Prioritizes backlog using labels (e.g. `p0`, `p1`, `p2`) and dispatches workers based on highest priority issues within scope.
+- **Worker / Subagent Role**:
+  - Receives assigned issue and inspects its history: `appsdk bug show <id> --json`.
+  - Verifies and reproduces the defect/feature in an isolated worktree.
+  - Reports discoveries or new bugs to the bug system immediately; **does not auto-fix unrelated discoveries** to stay focused on the primary objective.
+  - **Blocker Handling & Block Criteria**:
+    - Task status can be marked as `blocked` (`collab task block <id>`) only with a concrete cause, responsible owner, unblock condition, and recovery trigger. Genuine external dependencies, resource ownership, missing credentials/approval, and cross-owner decisions may be valid waits; difficulty alone is not.
+    - AppSDK framework defects remain an upstream bug path (`appsdk bug new --upstream -t "[SDK Bug] ..." -l "P0,cli"`), but non-framework failures must first be investigated and solved in scope. If a cross-owner decision is required, report a concrete proposal to Master; Master must take over, reassign, or auditable-force-close in the same cycle.
+    - If encountering a valid AppSDK blocker and a live Master exists: report immediately to Master with root cause and proposed fix (`collab sendmessage --to <master> --subject blocker "..."`).
+    - If blocked by AppSDK and no live Master exists: file an upstream SDK bug, resolve or work around, and resume the task.
+
+### 2. Multi-Criteria Filtering
+- Master and workers filter issues to reduce noise:
+  - By status: `appsdk bug list --status <open|closed>`
+  - By label: `appsdk bug list -l <labels>`
+  - By participant/author: `appsdk bug list -p <user> -a <author>`
+  - By keyword query: `appsdk bug list -q <query>`
+  - By sort & direction: `appsdk bug list -b <creation|edit> -d <asc|desc>`
+
+### 3. Lifecycle Evidence Enforcement
+- **Architecture Gate**: `WorktreeRecord` must declare `bug_triage` (`query_executed: true`, a query containing the issue ID, `mode`, `reopened_from_issue_id`) verifying that existing issues were triaged before creating new work.
+- **Promotion / Closure Gate**: Closing a bug or promoting a candidate requires solution documentation in `git-bug`:
+  ```bash
+  appsdk bug close <bug_id> -m "Solution: <root cause & resolution>" --receipt-id <receipt_id>
+  ```
+- **Legacy Compatibility**: Tasks with empty, `none`, or `legacy-*` `issue_id` are exempt from retroactive bug tracking enforcement.
+
+## Long-Horizon Goal Subscription & Master Saturation
+
+`collab init` / `whoami` returns `role_brief`; treat it as the active contract.
+Master dispatches rather than codes: split and assign work, allocate resources,
+keep workers loaded, own blockers, and drive verify/merge/cleanup/close.
+Independent worker owns its task end to end and evaluates master collaboration
+requests against current ownership/capacity—accept non-conflicting work or
+negotiate explicitly. Managed subagent executes its assigned scope and reports
+evidence to parent/master. On trouble, worker/subagent first investigates, then
+reports root cause, attempts, proposed fix, and exact decision needed.
+
+Notifications are interrupts, not completion. Follow the `P0/P1/P2 ACTION`,
+then resume current work; with no task, run `appsdk longhorizon show`. Never end
+on ACK, read, or summary.
+
+Register complex or long-running goals with a required markdown target and periodic reminder interval:
+
+```bash
+appsdk goal subscribe --goal docs/goals/<feature>-plan.md --interval 10m
+```
+- Path must point to an existing markdown file (`.md`).
+- Master is awakened periodically to:
+  1. Inspect worker states (`collab who` / `appsdk subagent status`); dispatch decomposed tasks to keep workers saturated whenever any worker is idle.
+  2. Enforce AppSDK lifecycle governance across all subagent tasks.
+  3. Report any upstream AppSDK framework issues via `appsdk bug new --upstream`.
+  4. Conclude only when all goal DoD conditions pass.
 
 ## Evidence and state ownership
 
