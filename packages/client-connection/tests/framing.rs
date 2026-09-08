@@ -52,6 +52,44 @@ fn rejects_session_encoder_and_revision_changes_without_poisoning_last_frame() {
 }
 
 #[test]
+fn encoder_unavailable_is_typed_terminal_error_while_unavailable_recovers() {
+    use agentbrowser_connection::MediaSequence;
+
+    let mut sequence = MediaSequence::new("s".into());
+    let unavailable = decode_video(&wire(
+        &serde_json::json!({
+            "type": "unavailable",
+            "session_id": "s",
+            "message": "capture temporarily unavailable"
+        }),
+        &[],
+    ))
+    .unwrap();
+    sequence.accept(&unavailable).unwrap();
+
+    let terminal = decode_video(&wire(
+        &serde_json::json!({
+            "type": "encoder_unavailable",
+            "session_id": "s",
+            "message": "configured encoder exited"
+        }),
+        &[],
+    ))
+    .unwrap();
+    assert!(matches!(
+        sequence.accept(&terminal),
+        Err(Failure::Host { ref code, ref message })
+            if code == "ENCODER_UNAVAILABLE"
+                && message == "Encoder for session s is unavailable: configured encoder exited"
+    ));
+
+    let next = decode_video(&wire(&frame(), &[0, 0, 0, 1, 0x65])).unwrap();
+    let mut recovered = MediaSequence::new("s".into());
+    recovered.accept(&unavailable).unwrap();
+    recovered.accept(&next).unwrap();
+}
+
+#[test]
 fn rejects_unbounded_and_mismatched_network_packets() {
     assert!(matches!(decode_video(&[]), Err(Failure::Protocol(_))));
     assert!(decode_video(&u32::MAX.to_be_bytes()).is_err());

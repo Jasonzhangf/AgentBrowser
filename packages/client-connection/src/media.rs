@@ -178,6 +178,16 @@ impl MediaSequence {
                 require(*session_id == self.session, "Media session mismatch")?;
                 self.closed = matches!(video.packet, VideoPacket::Closed { .. });
             }
+            VideoPacket::EncoderUnavailable {
+                session_id,
+                message,
+            } => {
+                require(*session_id == self.session, "Media session mismatch")?;
+                return Err(Failure::Host {
+                    code: "ENCODER_UNAVAILABLE".into(),
+                    message: format!("Encoder for session {session_id} is unavailable: {message}"),
+                });
+            }
         }
         Ok(())
     }
