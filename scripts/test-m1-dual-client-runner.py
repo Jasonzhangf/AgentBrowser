@@ -203,6 +203,116 @@ def test_combined_side_evidence_does_not_promote_bridge_ack_to_display() -> None
     check(mac["display"]["status"] == "unknown", "combined runner must expose missing native display evidence")
 
 
+def test_reconnect_frame_correlation_survives_final_disconnect() -> None:
+    class Bridge:
+        active_generation = 2
+        acked_tickets = {(2, 1)}
+        ack_receipts = [{"generation": 2, "ticket": 1}]
+        frames = [{"generation": 2, "ticket": 1}]
+
+    bridge = Bridge()
+    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
+    combined.bridge = bridge
+    combined.host_statuses = [
+        {
+            "value": {
+                "session_id": "session-3",
+                "attachments": 1,
+                "attachment_id": "attachment-1",
+                "viewport": [347, 580],
+                "viewport_revision": 3,
+                "document_revision": 5,
+                "control": {"epoch": 7, "phase": "observe"},
+            }
+        }
+    ]
+    combined.android_result = {
+        "sessionId": "session-3",
+        "viewport": {
+            "cssWidth": 347,
+            "cssHeight": 580,
+            "sourceWidth": 352,
+            "sourceHeight": 592,
+        },
+    }
+    combined.mac_operations = []
+    combined.mac_frame_evidence = None
+    combined.first_failure = None
+    combined.evidence = {
+        "sides": {},
+        "cross_side": {},
+        "required_claims": {},
+        "unknown": [],
+        "stages": {"mac_reconnect": {"result": "not_run"}},
+    }
+    combined._write_json = lambda name, value: None
+
+    def record_host_status(label: str, stage: str) -> None:
+        return None
+
+    def stage_start(name: str) -> None:
+        return None
+
+    def stage_finish(name: str, result: str, details: Any = None) -> None:
+        combined.evidence["stages"][name]["result"] = result
+
+    def mac_command(operation: str, command: Any, stage: str) -> dict[str, Any]:
+        if operation == "disconnect":
+            return {"connectionState": "stopped"}
+        if operation == "reconnect":
+            bridge.active_generation = 3
+            frame = {
+                "generation": 3,
+                "ticket": 2,
+                "session_id": "session-3",
+                "visible_width": 347,
+                "visible_height": 580,
+                "coded_width": 352,
+                "coded_height": 592,
+                "viewport_revision": 3,
+                "document_revision": 5,
+            }
+            bridge.frames.append(frame)
+            bridge.acked_tickets.add((3, 2))
+            bridge.ack_receipts.append({"generation": 3, "ticket": 2})
+            return {"connectionState": "connected"}
+        if operation == "status:reconnect_frame":
+            check(bridge.active_generation == 3, "reconnect status must retain generation 3")
+            return {"connectionState": "connected"}
+        if operation == "final_disconnect":
+            bridge.active_generation = 4
+            return {"connectionState": "stopped"}
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    def wait_mac(predicate: Callable[[Any], bool], label: str, stage: str) -> dict[str, Any]:
+        result = combined.mac_command(f"status:{label}", {"op": "status"}, stage)
+        check(predicate(result), "reconnect frame predicate must pass before final disconnect")
+        return result
+
+    combined.record_host_status = record_host_status
+    combined.stage_start = stage_start
+    combined.stage_finish = stage_finish
+    combined.mac_command = mac_command
+    combined.wait_mac = wait_mac
+
+    combined.mac_reconnect()
+    check(bridge.active_generation == 4, "final disconnect must still advance the live generation")
+    check(combined.mac_frame_evidence["generation"] == 3, "frame evidence must snapshot the verified reconnect generation")
+    check(
+        combined.mac_frame_evidence["frames"][-1]["generation"] == 3,
+        "frame evidence must retain generation 3 after final disconnect",
+    )
+    combined.build_side_evidence()
+    mac = combined.evidence["sides"]["mac"]
+    check(mac["session_id"]["value"] == "session-3", "Mac session correlation must survive final disconnect")
+    check(mac["viewport"]["value"] == [347, 580], "Mac viewport correlation must survive final disconnect")
+    check(mac["source_dimensions"]["value"] == [352, 592], "Mac source dimensions must survive final disconnect")
+    check(mac["viewport_revision"]["value"] == 3, "Mac viewport revision must survive final disconnect")
+    check(mac["document_revision"]["value"] == 5, "Mac document revision must survive final disconnect")
+    check(mac["frame_transport_ack"]["value"]["tickets"] == [(3, 2)], "generation 3 transport ACK must survive final disconnect")
+    check(mac["frame_ack"]["status"] == "unknown", "transport ACK must remain distinct from native display ACK")
+
+
 def test_strict_protocol_integers_and_epochs() -> None:
     check(runner.nonnegative_integer(0), "zero must be accepted as a generation integer")
     check(runner.positive_integer(3), "positive frames must be accepted as a ticket integer")
@@ -400,6 +510,7 @@ def main() -> int:
         test_acknowledged_active_frames,
         test_transport_frames_are_separate_from_display_evidence,
         test_combined_side_evidence_does_not_promote_bridge_ack_to_display,
+        test_reconnect_frame_correlation_survives_final_disconnect,
         test_strict_protocol_integers_and_epochs,
         test_candidate_identity_drift_fails_closed,
         test_device_pairing_uses_resolved_adb,

@@ -570,6 +570,7 @@ class CombinedRunner:
         self.host_statuses: list[dict[str, Any]] = []
         self.mac_snapshots: list[dict[str, Any]] = []
         self.mac_operations: list[dict[str, Any]] = []
+        self.mac_frame_evidence: Optional[dict[str, Any]] = None
         self.android_result: Optional[dict[str, Any]] = None
         self.android_install: dict[str, Any] = {}
         self.evidence_dir_ready = False
@@ -1110,6 +1111,33 @@ class CombinedRunner:
         self.abort("MAC_STATUS_TIMEOUT", f"{label}: {last}", owner="AgentBrowser Mac bridge owner", next_action="preserve the last bridge snapshot and endpoint state", stage=stage)
         return {}
 
+    def _capture_mac_frame_evidence(self) -> None:
+        if self.bridge is None:
+            self.mac_frame_evidence = None
+            return
+        active_generation = getattr(self.bridge, "active_generation", None)
+        frames = active_frame_headers(self.bridge)
+        transport_frames = acknowledged_active_frames(self.bridge)
+        ack_receipts = [
+            dict(receipt)
+            for receipt in getattr(self.bridge, "ack_receipts", [])
+            if isinstance(receipt, Mapping)
+            and nonnegative_integer(receipt.get("generation"))
+            and positive_integer(receipt.get("ticket"))
+            and receipt.get("generation") == active_generation
+        ]
+        if not ack_receipts:
+            ack_receipts = [
+                {"generation": frame.get("generation"), "ticket": frame.get("ticket")}
+                for frame in transport_frames
+            ]
+        self.mac_frame_evidence = {
+            "generation": active_generation,
+            "frames": frames,
+            "transport_frames": transport_frames,
+            "ack_receipts": ack_receipts,
+        }
+
     def start_mac(self) -> None:
         self.stage_start("mac_connect")
         assert self.args.mac_bridge_bin is not None and self.fixture_root is not None
@@ -1281,6 +1309,7 @@ class CombinedRunner:
             "mac_reconnect",
         )
         self.record_host_status("mac_reconnected", "mac_reconnect")
+        self._capture_mac_frame_evidence()
         final = self.mac_command("final_disconnect", {"op": "disconnect"}, "mac_reconnect")
         if final.get("connectionState") != "stopped":
             self.abort("MAC_FINAL_DISCONNECT_INVALID", json_text(final), owner="AgentBrowser Mac connection owner", next_action="leave the bridge stopped before cleanup", stage="mac_reconnect")
@@ -1337,21 +1366,13 @@ class CombinedRunner:
                 "reconnect": boolean_evidence(android.get("reconnectPreservesDocument"), ["android-result.json:reconnectPreservesDocument"], "Android result omitted reconnectPreservesDocument"),
             },
         }
-        frames = active_frame_headers(self.bridge)
-        transport_frames = acknowledged_active_frames(self.bridge)
-        ack_receipts = [
-            receipt
-            for receipt in getattr(self.bridge, "ack_receipts", [])
-            if isinstance(receipt, Mapping)
-            and nonnegative_integer(receipt.get("generation"))
-            and positive_integer(receipt.get("ticket"))
-            and receipt.get("generation") == getattr(self.bridge, "active_generation", None)
-        ]
-        if not ack_receipts:
-            ack_receipts = [
-                {"generation": frame.get("generation"), "ticket": frame.get("ticket")}
-                for frame in transport_frames
-            ]
+        frame_evidence = getattr(self, "mac_frame_evidence", None)
+        if frame_evidence is None:
+            self._capture_mac_frame_evidence()
+            frame_evidence = self.mac_frame_evidence
+        frames = frame_evidence.get("frames", []) if isinstance(frame_evidence, Mapping) else []
+        transport_frames = frame_evidence.get("transport_frames", []) if isinstance(frame_evidence, Mapping) else []
+        ack_receipts = frame_evidence.get("ack_receipts", []) if isinstance(frame_evidence, Mapping) else []
         last_frame = frames[-1] if frames else None
         if isinstance(last_frame, Mapping):
             mac_viewport = dimension_evidence(
