@@ -272,6 +272,24 @@ def parse_json_line(line: str) -> Optional[Any]:
         return None
 
 
+def nonnegative_integer(value: Any) -> bool:
+    """Return True only for JSON integers, excluding Python bool."""
+
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def positive_integer(value: Any) -> bool:
+    """Return True only for positive JSON integers, excluding Python bool."""
+
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def control_epoch(value: Any) -> Optional[int]:
+    """Normalize a typed Host control epoch without accepting booleans."""
+
+    return value if nonnegative_integer(value) else None
+
+
 class ProcessPipes:
     """Small selector based pipe reader for children with bounded output."""
 
@@ -574,12 +592,12 @@ class BridgeProcess(ProcessPipes):
         if not isinstance(value, Mapping):
             return
         generation = value.get("generation")
-        if isinstance(generation, int) and generation >= 0:
+        if nonnegative_integer(generation):
             self.active_generation = generation
 
     def fence_active_generation(self) -> None:
         generation = self.active_generation
-        if not isinstance(generation, int) or generation < 0:
+        if not nonnegative_integer(generation):
             return
         self.fenced_generations.add(generation)
         for request_id, frame_key in list(self.ack_requests.items()):
@@ -591,10 +609,10 @@ class BridgeProcess(ProcessPipes):
         if not isinstance(header, Mapping):
             raise ProcessProtocolError("BRIDGE_FRAME_HEADER_INVALID", repr(header))
         ticket = header.get("ticket")
-        if not isinstance(ticket, int) or ticket <= 0:
+        if not positive_integer(ticket):
             raise ProcessProtocolError("BRIDGE_FRAME_TICKET_INVALID", repr(ticket))
         generation = header.get("generation")
-        if not isinstance(generation, int) or generation < 0:
+        if not nonnegative_integer(generation):
             raise ProcessProtocolError("BRIDGE_FRAME_GENERATION_INVALID", repr(generation))
         frame_key = (generation, ticket)
         self.frames.append(
@@ -1520,7 +1538,8 @@ class Runner:
             "status before takeover",
         )
         epoch = observed.get("epoch")
-        if not isinstance(epoch, int):
+        epoch = control_epoch(epoch)
+        if epoch is None:
             self.abort(
                 "CONTROL_EPOCH_MISSING",
                 f"status before takeover has no integer epoch: {observed!r}",
@@ -1553,8 +1572,8 @@ class Runner:
         self.stage_log("atomic_operations", f"receipt takeover: {json_text(takeover)}")
         self.prove("takeover_granted", "bridge entered Host control mode through the typed takeover operation", stage="atomic_operations")
         ready = self._wait_bridge_snapshot(lambda value: value.get("inputReady") is True, "atomic_operations", "INPUT_NOT_READY")
-        epoch = ready.get("epoch")
-        if not isinstance(epoch, int):
+        epoch = control_epoch(ready.get("epoch"))
+        if epoch is None:
             self.abort(
                 "CONTROL_EPOCH_MISSING",
                 f"input-ready snapshot has no integer epoch: {ready!r}",

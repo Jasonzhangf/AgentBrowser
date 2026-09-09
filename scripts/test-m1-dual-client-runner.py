@@ -133,6 +133,68 @@ def test_acknowledged_active_frames() -> None:
         ]
     check(runner.acknowledged_active_frames(Bridge()) == [{"generation": 7, "ticket": 2}], "only active-generation ACKed frames may support Mac evidence")
 
+    class BoolFrameBridge:
+        active_generation = 1
+        acked_tickets = {(1, 2)}
+        frames = [{"generation": True, "ticket": 2}]
+
+    check(runner.acknowledged_active_frames(BoolFrameBridge()) == [], "boolean protocol integers must not project frame evidence")
+
+
+def test_strict_protocol_integers_and_epochs() -> None:
+    check(runner.nonnegative_integer(0), "zero must be accepted as a generation integer")
+    check(runner.positive_integer(3), "positive frames must be accepted as a ticket integer")
+    check(not runner.nonnegative_integer(True), "true must not be accepted as a JSON integer")
+    check(not runner.positive_integer(True), "true must not be accepted as a positive JSON integer")
+    check(not runner.nonnegative_integer("1") and not runner.positive_integer(None), "string and missing values must not be accepted as JSON integers")
+    check(runner.control_epoch(3) == 3, "valid control epoch must normalize")
+    check(runner.control_epoch(True) is None, "boolean control epochs must be rejected before control commands")
+    check(runner.control_epoch(-1) is None and runner.control_epoch("1") is None, "negative or malformed control epochs must be rejected")
+
+
+def test_candidate_identity_drift_fails_closed() -> None:
+    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
+    combined.worktree = runner.ROOT
+    combined.first_failure = None
+    combined.evidence = {
+        "failures": [],
+        "candidate": {
+            "branch": "codex/m1-dual-control-hardening-20260909",
+            "commit": "abc",
+            "tree": "def",
+            "status_before": [],
+        },
+        "stages": {
+            "cleanup": {"result": "running", "started_at": None, "finished_at": None, "details": {}, "first_failure": None},
+        },
+    }
+    original = runner.candidate_git_probes
+
+    def drift(cwd):
+        probes = original(cwd)
+        probes["commit"]["value"] = "drift-commit"
+        return probes
+
+    try:
+        runner.candidate_git_probes = drift
+        check(not combined._verify_candidate_identity_after(), "teardown identity drift must fail closed")
+    finally:
+        runner.candidate_git_probes = original
+    check(combined.evidence["candidate"]["identity_drift_after"].get("commit") == {"before": "abc", "after": "drift-commit"}, "teardown must record the exact drifted identity fields")
+    check(combined.first_failure is not None and combined.first_failure["code"] == "CANDIDATE_IDENTITY_DRIFT", "teardown drift must become a structured failure")
+
+
+def test_device_pairing_uses_resolved_adb() -> None:
+    with tempfile.TemporaryDirectory(prefix="m1-fake-adb-") as raw:
+        fake_adb = pathlib.Path(raw) / "adb"
+        fake_adb.write_text("#!/bin/sh\n", encoding="utf-8")
+        fake_adb.chmod(0o755)
+        combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
+        combined.adb_path = fake_adb.resolve(strict=False)
+        command = combined.device_pairing_command("install", pathlib.Path("/tmp/an-fixture"))
+    check(str(combined.adb_path) in command, "device pairing must receive the exact resolved ADB path")
+    check(command[2:6] == ["--adb", str(combined.adb_path), "install", "/tmp/an-fixture"], "device pairing command must pass the resolved ADB executable explicitly")
+
 
 def test_git_probe_failure_is_distinct() -> None:
     check(runner.git_value(pathlib.Path("/definitely/missing/worktree"), "status") is None, "Git probe failure must remain distinguishable from clean output")
@@ -272,6 +334,9 @@ def main() -> int:
         test_adb_reverse_mapping,
         test_typed_evidence,
         test_acknowledged_active_frames,
+        test_strict_protocol_integers_and_epochs,
+        test_candidate_identity_drift_fails_closed,
+        test_device_pairing_uses_resolved_adb,
         test_git_probe_failure_is_distinct,
         test_schema_and_comparison,
         test_result_classification,

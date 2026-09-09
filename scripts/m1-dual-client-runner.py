@@ -78,10 +78,13 @@ ProcessPipes = _DIRECT.ProcessPipes
 ProcessProtocolError = _DIRECT.ProcessProtocolError
 artifact_identity = _DIRECT.artifact_identity
 bounded_text = _DIRECT.bounded_text
+control_epoch = _DIRECT.control_epoch
 file_sha256 = _DIRECT.file_sha256
 is_rejection = _DIRECT.is_rejection
 loopback_endpoint = _DIRECT.loopback_endpoint
+nonnegative_integer = _DIRECT.nonnegative_integer
 parse_json_line = _DIRECT.parse_json_line
+positive_integer = _DIRECT.positive_integer
 
 
 class RunnerAbort(Exception):
@@ -176,7 +179,7 @@ def dimension_evidence(value: Any, evidence: Sequence[str], reason: str) -> dict
 
 
 def integer_evidence(value: Any, evidence: Sequence[str], reason: str) -> dict[str, Any]:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if not nonnegative_integer(value):
         return unknown(reason)
     return known(value, evidence)
 
@@ -244,12 +247,14 @@ def classify_result(first_failure: Optional[Mapping[str, Any]], claims: Mapping[
 def acknowledged_active_frames(bridge: Any) -> list[dict[str, Any]]:
     active_generation = getattr(bridge, "active_generation", None)
     acknowledged = getattr(bridge, "acked_tickets", set())
-    if not isinstance(active_generation, int) or active_generation < 0:
+    if not nonnegative_integer(active_generation):
         return []
     return [
         dict(frame)
         for frame in getattr(bridge, "frames", [])
         if isinstance(frame, Mapping)
+        and nonnegative_integer(frame.get("generation"))
+        and positive_integer(frame.get("ticket"))
         and frame.get("generation") == active_generation
         and (active_generation, frame.get("ticket")) in acknowledged
     ]
@@ -626,6 +631,46 @@ class CombinedRunner:
             candidate["status_after"] = status.splitlines()
         return True
 
+    def _verify_candidate_identity_after(self) -> bool:
+        candidate = self.evidence["candidate"]
+        probes = candidate_git_probes(self.worktree)
+        candidate["git_probes_after"] = probes
+        if not all(probe["ok"] for probe in probes.values()):
+            self.fail(
+                "GIT_PROBE_FAILED",
+                f"candidate Git probe failed during teardown: {probes}",
+                owner="workspace Git boundary",
+                next_action="restore Git access and rerun",
+                stage="cleanup",
+            )
+            return False
+        after_status = probes["status"]["value"].splitlines()
+        candidate["status_after"] = after_status
+        before = {
+            "branch": candidate.get("branch"),
+            "commit": candidate.get("commit"),
+            "tree": candidate.get("tree"),
+            "status": candidate.get("status_before"),
+        }
+        after = {
+            "branch": probes["branch"]["value"],
+            "commit": probes["commit"]["value"],
+            "tree": probes["tree"]["value"],
+            "status": after_status,
+        }
+        drift = {name: {"before": before[name], "after": after[name]} for name in before if before[name] != after[name]}
+        candidate["identity_drift_after"] = drift
+        if drift:
+            self.fail(
+                "CANDIDATE_IDENTITY_DRIFT",
+                json_text({"stage": "cleanup", "drift": drift}),
+                owner="candidate worktree",
+                next_action="restore the preflight branch, commit, tree, and status before rerun",
+                stage="cleanup",
+            )
+            return False
+        return True
+
     def _prepare_evidence_dir(self) -> None:
         requested = self.args.requested_evidence_dir
         if self.worktree == requested or self.worktree in requested.parents:
@@ -843,6 +888,18 @@ class CombinedRunner:
             environment["PATH"] = str(self.adb_path.parent) + os.pathsep + environment.get("PATH", "")
         return environment
 
+    def device_pairing_command(self, action: str, fixture_root: pathlib.Path) -> list[str]:
+        if self.adb_path is None:
+            raise RuntimeError("ADB executable was not resolved before device pairing")
+        return [
+            sys.executable,
+            str(ROOT / "scripts" / "device-pairing.py"),
+            "--adb",
+            str(self.adb_path),
+            action,
+            str(fixture_root),
+        ]
+
     def configure_adb_reverse(self, stage: str) -> None:
         endpoint_info = self.evidence["fixture"].get("endpoint_info")
         port = endpoint_info.get("port") if isinstance(endpoint_info, Mapping) else None
@@ -962,7 +1019,7 @@ class CombinedRunner:
         if self.fixture_root is None:
             self.abort("PAIRING_FIXTURE_MISSING", "fixture root unavailable before Android pairing", owner="combined runner", next_action="start the same fixture before installing pairing", stage="android_install")
         result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "device-pairing.py"), "install", str(self.fixture_root)],
+            self.device_pairing_command("install", self.fixture_root),
             cwd=str(ROOT),
             env=self.pairing_environment(),
             stdout=subprocess.PIPE,
@@ -1151,16 +1208,16 @@ class CombinedRunner:
     def mac_control(self) -> None:
         self.stage_start("mac_control")
         before = self.mac_command("status_before_takeover", {"op": "status"}, "mac_control")
-        epoch = before.get("epoch")
-        if not isinstance(epoch, int):
+        epoch = control_epoch(before.get("epoch"))
+        if epoch is None:
             self.abort("MAC_CONTROL_EPOCH_MISSING", json_text(before), owner="Obscura Host control owner", next_action="return the typed control epoch before takeover", stage="mac_control")
         takeover = self.mac_command("takeover", {"op": "takeover", "epoch": epoch}, "mac_control")
         self.mac_operations.append({"operation": "takeover", "before": before, "after": takeover})
         if takeover.get("connectionState") != "connected" or takeover.get("controlMode") != "control":
             self.abort("MAC_TAKEOVER_FAILED", json_text(takeover), owner="Obscura Host control owner", next_action="preserve the typed takeover result and Host status", stage="mac_control")
         self.record_host_status("mac_takeover", "mac_control")
-        granted_epoch = takeover.get("epoch")
-        if not isinstance(granted_epoch, int):
+        granted_epoch = control_epoch(takeover.get("epoch"))
+        if granted_epoch is None:
             self.abort("MAC_GRANTED_EPOCH_MISSING", json_text(takeover), owner="Obscura Host control owner", next_action="return the new control epoch after takeover", stage="mac_control")
         release = self.mac_command("release", {"op": "release", "epoch": granted_epoch}, "mac_control")
         self.mac_operations.append({"operation": "release", "before": takeover, "after": release})
@@ -1404,7 +1461,7 @@ class CombinedRunner:
             pairing_log = self.args.evidence_dir / "android-pairing-remove.log"
             try:
                 result = subprocess.run(
-                    [sys.executable, str(ROOT / "scripts" / "device-pairing.py"), "remove", str(self.fixture_root)],
+                    self.device_pairing_command("remove", self.fixture_root),
                     cwd=str(ROOT),
                     env=self.pairing_environment(),
                     stdout=subprocess.PIPE,
@@ -1560,12 +1617,7 @@ class CombinedRunner:
                         next_action="preserve child identities and complete targeted cleanup for this run",
                         stage="cleanup",
                     )
-                status_after = git_value(self.worktree, "status", "--porcelain=v1", "--untracked-files=all")
-                if status_after is None:
-                    self.fail("GIT_PROBE_FAILED", "git status failed after cleanup", owner="workspace Git boundary", next_action="restore Git access and rerun", stage="cleanup")
-                    self.evidence["candidate"]["status_after"] = None
-                else:
-                    self.evidence["candidate"]["status_after"] = status_after.splitlines()
+                self._verify_candidate_identity_after()
                 self.evidence["finished_at"] = utc_now()
                 self.evidence["process_logs"] = {
                     label: [{"stream": stream, "line": line} for stream, line in process.logs]
