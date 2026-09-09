@@ -1339,6 +1339,28 @@ class CombinedRunner:
         }
         frames = active_frame_headers(self.bridge)
         transport_frames = acknowledged_active_frames(self.bridge)
+        ack_receipts = [
+            receipt
+            for receipt in getattr(self.bridge, "ack_receipts", [])
+            if isinstance(receipt, Mapping)
+            and nonnegative_integer(receipt.get("generation"))
+            and positive_integer(receipt.get("ticket"))
+        ]
+        if not ack_receipts:
+            ack_receipts = [
+                {"generation": frame.get("generation"), "ticket": frame.get("ticket")}
+                for frame in transport_frames
+            ]
+        mac_status = next(
+            (
+                snapshot.get("value")
+                for snapshot in reversed(getattr(self, "mac_snapshots", []))
+                if isinstance(snapshot.get("value"), Mapping)
+                and isinstance(snapshot["value"].get("sessionId"), str)
+                and snapshot["value"].get("sessionId")
+            ),
+            None,
+        )
         last_frame = frames[-1] if frames else None
         if isinstance(last_frame, Mapping):
             mac_viewport = dimension_evidence(
@@ -1357,9 +1379,9 @@ class CombinedRunner:
         else:
             mac_viewport = unknown("Mac bridge emitted no active-generation frame header")
             mac_source = unknown("Mac bridge emitted no active-generation frame header")
-            mac_session = None
-            mac_vr = None
-            mac_dr = None
+            mac_session = mac_status.get("sessionId") if isinstance(mac_status, Mapping) else None
+            mac_vr = mac_status.get("viewportRevision") if isinstance(mac_status, Mapping) else None
+            mac_dr = mac_status.get("documentRevision") if isinstance(mac_status, Mapping) else None
         mac_side = {
             "session_id": known(mac_session, ["Mac bridge frame header"]) if isinstance(mac_session, str) and mac_session else unknown("Mac bridge active-generation frame omitted sessionId"),
             "attachment": unknown("Mac bridge snapshot intentionally omits numeric attachment_id; control ownership is exposed as controlMode"),
@@ -1369,7 +1391,13 @@ class CombinedRunner:
             "document_revision": integer_evidence(mac_dr, ["Mac bridge frame header"], "Mac bridge active-generation frame emitted no document revision"),
             "control_epoch": unknown("Mac bridge frame header does not emit control epoch"),
             "frame_ack": unknown("combined runner sends ack_frame to advance bridge transport but does not observe native display"),
-            "frame_transport_ack": known({"count": len(transport_frames), "tickets": sorted({(frame.get("generation"), frame.get("ticket")) for frame in transport_frames})}, ["Mac bridge transport acknowledgements"]) if transport_frames else unknown("Mac bridge emitted no transport-acknowledged active-generation frame"),
+            "frame_transport_ack": known(
+                {
+                    "count": len(ack_receipts),
+                    "tickets": sorted({(item.get("generation"), item.get("ticket")) for item in ack_receipts}),
+                },
+                ["Mac bridge transport acknowledgement receipts"],
+            ) if ack_receipts else unknown("Mac bridge emitted no transport acknowledgement receipt"),
             "display": unknown("combined runner does not instantiate AppKit or VideoToolbox"),
             "actions": {
                 "observe": known(True, ["Mac bridge observe command and connected observer snapshot"]),
