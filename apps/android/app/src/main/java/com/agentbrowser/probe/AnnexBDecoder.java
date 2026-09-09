@@ -161,10 +161,24 @@ public final class AnnexBDecoder {
     }
 
     static void validateSpsDimensions(SpsGeometry sps,int codedWidth,int codedHeight,int visibleWidth,int visibleHeight) {
-        if(sps.displayWidth!=codedWidth || sps.displayHeight!=codedHeight
+        if(sps.codedWidth!=codedWidth || sps.codedHeight!=codedHeight
                 || visibleWidth>sps.displayWidth || visibleHeight>sps.displayHeight)
             throw new IllegalArgumentException("BITSTREAM_DIMENSIONS_MISMATCH: display="
                 +sps.displayWidth+"x"+sps.displayHeight+" coded="+sps.codedWidth+"x"+sps.codedHeight
+                +" declared="+codedWidth+"x"+codedHeight);
+    }
+
+    static void validateCodecOutput(SpsGeometry sps,int codedWidth,int codedHeight,
+            int actualCodedWidth,int actualCodedHeight,int cropLeft,int cropTop,int cropRight,int cropBottom) {
+        long displayWidth=(long)cropRight-cropLeft+1L;
+        long displayHeight=(long)cropBottom-cropTop+1L;
+        if(actualCodedWidth!=codedWidth || actualCodedHeight!=codedHeight
+                || cropLeft<0 || cropTop<0 || cropRight<cropLeft || cropBottom<cropTop
+                || cropRight>=actualCodedWidth || cropBottom>=actualCodedHeight
+                || displayWidth!=sps.displayWidth || displayHeight!=sps.displayHeight)
+            throw new IllegalArgumentException("BITSTREAM_DIMENSIONS_MISMATCH: output="
+                +actualCodedWidth+"x"+actualCodedHeight+" crop="+cropLeft+","+cropTop+"-"+cropRight+","+cropBottom
+                +" sps="+sps.codedWidth+"x"+sps.codedHeight+"/"+sps.displayWidth+"x"+sps.displayHeight
                 +" declared="+codedWidth+"x"+codedHeight);
     }
 
@@ -273,10 +287,14 @@ public final class AnnexBDecoder {
                 if(index==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat actual=active.getOutputFormat();
                     // Codec buffers can include macroblock padding beyond the SPS display rectangle.
-                    int width=actual.getInteger("crop-right",actual.getInteger(MediaFormat.KEY_WIDTH)-1)-actual.getInteger("crop-left",0)+1;
-                    int height=actual.getInteger("crop-bottom",actual.getInteger(MediaFormat.KEY_HEIGHT)-1)-actual.getInteger("crop-top",0)+1;
-                    if(width!=unit.codedWidth || height!=unit.codedHeight)
-                        throw new IllegalArgumentException("BITSTREAM_DIMENSIONS_MISMATCH: "+actual);
+                    int actualCodedWidth=actual.getInteger(MediaFormat.KEY_WIDTH);
+                    int actualCodedHeight=actual.getInteger(MediaFormat.KEY_HEIGHT);
+                    int cropLeft=actual.getInteger("crop-left",0);
+                    int cropTop=actual.getInteger("crop-top",0);
+                    int cropRight=actual.getInteger("crop-right",actualCodedWidth-1);
+                    int cropBottom=actual.getInteger("crop-bottom",actualCodedHeight-1);
+                    validateCodecOutput(sps,unit.codedWidth,unit.codedHeight,
+                        actualCodedWidth,actualCodedHeight,cropLeft,cropTop,cropRight,cropBottom);
                 } else if(index>=0) {
                     output=info.size>0;
                     active.releaseOutputBuffer(index,output && current(token));
