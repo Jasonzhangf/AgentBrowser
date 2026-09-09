@@ -155,7 +155,7 @@ export function createRelayServer(options: RelayOptions) {
           if (pair[0] && pair[1]) {
             for (const endpoint of pair) send(endpoint!, {type: 'channel.ready', abi: RELAY_ABI_ID, tunnelId: tunnel.id, channel});
           }
-          ws.on('message', (raw, binary) => {
+          ws.on('message', (raw: WebSocket.RawData, binary: boolean) => {
             const other = pair[side === 0 ? 1 : 0];
             try {
               if (!tunnel.peers.every(validPeer)) throw new RelayError('UNAUTHORIZED', 'Authorization expired');
@@ -178,7 +178,7 @@ export function createRelayServer(options: RelayOptions) {
         let peer: Peer | undefined;
         const authTimeout = setTimeout(() => ws.close(4401, 'Authentication timeout'), 5000);
         send(ws, {type: 'auth.challenge', abi: RELAY_ABI_ID, nonce, path});
-        ws.on('message', (raw, binary) => {
+        ws.on('message', (raw: WebSocket.RawData, binary: boolean) => {
           try {
             if (binary || raw.toString().length > 64 * 1024) throw new RelayError('INVALID_MESSAGE', 'Control JSON required');
             let parsed: unknown;
