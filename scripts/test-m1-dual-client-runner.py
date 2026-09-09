@@ -204,6 +204,58 @@ def test_dry_run() -> None:
         check(evidence["result"] != "pass" and evidence["unknown"], "dry-run must expose unknown runtime claims")
 
 
+def test_instrumentation_summary_validation() -> None:
+    def output(test_count: int, summary: str | None, class_name: str = runner.DEFAULT_ANDROID_CLASS, failure: bool = False) -> bytes:
+        lines = [
+            f"INSTRUMENTATION_STATUS: class={class_name}",
+            "INSTRUMENTATION_STATUS: current=1",
+            f"INSTRUMENTATION_STATUS: numtests={test_count}",
+            "INSTRUMENTATION_STATUS: test=testImeCompositionCancel",
+            f"INSTRUMENTATION_STATUS_CODE: {-2 if failure else 0}",
+        ]
+        if test_count > 1:
+            lines.extend(
+                [
+                    f"INSTRUMENTATION_STATUS: class={class_name}",
+                    f"INSTRUMENTATION_STATUS: current={test_count}",
+                    f"INSTRUMENTATION_STATUS: numtests={test_count}",
+                    "INSTRUMENTATION_STATUS: test=testRealNetworkControlAndFrames",
+                    f"INSTRUMENTATION_STATUS_CODE: {-2 if failure else 0}",
+                ]
+            )
+        lines.extend(["INSTRUMENTATION_RESULT: stream="])
+        if failure:
+            lines.append("FAILURES!!!")
+        if summary is not None:
+            lines.append(summary)
+        lines.append("INSTRUMENTATION_CODE: -1")
+        return ("\n".join(lines) + "\n").encode()
+
+    one_test = runner.validate_instrumentation_output(output(1, "OK (1 test)"))
+    check(one_test["status"] == "failed", "one-test summary must fail the fixed two-test contract")
+    check(one_test["error"]["code"] == "TEST_COUNT_MISMATCH", "one-test failure must preserve a structured count error")
+
+    two_tests = runner.validate_instrumentation_output(output(2, "OK (2 tests)"))
+    check(two_tests["status"] == "passed", "the complete two-test summary must pass")
+    check(two_tests["observed"]["test_count"] == 2, "the passed result must retain the observed test count")
+
+    wrong_completion_code = runner.validate_instrumentation_output(output(2, "OK (2 tests)").replace(b"INSTRUMENTATION_CODE: -1", b"INSTRUMENTATION_CODE: 0"))
+    check(wrong_completion_code["status"] == "failed", "an unexpected instrumentation completion code must fail")
+    check(wrong_completion_code["error"]["code"] == "INSTRUMENTATION_CODE_INVALID", "unexpected completion code must preserve a structured error")
+
+    failed_output = runner.validate_instrumentation_output(output(2, "FAILURES!!!", failure=True))
+    check(failed_output["status"] == "failed", "instrumentation failure output must fail")
+    check(failed_output["error"]["code"] == "INSTRUMENTATION_FAILURE", "instrumentation failure must preserve its structured error")
+
+    missing_summary = runner.validate_instrumentation_output(output(2, None))
+    check(missing_summary["status"] == "failed", "missing summary must fail closed")
+    check(missing_summary["error"]["code"] == "SUMMARY_MISSING", "missing summary must preserve a structured error")
+
+    wrong_entry = runner.validate_instrumentation_output(output(2, "OK (2 tests)", "com.example.Other"))
+    check(wrong_entry["status"] == "failed", "an unexpected instrumentation class must fail")
+    check(wrong_entry["error"]["code"] == "TEST_ENTRY_MISMATCH", "unexpected class must preserve a structured entry error")
+
+
 def main() -> int:
     tests = (
         test_argument_validation,
@@ -217,6 +269,7 @@ def main() -> int:
         test_write_exclusive,
         test_schema_dry_run_switch,
         test_dry_run,
+        test_instrumentation_summary_validation,
     )
     for test in tests:
         test()
