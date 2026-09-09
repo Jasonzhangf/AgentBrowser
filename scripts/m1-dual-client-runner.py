@@ -21,7 +21,6 @@ import math
 import os
 import pathlib
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -29,14 +28,14 @@ import time
 import uuid
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DIRECT_REPLAY = ROOT / "scripts" / "local-direct" / "replay.py"
 SCHEMA = "agentbrowser.m1.dual-client-runner/v1"
-DEFAULT_ANDROID_CLASS = "com.agentbrowser.probe.NetworkDeviceTest"
+DEFAULT_ANDROID_CLASS = EXPECTED_TEST_CLASS
 DEFAULT_TEST_COMPONENT = "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"
-EXPECTED_ANDROID_TEST_COUNT = 2
-EXPECTED_ANDROID_SUMMARY = f"OK ({EXPECTED_ANDROID_TEST_COUNT} tests)"
 STAGES = (
     "preflight",
     "fixture_start",
@@ -198,83 +197,6 @@ def combined_status(items: Mapping[str, Mapping[str, Any]]) -> str:
     if all(item.get("status") in {"proved", "known"} for item in items.values()):
         return "proved"
     return "unknown"
-
-
-def validate_instrumentation_output(output: bytes | str) -> dict[str, Any]:
-    """Validate the fixed NetworkDeviceTest instrumentation result contract."""
-
-    text = output.decode(errors="replace") if isinstance(output, bytes) else output
-    class_values = re.findall(r"^INSTRUMENTATION_STATUS: class=([^\r\n]+)\r?$", text, re.MULTILINE)
-    numtests_values = [
-        int(value)
-        for value in re.findall(r"^INSTRUMENTATION_STATUS: numtests=([0-9]+)\r?$", text, re.MULTILINE)
-    ]
-    test_values = re.findall(r"^INSTRUMENTATION_STATUS: test=([^\r\n]+)\r?$", text, re.MULTILINE)
-    status_codes = [
-        int(value)
-        for value in re.findall(r"^INSTRUMENTATION_STATUS_CODE: (-?[0-9]+)\r?$", text, re.MULTILINE)
-    ]
-    summary_matches = list(re.finditer(r"^OK \(([0-9]+) (tests?)\)\r?$", text, re.MULTILINE))
-    summary_count = int(summary_matches[0].group(1)) if summary_matches else None
-    summary = summary_matches[0].group(0).rstrip("\r") if summary_matches else None
-    classes = list(dict.fromkeys(class_values))
-    tests = list(dict.fromkeys(test_values))
-    result_markers = re.findall(r"^INSTRUMENTATION_RESULT: stream=.*\r?$", text, re.MULTILINE)
-    instrumentation_codes = [
-        int(value)
-        for value in re.findall(r"^INSTRUMENTATION_CODE: (-?[0-9]+)\r?$", text, re.MULTILINE)
-    ]
-    observed = {
-        "classes": classes,
-        "numtests": numtests_values,
-        "tests": tests,
-        "test_count": summary_count,
-        "summary": summary,
-        "status_codes": status_codes,
-        "completed_tests": status_codes.count(0),
-        "result_markers": len(result_markers),
-        "instrumentation_codes": instrumentation_codes,
-        "failure_markers": [line for line in text.splitlines() if line == "FAILURES!!!"],
-    }
-    expected = {
-        "class": DEFAULT_ANDROID_CLASS,
-        "test_count": EXPECTED_ANDROID_TEST_COUNT,
-        "summary": EXPECTED_ANDROID_SUMMARY,
-        "instrumentation_code": -1,
-    }
-
-    def invalid(code: str, message: str) -> dict[str, Any]:
-        return {"status": "failed", "ok": False, "error": {"code": code, "message": message}, "expected": expected, "observed": observed}
-
-    if observed["failure_markers"] or any(code < 0 for code in status_codes):
-        return invalid("INSTRUMENTATION_FAILURE", "instrumentation reported a failing test")
-    if not summary_matches:
-        return invalid("SUMMARY_MISSING", "instrumentation output has no exact success summary")
-    if len(summary_matches) != 1:
-        return invalid("SUMMARY_MULTIPLE", "instrumentation output has multiple success summaries")
-    if classes != [DEFAULT_ANDROID_CLASS]:
-        return invalid("TEST_ENTRY_MISMATCH", "instrumentation output does not identify the fixed NetworkDeviceTest entry")
-    if not numtests_values or any(value != EXPECTED_ANDROID_TEST_COUNT for value in numtests_values):
-        return invalid("TEST_COUNT_MISMATCH", "instrumentation numtests does not match the fixed two-test contract")
-    if summary_count != EXPECTED_ANDROID_TEST_COUNT:
-        return invalid("TEST_COUNT_MISMATCH", "instrumentation success summary does not match the fixed two-test contract")
-    if len(tests) != EXPECTED_ANDROID_TEST_COUNT:
-        return invalid("TEST_COUNT_MISMATCH", "instrumentation test entries do not match the fixed two-test contract")
-    if summary != EXPECTED_ANDROID_SUMMARY:
-        return invalid("SUMMARY_INVALID", "instrumentation success summary is not the fixed expected summary")
-    if observed["completed_tests"] != EXPECTED_ANDROID_TEST_COUNT:
-        return invalid("TEST_COMPLETION_MISSING", "instrumentation did not report completion for every expected test")
-    if not result_markers:
-        return invalid("RESULT_MARKER_MISSING", "instrumentation output has no result marker")
-    if len(result_markers) != 1:
-        return invalid("RESULT_MARKER_MULTIPLE", "instrumentation output has multiple result markers")
-    if not instrumentation_codes:
-        return invalid("INSTRUMENTATION_CODE_MISSING", "instrumentation output has no instrumentation code")
-    if len(instrumentation_codes) != 1:
-        return invalid("INSTRUMENTATION_CODE_MULTIPLE", "instrumentation output has multiple instrumentation codes")
-    if instrumentation_codes != [expected["instrumentation_code"]]:
-        return invalid("INSTRUMENTATION_CODE_INVALID", "instrumentation output did not report the expected completion code")
-    return {"status": "passed", "ok": True, "error": None, "expected": expected, "observed": observed}
 
 
 def compare_field(field: str, sides: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
@@ -1201,12 +1123,12 @@ class CombinedRunner:
         self.android_log_handle.close()
         self.android_log_handle = None
         output = log_path.read_bytes()
-        instrumentation = validate_instrumentation_output(output)
-        self.evidence["events"]["android"].append({"event": "instrumentation_validation", "observed_at": utc_now(), "value": instrumentation})
-        if code != 0 or instrumentation["status"] != "passed":
+        instrumentation = parse_instrumentation_result(output)
+        self.evidence["events"]["android"].append({"event": "instrumentation_validation", "observed_at": utc_now(), "value": instrumentation.to_dict()})
+        if code != 0 or not instrumentation.ok:
             self.abort(
                 "ANDROID_INSTRUMENTATION_FAILED",
-                json_text({"exit_code": code, "validation": instrumentation, "output": bounded_text(output)}),
+                json_text({"exit_code": code, "validation": instrumentation.to_dict(), "output": bounded_text(output)}),
                 owner="Android client owner",
                 next_action="preserve Android instrumentation output and first failing test",
                 stage="android_replay",
