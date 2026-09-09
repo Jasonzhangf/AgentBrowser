@@ -48,9 +48,10 @@ workspace or package input. These failures are retained as build evidence
 rather than treated as a fixture pass.
 
 Bridge mode drives the framed `AgentBrowserMacBridge` process and checks the
-direct connection, an acknowledged Annex B frame, click/input/scroll response
-snapshots, Host fixture state, disconnect, reconnect, and page-state
-retention:
+direct connection, a transport-acknowledged Annex B frame, click/input/scroll
+response snapshots, Host fixture state, disconnect, reconnect, and page-state
+retention. The bridge-mode ACK keeps the framed transport moving; it does not
+invoke VideoToolbox or prove a native display.
 
 ```sh
 python3 scripts/local-direct/replay.py \
@@ -115,8 +116,9 @@ their executable command before a targeted SIGTERM; SIGKILL is attempted only
 after the same identity check. The fixture's `quit` command is attempted first.
 
 Exit `0` means the selected replay completed. Bridge mode reports
-`result=bridge_transport_pass` and explicitly leaves the AppKit surface as
-unknown; it is not an AppKit UI admission. AppKit mode reports `result=pass`
-only after the complete event stream succeeds. Missing entrypoints, relay
-paths, malformed framing, missing receipts, changed page state, and cleanup
-failures are non-zero and preserve the first failure in `evidence.json`.
+`result=bridge_transport_pass`, records `frame_transport_ack`, and leaves
+native display evidence as unknown; it is not an AppKit UI admission. AppKit
+mode reports `result=pass` only after the complete event stream succeeds.
+Missing entrypoints, relay paths, malformed framing, missing receipts, changed
+page state, and cleanup failures are non-zero and preserve the first failure in
+`evidence.json`.

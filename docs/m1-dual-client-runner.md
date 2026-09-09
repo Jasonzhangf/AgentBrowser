@@ -101,7 +101,9 @@ The stages are recorded in `evidence.json` in this order:
    compares installed bytes with each local artifact, and installs the same
    fixture pairing.
 4. `mac_connect` starts the Mac bridge with that pairing, connects in Host
-   observation mode, drains framed media, and acknowledges displayed frames.
+   observation mode, drains framed media, and sends transport acknowledgements
+   so the bridge can advance. This runner has no AppKit or VideoToolbox display
+   observer, so this stage cannot prove a native frame was displayed.
 5. `android_replay` runs `NetworkDeviceTest` with the fixture URL and run ID.
    While it runs, the runner keeps polling the Mac bridge and Host status so
    neither output pipe becomes a hidden backpressure point.
@@ -128,7 +130,7 @@ The top-level `evidence.json` has the schema identifier
 | --- | --- |
 | `fixture` / `sides.host` | fixture artifact, endpoint, Session, attachment count, Host viewport, document and viewport revisions, and control epoch from typed `SessionStatus` |
 | `android-result.json` / `sides.android` | the instrumentation `runId`, Session, measured CSS and source dimensions, and the flags emitted by `NetworkDeviceTest` for navigation, rotation, composition, disconnect, and reconnect |
-| Mac bridge / `sides.mac` | bridge snapshots, framed media headers, generation, Session, coded and visible dimensions, revisions, ACK tickets, control receipts, disconnect, and reconnect |
+| Mac bridge / `sides.mac` | bridge snapshots, framed media headers, generation, Session, coded and visible dimensions, revisions, transport ACK tickets, control receipts, disconnect, and reconnect; native display is a separate AppKit evidence source |
 
 Every side field is either an evidence-bearing object with `status=known` and
 its source list, or an explicit `status=unknown` object with a reason. The
@@ -145,7 +147,9 @@ side.
   export them;
 - `viewport_revision`, `document_revision`, and `control_epoch` require all
   three typed values;
-- `frame_ack` requires each side to export display acknowledgement evidence.
+- `frame_ack` requires each side to export native display acknowledgement
+  evidence. The Mac bridge ACK emitted by this runner is recorded separately as
+  `frame_transport_ack`; it only advances the bridge's framed transport.
 
 `compare_field()` returns `proved` only when every side is known and equal. A
 missing side returns `unknown`; unequal known values return `failed`. A required
@@ -173,6 +177,8 @@ one run. It cannot promote any of those layers into another layer:
   public-network result;
 - a fixture status or signal does not prove real media display or operation
   completion;
+- the combined runner's `ack_frame` response and `renderedFrames` counter do not
+  prove that Annex-B bytes reached VideoToolbox or an AppKit surface;
 - a Mac frame ACK does not prove Android rendered the same frame;
 - a source, configuration, or health record does not prove integration, review,
   merge, push, or release.

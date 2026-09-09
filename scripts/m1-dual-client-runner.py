@@ -85,6 +85,8 @@ loopback_endpoint = _DIRECT.loopback_endpoint
 nonnegative_integer = _DIRECT.nonnegative_integer
 parse_json_line = _DIRECT.parse_json_line
 positive_integer = _DIRECT.positive_integer
+active_frame_headers = _DIRECT.active_frame_headers
+acknowledged_active_frames = _DIRECT.acknowledged_active_frames
 
 
 class RunnerAbort(Exception):
@@ -244,22 +246,6 @@ def classify_result(first_failure: Optional[Mapping[str, Any]], claims: Mapping[
     return "pass"
 
 
-def acknowledged_active_frames(bridge: Any) -> list[dict[str, Any]]:
-    active_generation = getattr(bridge, "active_generation", None)
-    acknowledged = getattr(bridge, "acked_tickets", set())
-    if not nonnegative_integer(active_generation):
-        return []
-    return [
-        dict(frame)
-        for frame in getattr(bridge, "frames", [])
-        if isinstance(frame, Mapping)
-        and nonnegative_integer(frame.get("generation"))
-        and positive_integer(frame.get("ticket"))
-        and frame.get("generation") == active_generation
-        and (active_generation, frame.get("ticket")) in acknowledged
-    ]
-
-
 def schema_document() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -281,7 +267,28 @@ def schema_document() -> dict[str, Any]:
             "schema": {"const": SCHEMA},
             "run_id": {"type": "string", "minLength": 1},
             "result": {"enum": ["pending", "dry_run", "pass", "partial", "failed"]},
-            "sides": {"type": "object", "required": ["host", "android", "mac"]},
+            "sides": {
+                "type": "object",
+                "required": ["host", "android", "mac"],
+                "properties": {
+                    "mac": {
+                        "type": "object",
+                        "properties": {
+                            "frame_ack": {
+                                "description": "Native display acknowledgement; bridge transport ACK is not display evidence"
+                            },
+                            "frame_transport_ack": {
+                                "description": "ACK response used to advance the framed bridge transport"
+                            },
+                            "display": {
+                                "description": "Independent native display evidence from an AppKit or VideoToolbox observer"
+                            },
+                        },
+                        "additionalProperties": True,
+                    }
+                },
+                "additionalProperties": True,
+            },
             "cross_side": {"type": "object"},
             "required_claims": {"type": "object"},
         },
@@ -1117,9 +1124,25 @@ class CombinedRunner:
         if not isinstance(session, str) or not session:
             self.abort("MAC_SESSION_ID_MISSING", json_text(connected), owner="AgentBrowser Mac bridge owner", next_action="return the Host Session ID in the bridge snapshot", stage="mac_connect")
         self.mac_command("observe", {"op": "observe"}, "mac_connect")
-        displayed = self.wait_mac(lambda value: value.get("renderedFrames", 0) > 0 and bool(self.bridge and self.bridge.acked_tickets), "first_frame", "mac_connect")
+        transport_frame = self.wait_mac(
+            lambda value: bool(self.bridge and acknowledged_active_frames(self.bridge)),
+            "first_frame",
+            "mac_connect",
+        )
         self.record_host_status("mac_observe", "mac_connect")
-        self.stage_finish("mac_connect", "passed", {"session_id": session, "displayed": displayed, "acks": len(self.bridge.acked_tickets) if self.bridge else 0})
+        self.stage_finish(
+            "mac_connect",
+            "passed",
+            {
+                "session_id": session,
+                "transport_frame": transport_frame,
+                "transport_acknowledgements": len(self.bridge.acked_tickets) if self.bridge else 0,
+                "display": {
+                    "status": "unknown",
+                    "reason": "combined runner has no AppKit or VideoToolbox display observer",
+                },
+            },
+        )
 
     def sample_clients_during_android(self) -> None:
         if self.bridge is not None and self.bridge.proc.poll() is None:
@@ -1239,7 +1262,7 @@ class CombinedRunner:
         if reconnected.get("connectionState") != "connected":
             reconnected = self.wait_mac(lambda value: value.get("connectionState") == "connected", "reconnect", "mac_reconnect")
         self.wait_mac(
-            lambda value: value.get("renderedFrames", 0) > 0
+            lambda value: bool(self.bridge and acknowledged_active_frames(self.bridge))
             and (len(self.bridge.frames) if self.bridge is not None else 0) > before_frames
             and (len(self.bridge.acked_tickets) if self.bridge is not None else 0) > before_acks,
             "reconnect_frame",
@@ -1302,7 +1325,8 @@ class CombinedRunner:
                 "reconnect": boolean_evidence(android.get("reconnectPreservesDocument"), ["android-result.json:reconnectPreservesDocument"], "Android result omitted reconnectPreservesDocument"),
             },
         }
-        frames = acknowledged_active_frames(self.bridge)
+        frames = active_frame_headers(self.bridge)
+        transport_frames = acknowledged_active_frames(self.bridge)
         last_frame = frames[-1] if frames else None
         if isinstance(last_frame, Mapping):
             mac_viewport = dimension_evidence(
@@ -1319,20 +1343,22 @@ class CombinedRunner:
             mac_vr = last_frame.get("viewport_revision")
             mac_dr = last_frame.get("document_revision")
         else:
-            mac_viewport = unknown("Mac bridge emitted no acknowledged active-generation frame header")
-            mac_source = unknown("Mac bridge emitted no acknowledged active-generation frame header")
+            mac_viewport = unknown("Mac bridge emitted no active-generation frame header")
+            mac_source = unknown("Mac bridge emitted no active-generation frame header")
             mac_session = None
             mac_vr = None
             mac_dr = None
         mac_side = {
-            "session_id": known(mac_session, ["Mac bridge acknowledged frame header"]) if isinstance(mac_session, str) and mac_session else unknown("Mac bridge acknowledged active-generation frame omitted sessionId"),
+            "session_id": known(mac_session, ["Mac bridge frame header"]) if isinstance(mac_session, str) and mac_session else unknown("Mac bridge active-generation frame omitted sessionId"),
             "attachment": unknown("Mac bridge snapshot intentionally omits numeric attachment_id; control ownership is exposed as controlMode"),
             "viewport": mac_viewport,
             "source_dimensions": mac_source,
-            "viewport_revision": integer_evidence(mac_vr, ["Mac bridge acknowledged frame header"], "Mac bridge acknowledged active-generation frame emitted no viewport revision"),
-            "document_revision": integer_evidence(mac_dr, ["Mac bridge acknowledged frame header"], "Mac bridge acknowledged active-generation frame emitted no document revision"),
-            "control_epoch": unknown("Mac bridge acknowledged frame header does not emit control epoch"),
-            "frame_ack": known({"count": len(frames), "tickets": sorted({(frame.get("generation"), frame.get("ticket")) for frame in frames})}, ["Mac bridge acknowledged active-generation frames"]) if frames else unknown("Mac bridge emitted no acknowledged active-generation frame"),
+            "viewport_revision": integer_evidence(mac_vr, ["Mac bridge frame header"], "Mac bridge active-generation frame emitted no viewport revision"),
+            "document_revision": integer_evidence(mac_dr, ["Mac bridge frame header"], "Mac bridge active-generation frame emitted no document revision"),
+            "control_epoch": unknown("Mac bridge frame header does not emit control epoch"),
+            "frame_ack": unknown("combined runner sends ack_frame to advance bridge transport but does not observe native display"),
+            "frame_transport_ack": known({"count": len(transport_frames), "tickets": sorted({(frame.get("generation"), frame.get("ticket")) for frame in transport_frames})}, ["Mac bridge transport acknowledgements"]) if transport_frames else unknown("Mac bridge emitted no transport-acknowledged active-generation frame"),
+            "display": unknown("combined runner does not instantiate AppKit or VideoToolbox"),
             "actions": {
                 "observe": known(True, ["Mac bridge observe command and connected observer snapshot"]),
                 "takeover": known(any(item.get("operation") == "takeover" for item in self.mac_operations), ["Mac bridge takeover response"]),
@@ -1345,7 +1371,7 @@ class CombinedRunner:
                 ),
                 "reconnect": boolean_evidence(
                     True if self.evidence["stages"]["mac_reconnect"]["result"] == "passed" else None,
-                    ["Mac bridge reconnect frame and ACK"],
+                    ["Mac bridge reconnect frame transport acknowledgement"],
                     "Mac bridge reconnect was not observed",
                 ),
             },

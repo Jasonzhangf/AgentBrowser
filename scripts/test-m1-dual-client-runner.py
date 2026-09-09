@@ -141,6 +141,66 @@ def test_acknowledged_active_frames() -> None:
     check(runner.acknowledged_active_frames(BoolFrameBridge()) == [], "boolean protocol integers must not project frame evidence")
 
 
+def test_transport_frames_are_separate_from_display_evidence() -> None:
+    class Bridge:
+        active_generation = 4
+        acked_tickets = {(4, 2)}
+        frames = [
+            {"generation": 3, "ticket": 8},
+            {"generation": 4, "ticket": 1},
+            {"generation": 4, "ticket": 2},
+        ]
+
+    check(
+        runner.active_frame_headers(Bridge()) == [
+            {"generation": 4, "ticket": 1},
+            {"generation": 4, "ticket": 2},
+        ],
+        "Mac evidence must retain active frame headers even before transport acknowledgement",
+    )
+    check(
+        runner.acknowledged_active_frames(Bridge()) == [{"generation": 4, "ticket": 2}],
+        "transport acknowledgement must remain a subset of active frame headers",
+    )
+    dual_source = pathlib.Path(runner.__file__).read_text(encoding="utf-8")
+    direct_source = pathlib.Path(runner._DIRECT.__file__).read_text(encoding="utf-8")
+    check(
+        'value.get("renderedFrames", 0)' not in dual_source + direct_source,
+        "renderedFrames must not be used as direct-runner display evidence",
+    )
+    check(
+        "h264_frame_displayed" not in direct_source,
+        "bridge transport ACK must not create a displayed-frame proof",
+    )
+
+
+def test_combined_side_evidence_does_not_promote_bridge_ack_to_display() -> None:
+    class Bridge:
+        active_generation = 4
+        acked_tickets = {(4, 2)}
+        frames = [{"generation": 4, "ticket": 2, "session_id": "session-1", "visible_width": 347, "visible_height": 580, "coded_width": 352, "coded_height": 592, "viewport_revision": 3, "document_revision": 5}]
+
+    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
+    combined.host_statuses = [{"value": {}}]
+    combined.android_result = {}
+    combined.bridge = Bridge()
+    combined.mac_operations = []
+    combined.first_failure = None
+    combined.evidence = {
+        "sides": {},
+        "cross_side": {},
+        "required_claims": {},
+        "unknown": [],
+        "stages": {"mac_reconnect": {"result": "passed"}},
+    }
+    combined._write_json = lambda name, value: None
+    combined.build_side_evidence()
+    mac = combined.evidence["sides"]["mac"]
+    check(mac["frame_ack"]["status"] == "unknown", "bridge ACK must not be reported as native display evidence")
+    check(mac["frame_transport_ack"]["status"] == "known", "bridge ACK must remain available as transport evidence")
+    check(mac["display"]["status"] == "unknown", "combined runner must expose missing native display evidence")
+
+
 def test_strict_protocol_integers_and_epochs() -> None:
     check(runner.nonnegative_integer(0), "zero must be accepted as a generation integer")
     check(runner.positive_integer(3), "positive frames must be accepted as a ticket integer")
@@ -205,6 +265,8 @@ def test_schema_and_comparison() -> None:
     required = set(schema["required"])
     check({"schema", "run_id", "candidate", "environment", "fixture", "sides", "cross_side", "required_claims", "result", "cleanup"} <= required, "schema must require the evidence roots")
     check(schema["properties"]["result"]["enum"] == ["pending", "dry_run", "pass", "partial", "failed"], "schema result enum must include dry-run")
+    mac_schema = schema["properties"]["sides"]["properties"]["mac"]["properties"]
+    check("framed bridge transport" in mac_schema["frame_transport_ack"]["description"], "schema must distinguish bridge transport ACK from display evidence")
 
     known = lambda value: runner.known(value, ["test"])
     missing = runner.compare_field("session_id", {"host": {"session_id": known("s")}, "android": {}, "mac": {"session_id": known("s")}})
@@ -334,6 +396,8 @@ def main() -> int:
         test_adb_reverse_mapping,
         test_typed_evidence,
         test_acknowledged_active_frames,
+        test_transport_frames_are_separate_from_display_evidence,
+        test_combined_side_evidence_does_not_promote_bridge_ack_to_display,
         test_strict_protocol_integers_and_epochs,
         test_candidate_identity_drift_fails_closed,
         test_device_pairing_uses_resolved_adb,

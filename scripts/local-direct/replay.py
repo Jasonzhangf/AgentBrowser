@@ -37,6 +37,7 @@ STAGES = (
     "agent_start",
     "ui_driver",
     "connected",
+    "video_transport",
     "video_displayed",
     "atomic_operations",
     "disconnect",
@@ -495,7 +496,7 @@ class BridgeProcess(ProcessPipes):
                 f"header={declared_length!r} payload={payload_length}",
             )
         if payload_length == 0:
-            raise ProcessProtocolError("BRIDGE_FRAME_EMPTY", "display frame has no Annex B bytes")
+            raise ProcessProtocolError("BRIDGE_FRAME_EMPTY", "Annex B frame has no bytes")
         return {"kind": "frame", "header": header, "payload": payload}
 
     def read_event(self, timeout: float) -> Optional[dict[str, Any]]:
@@ -655,6 +656,37 @@ class BridgeProcess(ProcessPipes):
         ack_id = self.send_command({"op": "ack_frame", "ticket": ticket})
         self.ack_requested.add(frame_key)
         self.ack_requests[ack_id] = frame_key
+
+
+def active_frame_headers(bridge: Any) -> list[dict[str, Any]]:
+    """Return valid frame headers from the current connection generation."""
+
+    active_generation = getattr(bridge, "active_generation", None)
+    if not nonnegative_integer(active_generation):
+        return []
+    return [
+        dict(frame)
+        for frame in getattr(bridge, "frames", [])
+        if isinstance(frame, Mapping)
+        and nonnegative_integer(frame.get("generation"))
+        and positive_integer(frame.get("ticket"))
+        and frame.get("generation") == active_generation
+    ]
+
+
+def acknowledged_active_frames(bridge: Any) -> list[dict[str, Any]]:
+    """Return active frame headers whose transport acknowledgement completed.
+
+    This is bridge flow-control evidence.  It does not prove that a native
+    decoder or display surface consumed the Annex B bytes.
+    """
+
+    acknowledged = getattr(bridge, "acked_tickets", set())
+    return [
+        frame
+        for frame in active_frame_headers(bridge)
+        if (frame.get("generation"), frame.get("ticket")) in acknowledged
+    ]
 
 
 def is_rejection(value: Any) -> bool:
@@ -1431,29 +1463,36 @@ class Runner:
                 },
                 self.args.timeout,
             )
-            self._require_bridge_snapshot(viewport_response, "video_displayed", "viewport")
-            self.stage_start("video_displayed")
-            displayed = self._wait_bridge_snapshot(
-                lambda value: value.get("renderedFrames", 0) > 0
-                and value.get("codec") == "h264_annex_b"
-                and bool(bridge.acked_tickets),
-                "video_displayed",
-                "VIDEO_DISPLAY_TIMEOUT",
+            self._require_bridge_snapshot(viewport_response, "video_transport", "viewport")
+            self.stage_start("video_transport")
+            transport = self._wait_bridge_snapshot(
+                lambda value: bool(acknowledged_active_frames(bridge)),
+                "video_transport",
+                "VIDEO_TRANSPORT_TIMEOUT",
+            )
+            self.stage_finish(
+                "video_transport",
+                "passed",
+                {
+                    "snapshot": transport,
+                    "frames": len(bridge.frames),
+                    "transport_acknowledgements": len(bridge.acked_tickets),
+                },
             )
             self.stage_finish(
                 "video_displayed",
-                "passed",
-                {"snapshot": displayed, "frames": len(bridge.frames), "acks": len(bridge.acked_tickets)},
+                "unknown",
+                {
+                    "reason": "bridge mode does not instantiate an AppKit or VideoToolbox display observer",
+                    "transport_acknowledgements": len(bridge.acked_tickets),
+                },
             )
-            self.prove(
-                "h264_frame_displayed",
-                "bridge emitted an Annex B frame and accepted an explicit frame acknowledgement",
-                stage="video_displayed",
-            )
+            self.prove("h264_frame_transport", "bridge received a length-framed Annex B access unit and completed its transport acknowledgement", stage="video_transport")
+            self.know_unknown("appkit_video_displayed", "bridge mode does not decode or paint Annex B bytes with VideoToolbox")
             self.run_bridge_operations(bridge)
             self.run_bridge_disconnect_reconnect(bridge)
         except ProcessProtocolError as error:
-            stage = self._running_stage("connected", "video_displayed", "atomic_operations", "disconnect", "reconnect")
+            stage = self._running_stage("connected", "video_transport", "video_displayed", "atomic_operations", "disconnect", "reconnect")
             self.abort(
                 error.code,
                 error.message,
@@ -1754,12 +1793,12 @@ class Runner:
         self._require_bridge_snapshot(viewport_response, "reconnect", "viewport")
         frame_count_before = len(bridge.frames)
         ack_count_before = len(bridge.acked_tickets)
-        displayed = self._wait_bridge_snapshot(
-            lambda value: value.get("renderedFrames", 0) > 0
+        transport = self._wait_bridge_snapshot(
+            lambda value: bool(acknowledged_active_frames(bridge))
             and len(bridge.frames) > frame_count_before
             and len(bridge.acked_tickets) > ack_count_before,
             "reconnect",
-            "RECONNECT_VIDEO_TIMEOUT",
+            "RECONNECT_VIDEO_TRANSPORT_TIMEOUT",
         )
         inspect = self.fixture_request("inspect", "reconnect")
         after = fixture_snapshot(inspect)
@@ -1782,10 +1821,10 @@ class Runner:
                 next_action="retain the BrowserSession and inspect generation fencing",
                 stage="reconnect",
             )
-        self.stage_finish("reconnect", "passed", {"snapshot": displayed, "fixture_inspect": after})
+        self.stage_finish("reconnect", "passed", {"snapshot": transport, "fixture_inspect": after, "display": {"status": "unknown", "reason": "bridge mode has no native display observer"}})
         self.prove(
             "reconnect_retained_page_state",
-            "new direct generation displayed media and retained fixture click/text state",
+            "new direct generation delivered transport-acknowledged media and retained fixture click/text state",
             stage="reconnect",
         )
         # Leave the client stopped so cleanup does not need to race a final connection.
@@ -2274,10 +2313,15 @@ class Runner:
             self.know_unknown("bridge_binary_framing", "AppKit mode delegates native bridge framing to the supplied UI process")
         self.evidence["agent"]["operation_receipts"] = self.operation_receipts
         if isinstance(self.agent, BridgeProcess):
-            self.evidence["agent"]["frame_ack"] = {
+            self.evidence["agent"]["frame_transport_ack"] = {
+                "semantic": "transport_consumption",
                 "acknowledged": self.agent.ack_receipts,
                 "stale_frames_dropped": self.agent.stale_frame_drops,
                 "stale_ack_rejections": self.agent.stale_ack_rejections,
+            }
+            self.evidence["agent"]["frame_display"] = {
+                "status": "unknown",
+                "reason": "bridge mode does not instantiate an AppKit or VideoToolbox display observer",
             }
         self.evidence["fixture"]["inspections"] = self.fixture_inspections
         for label, process in (("fixture", self.fixture), ("agent", self.agent), ("ui_driver", self.ui_driver)):
