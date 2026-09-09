@@ -69,7 +69,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}",serde_json::to_string(&result)?);
         } else { eprintln!("Expected status, inspect or quit"); }
     }
-    endpoint.kill().await?; endpoint.wait().await?;
+    let current = status(call(&mut local, &mut id, Command::Status {}, None).await);
+    match call(&mut local, &mut id, Command::CloseSession {}, Some(identity(&current))).await {
+        ResultValue::Closed { closed: true } => {}
+        other => panic!("Expected successful CloseSession, got {other:?}"),
+    }
+    let endpoint_status = tokio::time::timeout(Duration::from_secs(10), endpoint.wait()).await??;
+    if !endpoint_status.success() {
+        return Err(format!("Endpoint exited unsuccessfully after Closed: {endpoint_status}").into());
+    }
     host.kill().await?; host.wait().await?;
     std::fs::remove_dir_all(root)?;
     Ok(())
