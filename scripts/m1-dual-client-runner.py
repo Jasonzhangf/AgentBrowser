@@ -655,17 +655,6 @@ class CombinedRunner:
         candidate = self.evidence["candidate"]
         probes = candidate_git_probes(self.worktree)
         candidate["git_probes_after"] = probes
-        if not all(probe["ok"] for probe in probes.values()):
-            self.fail(
-                "GIT_PROBE_FAILED",
-                f"candidate Git probe failed during teardown: {probes}",
-                owner="workspace Git boundary",
-                next_action="restore Git access and rerun",
-                stage="cleanup",
-            )
-            return False
-        after_status = probes["status"]["value"].splitlines()
-        candidate["status_after"] = after_status
         before = {
             "branch": candidate.get("branch"),
             "commit": candidate.get("commit"),
@@ -673,13 +662,27 @@ class CombinedRunner:
             "status": candidate.get("status_before"),
         }
         after = {
-            "branch": probes["branch"]["value"],
-            "commit": probes["commit"]["value"],
-            "tree": probes["tree"]["value"],
-            "status": after_status,
+            "branch": probes["branch"]["value"] if probes["branch"]["ok"] else None,
+            "commit": probes["commit"]["value"] if probes["commit"]["ok"] else None,
+            "tree": probes["tree"]["value"] if probes["tree"]["ok"] else None,
+            "status": probes["status"]["value"].splitlines() if probes["status"]["ok"] else None,
         }
-        drift = {name: {"before": before[name], "after": after[name]} for name in before if before[name] != after[name]}
+        candidate["status_after"] = after["status"]
+        drift = {
+            name: {"before": before[name], "after": after[name]}
+            for name in before
+            if probes[name]["ok"] and before[name] != after[name]
+        }
         candidate["identity_drift_after"] = drift
+        probes_ok = all(probe["ok"] for probe in probes.values())
+        if not probes_ok:
+            self.fail(
+                "GIT_PROBE_FAILED",
+                f"candidate Git probe failed during teardown: {probes}",
+                owner="workspace Git boundary",
+                next_action="restore Git access and rerun",
+                stage="cleanup",
+            )
         if drift:
             self.fail(
                 "CANDIDATE_IDENTITY_DRIFT",
@@ -689,7 +692,7 @@ class CombinedRunner:
                 stage="cleanup",
             )
             return False
-        return True
+        return probes_ok
 
     def _prepare_evidence_dir(self) -> None:
         requested = self.args.requested_evidence_dir
