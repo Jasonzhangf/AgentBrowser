@@ -160,26 +160,33 @@ public final class AnnexBDecoder {
         return (int)value;
     }
 
-    static void validateSpsDimensions(SpsGeometry sps,int codedWidth,int codedHeight,int visibleWidth,int visibleHeight) {
-        if(sps.codedWidth!=codedWidth || sps.codedHeight!=codedHeight
+    /**
+     * AccessUnit coded dimensions are the encoder's even source dimensions;
+     * SPS coded dimensions may be larger because of macroblock padding.
+     */
+    static void validateSpsDimensions(SpsGeometry sps,int declaredWidth,int declaredHeight,int visibleWidth,int visibleHeight) {
+        if(sps.displayWidth!=declaredWidth || sps.displayHeight!=declaredHeight
+                || visibleWidth<1 || visibleHeight<1
                 || visibleWidth>sps.displayWidth || visibleHeight>sps.displayHeight)
             throw new IllegalArgumentException("BITSTREAM_DIMENSIONS_MISMATCH: display="
                 +sps.displayWidth+"x"+sps.displayHeight+" coded="+sps.codedWidth+"x"+sps.codedHeight
-                +" declared="+codedWidth+"x"+codedHeight);
+                +" declared="+declaredWidth+"x"+declaredHeight);
     }
 
-    static void validateCodecOutput(SpsGeometry sps,int codedWidth,int codedHeight,
+    /** MediaCodec output can retain additional raw macroblock padding. */
+    static void validateCodecOutput(SpsGeometry sps,int declaredWidth,int declaredHeight,
             int actualCodedWidth,int actualCodedHeight,int cropLeft,int cropTop,int cropRight,int cropBottom) {
         long displayWidth=(long)cropRight-cropLeft+1L;
         long displayHeight=(long)cropBottom-cropTop+1L;
-        if(actualCodedWidth!=codedWidth || actualCodedHeight!=codedHeight
+        if(sps.displayWidth!=declaredWidth || sps.displayHeight!=declaredHeight
+                || actualCodedWidth<sps.codedWidth || actualCodedHeight<sps.codedHeight
                 || cropLeft<0 || cropTop<0 || cropRight<cropLeft || cropBottom<cropTop
                 || cropRight>=actualCodedWidth || cropBottom>=actualCodedHeight
                 || displayWidth!=sps.displayWidth || displayHeight!=sps.displayHeight)
             throw new IllegalArgumentException("BITSTREAM_DIMENSIONS_MISMATCH: output="
                 +actualCodedWidth+"x"+actualCodedHeight+" crop="+cropLeft+","+cropTop+"-"+cropRight+","+cropBottom
                 +" sps="+sps.codedWidth+"x"+sps.codedHeight+"/"+sps.displayWidth+"x"+sps.displayHeight
-                +" declared="+codedWidth+"x"+codedHeight);
+                +" declared="+declaredWidth+"x"+declaredHeight);
     }
 
     private static int startCodeLength(byte[] bytes,int offset) {
