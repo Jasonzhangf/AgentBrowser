@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PixelCopy;
 import org.json.JSONObject;
@@ -210,7 +211,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         assertTrue("Do not send unfinished composition",compositionSendDisabled);
         click("send-text");
         assertEquals("true",js("document.getElementById('input-text').value==='zhongwen'"));
-        js("document.getElementById('input-text').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+        imeEdit(input.get(),connection->{
+            long now=SystemClock.uptimeMillis();
+            assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
+            assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
+        });
         until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
         compositionCancelled=true;
         assertEquals("true",js("document.getElementById('input-text').parentElement.dataset.compositionCancelled==='true'"));
@@ -252,6 +257,59 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         getInstrumentation().runOnMainSync(()->activity.getWindow().getInsetsController().hide(android.view.WindowInsets.Type.ime()));
         js("document.getElementById('input-text').blur()");
         awaitSourceSize(width,height);
+    }
+    public void testImeCompositionCancel()throws Exception{
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            until("!!document.getElementById('connect')",10000);
+            click("connect");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
+            click("takeover");
+            until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            until("!document.getElementById('input-text').disabled",5000);
+            js("window.__imeEvents=[];const input=document.getElementById('input-text');for(const type of ['keydown','beforeinput','input','compositionstart','compositionupdate','compositionend','keyup'])input.addEventListener(type,event=>window.__imeEvents.push({type,key:event.key||'',inputType:event.inputType||'',data:event.data||'',value:input.value}),{capture:true})");
+            js("document.getElementById('input-text').focus()");
+            getInstrumentation().runOnMainSync(()->{
+                activity.webView.requestFocus();
+                activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
+                    .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            });
+            int width=activity.visibleWidth,height=activity.visibleHeight;
+            boolean[] visible={false},fits={false};
+            long deadline=SystemClock.elapsedRealtime()+8000;
+            do{
+                getInstrumentation().runOnMainSync(()->{
+                    android.view.WindowInsets insets=activity.webView.getRootWindowInsets();
+                    visible[0]=insets!=null&&insets.isVisible(android.view.WindowInsets.Type.ime());
+                    if(visible[0]){
+                        int[] position=new int[2];activity.webView.getLocationOnScreen(position);
+                        int keyboardTop=activity.getWindow().getDecorView().getHeight()-insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                        fits[0]=position[1]+activity.webView.getHeight()<=keyboardTop&&activity.visibleHeight<height;
+                    }
+                });
+                if(visible[0]&&fits[0])break;
+                SystemClock.sleep(50);
+            }while(SystemClock.elapsedRealtime()<deadline);
+            assertTrue("Real IME must be visible in focused regression",visible[0]);
+            assertTrue("Keyboard must leave page and text controls visible in focused regression",fits[0]);
+            until(STATUS+".inputReady",6000);
+            viewport();
+            until("document.activeElement===document.getElementById('input-text') && !document.getElementById('input-text').disabled && document.getElementById('input-text').parentElement.dataset.composition!=='cancelled'",5000);
+            AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
+            getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
+            assertNotNull("Focused WebView input connection",input.get());
+            imeEdit(input.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
+            imeEdit(input.get(),connection->{
+                long now=SystemClock.uptimeMillis();
+                assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
+                assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
+            });
+            String events=js("JSON.stringify(window.__imeEvents)");
+            assertEquals("Raw WebView Escape must cancel composition: "+events,
+                "true", js("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'"));
+            assertEquals("Raw WebView Escape must reach the DOM event path: "+events,
+                "true", js("window.__imeEvents.some(event=>event.key==='Escape')"));
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
     private Bitmap capture(String name)throws Exception{
         Bitmap full=Bitmap.createBitmap(Math.max(1,activity.video.getWidth()),Math.max(1,activity.video.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
