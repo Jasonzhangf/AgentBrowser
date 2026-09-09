@@ -2,6 +2,7 @@
   <uses-permission android:name="android.permission.INTERNET"/>
   <application android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="AgentBrowser Probe" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
     <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize">
+      <property android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY" android:value="true"/>
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
     </activity>
   </application>
