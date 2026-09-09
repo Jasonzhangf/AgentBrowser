@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+binary=${OBSCURA_HOST_BINARY:-}
+if [ -z "$binary" ] && [ -x "$script_dir/../../active/bin/obscura-host" ]; then
+    binary=$script_dir/../../active/bin/obscura-host
+fi
+if [ -z "$binary" ]; then
+    echo "real obscura-host required: set OBSCURA_HOST_BINARY or provide active/bin/obscura-host" >&2
+    exit 2
+fi
+
+exec python3 "$script_dir/test_host_service.py" --binary "$binary" "$@"

@@ -1,0 +1,18 @@
+{
+  "branch": "codex/m1-governance-candidate-20260909",
+  "created_at": "2026-09-09T00:46:17.058653+00:00",
+  "mode": "discard_legacy_control_plane",
+  "preserved": [
+    "business_source",
+    "runtime_data",
+    "active",
+    "protected"
+  ],
+  "removed": [
+    ".appsdk",
+    ".appsdk-control",
+    "generated"
+  ],
+  "reset_id": "reset-12880",
+  "schema_version": 1
+}

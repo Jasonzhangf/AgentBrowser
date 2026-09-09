@@ -1,11 +1,34 @@
 {
   "schema_version": 1,
-  "modules": [{
-    "module_id": "app-core",
-    "status": "active",
-    "owner": "app-core",
-    "owned_paths": ["playground/experiments/**", "tests/core/**"],
+  "modules": [{"module_id":"android-probe","status":"contract_bound","owner":"android-probe",
+    "owned_paths":["apps/android/**","packages/ui-kernel/**","packages/ui-plugins/**","packages/client-domain/**","packages/android-bridge/**","scripts/build-native.py","scripts/device-pairing.py","scripts/network-replay.py"],
+    "forbidden_paths":["active/lib/**","protected/**","generated/**"],"verification_gates":["android-cordis-h264"]}, {
+    "module_id": "client-connection",
+    "status": "contract_bound",
+    "owner": "client-connection",
+    "owned_paths": ["packages/client-connection/**", "scripts/connection.py", "scripts/connection-admission.mjs", "Cargo.toml", "Cargo.lock"],
     "forbidden_paths": ["active/lib/**", "protected/**", "generated/**"],
-    "verification_gates": ["fix_lifecycle_graph", "mainline_merge_identity"]
+    "verification_gates": ["connection-direct-relay-wss"]
+  }, {
+    "module_id": "relay-service",
+    "status": "contract_bound",
+    "owner": "relay-service",
+    "owned_paths": ["services/relay/**", "protocol/relay/**"],
+    "forbidden_paths": ["active/lib/**", "protected/**", "generated/**"],
+    "verification_gates": ["relay-tls-wss"]
+  }, {
+    "module_id": "host-service",
+    "status": "contract_bound",
+    "owner": "host-service",
+    "owned_paths": ["scripts/host-service/**", "docs/host-service.md", "docs/architecture.md"],
+    "forbidden_paths": ["active/lib/**", "protected/**", "generated/**", "apps/macos/**", "packages/client-connection/**"],
+    "verification_gates": ["development_whitebox", "deployment_receipts", "deployed_blackbox_effectiveness"]
+  }, {
+    "module_id": "macos-shell",
+    "status": "contract_bound",
+    "owner": "macos-shell",
+    "owned_paths": ["apps/macos/**", "scripts/build-macos.sh", "scripts/build-macos-ui.mjs", "docs/macos-client.md"],
+    "forbidden_paths": ["active/lib/**", "protected/**", "generated/**", "apps/android/**", "packages/android-bridge/**"],
+    "verification_gates": ["macos-native-h264"]
   }]
 }

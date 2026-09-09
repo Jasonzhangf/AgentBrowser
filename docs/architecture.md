@@ -45,16 +45,17 @@ Mac 上 Agent 通过本地 endpoint 使用同一 operation/控制权协议；本
 
 ## 模块和路径 owner
 
-以下是计划路径，不代表目录或实现已存在。模块在真实路径、命令和验收入口存在后绑定 AppSDK，不登记虚假 source_implemented。
+以下是完整产品模块边界；多数仍为计划路径。AB-01/02/03/04 的本地客户端兼容性切片已实现，实际文件、调用边和验收入口见 [android-probe.md](android-probe.md)。AppSDK `android-probe` 只绑定该切片的单一 APK，不代表完整产品模块已完成。
 
 | ID | 仓库 / 计划路径 | 唯一职责 | 禁止职责 |
 | --- | --- | --- | --- |
 | AB-01 ui-kernel | AgentBrowser `packages/ui-kernel/` | Cordis composition root、插件依赖与生命周期、UI slots、typed 服务注入 | 浏览器状态裁决、网络重连、视频字节搬运 |
 | AB-02 ui-plugins | AgentBrowser `packages/ui-plugins/` | device-directory、browser-chrome、session-view、takeover、settings 等插件；本地交互状态 | socket/解码器/原生句柄所有权、绕过 operation 写入 |
 | AB-03 client-domain | AgentBrowser `packages/client-domain/` | 远端状态只读投影、UI 命令适配、共享纯类型与 reducer | 第二个 Session owner、连接路由决策、原生对象 |
-| AB-04 platform-host | AgentBrowser `apps/android/`、`apps/macos/` | OS 生命周期、WebView、IME、触控采集、安全凭据存储、原生显示资源 | 各自复制页面/接管状态机 |
+| AB-04 platform-host | AgentBrowser `apps/android/`、`apps/macos/`、`scripts/host-service/` | OS 生命周期、WebView、IME、触控采集、安全凭据存储、原生显示资源；Mac Host 进程的安装/启动/停止入口 | 各自复制页面/接管状态机、拥有 Obscura Session 或 profile 真相 |
 | AB-05 client-connection | AgentBrowser `packages/client-connection/` | 共享 Rust 连接内核；candidate、认证、连接 generation、选路、重连和背压唯一 owner | UI active tab、DOM、浏览器业务决策 |
 | AB-06 relay-service | AgentBrowser `services/relay/` | 账号、设备绑定、目录/presence、设置同步、信令、WSS 隧道 | 执行 operation、转让控制权、持久化网页 profile |
+| AB-07 relay-host | AgentBrowser `apps/relay-host/` | Relay Host role、inner mTLS/TunnelHello 接入、既有 Obscura endpoint 的 control/media 网络转发 | `host.sock`、Session/operation 仲裁、导航、Browser ABI 重建、页面/profile 状态 |
 | OB-01 browser-host | Obscura `crates/obscura-host/` | 常驻服务、Session/Tab/Attachment、operation 执行仲裁、统一 viewport、profile 单写锁 | UI 生命周期、客户端选路、账号数据库 |
 | OB-02 browser-engine | Obscura 现有 browser/js/dom/net/render crates | 页面执行、存储语义、输入、现有 paint 原始帧出口 | WebSocket 会话生命周期、编码/公网发现 |
 | OB-03 browser-media | Obscura `crates/obscura-media/` | 共享帧消费、H.264 编码、WebRTC 发送及 WSS 编码帧输出 | 第二条 DOM 绘制链、Session 控制权 |
@@ -62,7 +63,7 @@ Mac 上 Agent 通过本地 endpoint 使用同一 operation/控制权协议；本
 
 OB-01 的 registry/supervision 与 Engine 执行线程分离；保持 V8 的线程归属。首版先验证一个 Session/Tab worker，不在本设计承诺跨线程搬移 isolate 或多 Tab 全部可并行。一个客户端多条传输不能创建多个浏览器实例。
 
-协议定义按领域唯一归属：Browser Session/operation/viewport ABI 放 Obscura `protocol/browser/`；账号、目录、signaling、relay tunnel ABI 放 AgentBrowser `protocol/relay/`。两边生成或使用锁定版本的绑定，不相互依赖产品运行时代码，不手工镜像协议。传输协议不得解释浏览器操作参数。
+协议定义按领域唯一归属：Browser Session/operation/viewport ABI 放 Obscura `protocol/browser/`；账号、目录、signaling、relay tunnel ABI 放 AgentBrowser `protocol/relay/`。两边生成或使用锁定版本的绑定，不相互依赖产品运行时代码，不手工镜像协议。传输协议不得解释浏览器操作参数。AB-07 只把已建立的 inner secure control/media frame 转发到 Obscura endpoint；OB-04 继续拥有 Browser ABI、endpoint 授权和消息解码，AB-07 不复制这些状态机。
 
 ## UI 使用 Cordis 的具体边界
 

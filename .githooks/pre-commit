@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+branch=$(git symbolic-ref --quiet --short HEAD)
+case "$branch" in main|master) echo 'Protected mainline: use owner worktree' >&2; exit 1;; esac
+npm run verify:local
