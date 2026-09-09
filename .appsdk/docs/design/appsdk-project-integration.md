@@ -4,6 +4,21 @@ AppSDK is an external governance implementation. A new project consumes its CLI/
 
 ## Repository boundary
 
+### Module dependency artifacts
+
+Declare modules in dependency-first order. During development, `compile-module`
+requires each dependency's compiled artifact to exist and match its current
+module contract, source, output bytes and transitive dependency hashes. Missing
+or stale dependency artifacts fail explicitly; compile the dependency first, or
+use the ordered project `compile` command. Admission uses the same freshness
+owner without building or repairing artifacts. Self-dependencies and reverse
+dependency edges fail before recursive hashing.
+
+Development admission is not publication. `freeze` requires every dependency
+to be frozen before it reads or creates publication records. Frozen dependencies
+retain the existing immutable artifact verification; development compilation
+does not manufacture a FreezeRecord or alter Active/Protected.
+
 ```text
 external AppSDK installation
   -> versioned Bundle: CLI / compiler / contracts / docs / rules / skills
@@ -123,7 +138,12 @@ Ignore:
 
 项目中的手动合同（例如 `project.json`、records、maps）由 AI/开发者维护，SDK 只校验 schema、引用、owner、scope 和生命周期关系。`.appsdk/sdk-resources.json` 是自动生成文件，只能由 SDK 重建；`verify` 会校验资源文件摘要和 Bundle digest，发现手工改写立即 fail-fast。
 
-`contracts/sdk-bundle.manifest.json` 声明当前 Bundle 的资源集合和安装位置；初始化后项目内的机器真源位于 `.appsdk/contracts/sdk-bundle.manifest.json`。它和 binary 同版本发布；`pin-lock` 把 binary digest、Bundle digest、manifest digest 和资源集合一起写入锁。执行 `pin-lock` 的 binary 必须与 `--binary` 指向的文件字节一致，防止旧 CLI 把新 binary 与旧 embedded Bundle 拼成伪锁。
+`contracts/sdk-bundle.manifest.json` 声明当前 Bundle 的资源集合和安装位置；
+初始化后项目内的机器真源位于
+`.appsdk/contracts/sdk-bundle.manifest.json`。`init`/`new` 直接把当前
+Bundle digest、manifest digest 和资源集合写入锁。`pin-lock` 只用于受支持
+的旧版本 migration；该命令仍要求执行中的 binary 与 `--binary` 指向的文件
+字节一致，防止旧 CLI 把新 binary 与旧 embedded Bundle 拼成伪迁移。
 
 `.appsdk/sdk.lock` binds the project to the external implementation:
 
@@ -131,17 +151,36 @@ Ignore:
 {
   "sdk": "appsdk",
   "version": "0.1.6",
-  "digest": "sha256:replace-with-compiled-sdk-digest",
-  "compiler_digest": "sha256:replace-with-compiler-digest",
-  "bundle_digest": "sha256:replace-with-sdk-bundle-digest",
-  "bundle_manifest_digest": "sha256:replace-with-bundle-manifest-digest",
+  "bundle_digest": "sha256:<current-bundle-digest>",
+  "bundle_manifest_digest": "sha256:<current-manifest-digest>",
   "bundle_resources": {"contracts": [], "docs": [], "rules": [], "skills": []},
-  "binary_ref": "project-sdk",
   "contract_schema": 1
 }
 ```
 
-The lock is committed. A template may retain the two documented `replace-with-*` values while the project is `draft`; compile, promotion, and freeze reject those values with `SDK_LOCK_NOT_PINNED`. Running AppSDK 0.1.6 `pin-lock` is the explicit supported migration from project SDK 0.1.5 to 0.1.6. SDK canonical maps and project governance maps are separate resources. Before changing live maps, `pin-lock` classifies each map set: an exact 0.1.5 SDK canonical set is migrated to the 0.1.6 canonical set; a custom project set is snapshotted and retained in place. It validates the frozen ReviewRecord bindings, persists one immutable `.appsdk/migrations/0.1.5-to-0.1.6/` snapshot/record, then installs the 0.1.6 Bundle and writes the lock and project version. It must never overwrite custom project maps or hand-edit ReviewRecord hashes. A partially completed 0.1.6 pin may resume only through that exact migration record or an exact 0.1.5 source map set. Historical frozen reviews resolve their old hashes only through this snapshot; current reviews must bind live maps. Missing, mixed, drifted, or ambiguous migration truth fails closed. Other source versions fail with `UNSUPPORTED_SDK_MIGRATION`; runtime does not scan or infer a different SDK.
+The lock is committed and is not bound to the bytes of the currently running
+AppSDK executable. Optional `digest`, `compiler_digest`, and `binary_ref` fields
+may remain as historical migration witnesses, but they do not gate ordinary
+development. `verify` always checks the project version/schema and exact current
+Bundle/manifest/resource binding.
+
+Running AppSDK 0.1.6 `pin-lock` is the explicit supported migration from project
+SDK 0.1.5 to 0.1.6, not a new-project initialization step. SDK canonical maps
+and project governance maps are separate resources. Before changing live maps,
+`pin-lock` classifies each map set: an exact 0.1.5 SDK canonical set is migrated
+to the 0.1.6 canonical set; a custom project set is snapshotted and retained in
+place. It validates frozen ReviewRecord bindings, persists one immutable
+`.appsdk/migrations/0.1.5-to-0.1.6/` snapshot/record, then installs the 0.1.6
+Bundle and writes the lock and project version. It must never overwrite custom
+project maps or hand-edit ReviewRecord hashes. Missing, mixed, drifted, or
+ambiguous migration truth fails closed.
+
+For a later bundle refresh, a historical custom map's canonical target may
+differ from the current SDK manifest only when the lock witnesses the original
+bundle. The historical record and snapshot remain immutable, and each live
+custom map must still match its recorded target digest. A repeated pin uses the
+same previous-bundle witness; missing witnesses, malformed digests, altered
+snapshots and changed live maps fail explicitly.
 
 ## Runtime boundary
 
@@ -276,6 +315,8 @@ is:
 
 ```text
 clean owner worktree + candidate commit
+  -> appsdk produce-lifecycle-records --module <id> --input <declaration.json>
+  -> WorktreeRecord + ReproductionRecord + baseline EvidenceRecord
   -> lifecycle adapter binds FixCandidateRecord
   -> whitebox adapter runs and records the actual whitebox result
   -> deployment adapter performs module.deployment_operations and records applicable receipts
@@ -289,6 +330,20 @@ record. A changed candidate, artifact, environment, entrypoint, or input starts
 a new evidence set and invalidates the old one. No adapter may accept a
 hand-entered hash, relabel whitebox output as blackbox output, or use an
 artifact from another worktree/project/version.
+
+`produce-lifecycle-records` accepts a declaration containing the confirmed
+`goal_id`, the module and issue scope, bug-triage evidence, and a baseline
+command with a non-zero expected exit status plus an `expected_error_token`.
+It observes the current branch, HEAD, base ref, commit ancestry, complete Git
+cleanliness, and registered worktree path; the command runs in a temporary
+checkout of the declared base commit. The exit status and error token must both
+match, and its output is hashed, before the three records are written. The
+caller’s result, timestamps, record IDs, input hashes, producer identity, and
+Git fields are never trusted: timestamps, input hashes, path-safe IDs, and the
+fixed `appsdk-lifecycle-record-producer` identity are generated after those
+observations. Existing targets fail with `LIFECYCLE_RECORD_EXISTS`. Records
+are installed with create-new semantics as a group; validation, command, or
+installation failure leaves no newly published record.
 
 For an upgrade, run `appsdk prepare`/`init` idempotently, inspect and snapshot
 the old project and legacy roots, obtain explicit ownership-transfer approval,
@@ -352,4 +407,7 @@ goal clarification
   -> FreezeRecord
 ```
 
-The project contract is auditable and committed; the SDK implementation is external and pinned; local control state is disposable and ignored.
+The project contract is auditable and committed; the SDK implementation is
+external, while `sdk.lock` binds the project to the declared AppSDK
+version/schema and Bundle resources rather than a particular executable digest.
+Local control state is disposable and ignored.

@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentBrowser relay ABI v0",
+  "description": "Account, directory, signaling and WSS tunnel envelopes. Browser operation parameters and media bytes remain opaque to Relay.",
+  "abi_id": "agentbrowser-relay-v0",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "abi": {"const": "agentbrowser-relay-v0"},
+    "channel": {"enum": ["control", "media"]},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 128},
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network", "url"],
+      "properties": {
+        "network": {"enum": ["lan", "public", "tailscale"]},
+        "url": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {"id": {"$ref": "#/$defs/id"}}
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["incarnation", "revision", "endpoints", "sessions"],
+      "properties": {
+        "incarnation": {"$ref": "#/$defs/id"},
+        "revision": {"type": "integer", "minimum": 0},
+        "endpoints": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/endpoint"}
+        },
+        "sessions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/session"}
+        }
+      }
+    },
+    "directoryHost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostId", "deviceId", "deviceName", "snapshot"],
+      "properties": {
+        "hostId": {"$ref": "#/$defs/id"},
+        "deviceId": {"$ref": "#/$defs/id"},
+        "deviceName": {"type": "string", "minLength": 1, "maxLength": 64},
+        "snapshot": {"$ref": "#/$defs/snapshot"}
+      }
+    },
+    "ticket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "ticket"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 256},
+        "ticket": {"$ref": "#/$defs/id"}
+      }
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["control", "media"],
+      "properties": {
+        "control": {"$ref": "#/$defs/ticket"},
+        "media": {"$ref": "#/$defs/ticket"}
+      }
+    },
+    "authChallenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "nonce", "path"],
+      "properties": {
+        "type": {"const": "auth.challenge"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "nonce": {"$ref": "#/$defs/id"},
+        "path": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "authProve": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "token", "deviceId", "signature"],
+      "properties": {
+        "type": {"const": "auth.prove"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "token": {"type": "string", "minLength": 1, "maxLength": 256},
+        "deviceId": {"$ref": "#/$defs/id"},
+        "signature": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "authOk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "deviceId"],
+      "properties": {
+        "type": {"const": "auth.ok"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "deviceId": {"$ref": "#/$defs/id"}
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "code", "message"],
+      "properties": {
+        "type": {"const": "error"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "code": {"$ref": "#/$defs/reason"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "directorySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "hosts"],
+      "properties": {
+        "type": {"const": "directory.snapshot"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "hosts": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"$ref": "#/$defs/directoryHost"}
+        }
+      }
+    },
+    "hostPublish": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "hostId", "snapshot"],
+      "properties": {
+        "type": {"const": "host.publish"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "hostId": {"$ref": "#/$defs/id"},
+        "snapshot": {"$ref": "#/$defs/snapshot"}
+      }
+    },
+    "signalSend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "peerDeviceId", "data"],
+      "properties": {
+        "type": {"const": "signal.send"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "peerDeviceId": {"$ref": "#/$defs/id"},
+        "data": {"type": "string", "minLength": 1, "maxLength": 32768}
+      }
+    },
+    "signalReceived": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "peerDeviceId", "data"],
+      "properties": {
+        "type": {"const": "signal.received"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "peerDeviceId": {"$ref": "#/$defs/id"},
+        "data": {"type": "string", "minLength": 1, "maxLength": 32768}
+      }
+    },
+    "tunnelOpen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "hostId", "sessionId"],
+      "properties": {
+        "type": {"const": "tunnel.open"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "hostId": {"$ref": "#/$defs/id"},
+        "sessionId": {"$ref": "#/$defs/id"}
+      }
+    },
+    "tunnelOffer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "tunnelId", "hostId", "sessionId", "peerDeviceId", "side", "expiresAt", "channels"],
+      "properties": {
+        "type": {"const": "tunnel.offer"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "tunnelId": {"$ref": "#/$defs/id"},
+        "hostId": {"$ref": "#/$defs/id"},
+        "sessionId": {"$ref": "#/$defs/id"},
+        "peerDeviceId": {"$ref": "#/$defs/id"},
+        "side": {"enum": [0, 1]},
+        "expiresAt": {"type": "integer", "minimum": 0},
+        "channels": {"$ref": "#/$defs/channels"}
+      }
+    },
+    "tunnelReject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "tunnelId", "reason"],
+      "properties": {
+        "type": {"const": "tunnel.reject"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "tunnelId": {"$ref": "#/$defs/id"},
+        "reason": {"enum": ["UNKNOWN_PEER", "CAPACITY"]}
+      }
+    },
+    "tunnelClosed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "tunnelId", "reason"],
+      "properties": {
+        "type": {"const": "tunnel.closed"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "tunnelId": {"$ref": "#/$defs/id"},
+        "reason": {"$ref": "#/$defs/reason"}
+      }
+    },
+    "channelReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "abi", "tunnelId", "channel"],
+      "properties": {
+        "type": {"const": "channel.ready"},
+        "abi": {"$ref": "#/$defs/abi"},
+        "tunnelId": {"$ref": "#/$defs/id"},
+        "channel": {"$ref": "#/$defs/channel"}
+      }
+    }
+  }
+}

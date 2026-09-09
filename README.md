@@ -1,6 +1,6 @@
 # AgentBrowser
 
-手机优先、UI 与 browser core 分离、可 attach/detach 的浏览器。当前阶段：设计与 AppSDK 初始化；尚无运行时代码。
+手机优先、UI 与 browser core 分离、可 attach/detach 的浏览器。当前已有 Android 本地 H.264/Cordis 兼容性探针；浏览器 Host 和网络链路待接入。
 
 - 客户端仓库：https://github.com/Jasonzhangf/AgentBrowser
 - Core/Host fork：https://github.com/Jasonzhangf/obscura
@@ -10,4 +10,4 @@
 - [实施与验收计划](docs/plan.md)：按证据推进，不将计划状态当实现完成。
 - [治理配置提案](docs/governance-proposal.md)：AppSDK 初始配置的待审阅调整。
 
-AppSDK 已绑定 `agentbrowser`，draft `verify` 通过；设计期无运行时模块，示例 app-core 已移除。Guidance 编译因当前 main 无开发工作树而明确拒绝；模块为空时不能建立模块计划。当前仓库没有首个提交，尚不能从 `origin/main` 创建开发工作树。产品代码、安装和运行时验收尚未完成。
+[Android 探针与运行说明](docs/android-probe.md) 包含构建、独立 APK 安装、真机重放入口，以及 AB-01/02/03/04 的实现边界。测试样本直接通过 Android MediaCodec 显示，不经过 JS 视频字节通道。探针成功不代表正式 BrowserSession、WebRTC/WSS 或 Relay 完成。
