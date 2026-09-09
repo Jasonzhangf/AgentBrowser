@@ -4,11 +4,48 @@ import base64
 import hashlib
 import os
 import pathlib
+import re
 import select
 import subprocess
 import sys
 import time
 import uuid
+
+# Keep this bound to the two public test methods in NetworkDeviceTest. A test
+# count change must update this gate before replay can pass.
+NETWORK_TEST_COUNT = 2
+
+
+def instrumentation_passed(output: bytes, expected_test_count: int) -> bool:
+    """Accept only a complete, successful result for the fixed test class."""
+    if not isinstance(output, bytes) or expected_test_count < 1:
+        return False
+    try:
+        lines = output.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return False
+
+    summary_candidates = [(index, line) for index, line in enumerate(lines) if line.startswith("OK (")]
+    if len(summary_candidates) != 1:
+        return False
+    summary_index, summary_line = summary_candidates[0]
+    summary = re.fullmatch(r"OK \(([1-9][0-9]*) (test|tests)\)", summary_line)
+    if summary is None:
+        return False
+    count_text = summary.group(1)
+    noun = summary.group(2)
+    if count_text != str(expected_test_count) or noun != ("test" if expected_test_count == 1 else "tests"):
+        return False
+
+    code_candidates = [
+        (index, line) for index, line in enumerate(lines) if line.startswith("INSTRUMENTATION_CODE:")
+    ]
+    if len(code_candidates) != 1:
+        return False
+    code_index, code_line = code_candidates[0]
+    code = re.fullmatch(r"INSTRUMENTATION_CODE: (-?(?:0|[1-9][0-9]*))", code_line)
+    return code is not None and code.group(1) == "-1" and code_index > summary_index
+
 
 root = pathlib.Path(__file__).resolve().parent.parent
 run_id = uuid.uuid4().hex
@@ -63,7 +100,7 @@ with (evidence / "network-host.log").open("wb") as log:
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)
         (evidence / "network-test.log").write_bytes(result.stdout)
-        if b"OK (1 test)" not in result.stdout:
+        if not instrumentation_passed(result.stdout, NETWORK_TEST_COUNT):
             raise RuntimeError(f"Network instrumentation failed; see {evidence / 'network-test.log'}")
         instrumentation = json.loads(subprocess.check_output(
             ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", "files/network-evidence/result.json"]
