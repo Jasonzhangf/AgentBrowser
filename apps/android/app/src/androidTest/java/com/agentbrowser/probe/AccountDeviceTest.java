@@ -135,11 +135,13 @@ public final class AccountDeviceTest extends InstrumentationTestCase {
             boolean deviceRegistered = direct.optString("deviceId", "").length() > 0;
             boolean bridgeRegistered = bridge.optString("deviceId", "").length() > 0;
             boolean refreshEnabled = "true".equals(js("!!document.getElementById('account-refresh') && !document.getElementById('account-refresh').disabled"));
+            boolean renderedAuthenticated = "true".equals(js("document.querySelector('[data-account-state]')?.dataset.accountState === 'authenticated'"));
             if ("authenticated".equals(direct.optString("accountState"))
                 && deviceRegistered
                 && "authenticated".equals(bridge.optString("accountState"))
                 && bridgeRegistered
-                && refreshEnabled) return;
+                && refreshEnabled
+                && renderedAuthenticated) return;
             SystemClock.sleep(100);
             direct = status();
             bridge = uiStatus();

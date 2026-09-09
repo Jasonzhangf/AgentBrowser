@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Context } from '@cordisjs/core';
 import { androidPort, type ProbeCommand, type ProbeSnapshot } from '../client-domain/probe';
@@ -11,6 +11,7 @@ declare global { interface Window { ProbeNative?: {request(raw: string): string}
 const labels = {idle:'等待播放',starting:'正在打开样本',playing:'正在显示',stopping:'正在释放',stopped:'已停止',completed:'播放结束',error:'播放失败'};
 type CompositionPhase = 'idle' | 'composing' | 'committed' | 'cancelled';
 function Panel({ctx}: {ctx: Context}) {
+  const accountDirectory = useMemo(() => ctx.accountDirectory, [ctx]);
   const [snapshot, setSnapshot] = useState<ProbeSnapshot>(() => ctx.probe.request({op:'status'}));
   const [problem, setProblem] = useState('');
   const [url, setUrl] = useState('');
@@ -67,7 +68,7 @@ function Panel({ctx}: {ctx: Context}) {
       <div className="text-entry" data-composition={composition} data-composition-started={String(composition !== 'idle')} data-composition-committed={String(composition === 'committed')} data-composition-cancelled={String(composition === 'cancelled')}><input ref={inputRef} id="input-text" aria-label="输入到远程页面的文字" value={text} maxLength={4096} onChange={event => { setText(event.target.value); if (compositionRef.current !== 'composing') setCompositionPhase('idle'); }} onCompositionStart={() => { if (!canEdit) return; compositionCancelled.current = false; setCompositionPhase('composing'); }} onCompositionEnd={event => { if (compositionCancelled.current || !canEdit) { setText(''); setCompositionPhase('cancelled'); return; } setText(event.currentTarget.value); setCompositionPhase('committed'); }} onKeyDown={event => { if (event.key === 'Escape' && compositionRef.current === 'composing') { event.preventDefault(); cancelComposition(); } }} onBlur={() => { if (compositionRef.current === 'composing') cancelComposition(); }} placeholder="先点击页面中的输入框" disabled={!canEdit} /><button id="send-text" disabled={!canSubmit} onClick={() => { if (compositionRef.current === 'composing' || compositionRef.current === 'cancelled') return; request({op:'input_text',epoch:snapshot.epoch!,text}); }}>发送</button></div>
     </section>
   </section>
-  <AccountDirectory port={ctx.accountDirectory}/>
+  <AccountDirectory port={accountDirectory}/>
   </>;
 }
 async function boot() {
