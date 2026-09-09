@@ -14,6 +14,11 @@ public class AnnexBDecoderTest {
         return bytes;
     }
 
+    private static final String PROFILE_144_CYCLE_255 =
+        "00 00 01 67 90 00 0a ac a6 01 00 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff 25 90";
+    private static final String PROFILE_144_CYCLE_256 =
+        "00 00 01 67 90 00 0a ac a6 01 01 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff 92 c8";
+
     @Test public void spsGeometryKeepsMacroblockPaddingAndDisplayCrop() {
         AnnexBDecoder.SpsGeometry before=AnnexBDecoder.parseSps(annexB(
             "00 00 00 01 67 42 c0 0a dc 28 47 e5 9a 81 01 00 a0 00 00 03 00 20 00 00 03 00 d1 e2 44 f0"));
@@ -52,6 +57,18 @@ public class AnnexBDecoderTest {
         assertEquals(32,value.codedHeight());
         assertEquals(32,value.displayWidth());
         assertEquals(16,value.displayHeight());
+    }
+
+    @Test public void parsesMaximumPicOrderCycleCountThroughProfile144Sps() {
+        AnnexBDecoder.SpsGeometry value=AnnexBDecoder.parseSps(annexB(PROFILE_144_CYCLE_255));
+        assertEquals(32,value.codedWidth());
+        assertEquals(32,value.codedHeight());
+    }
+
+    @Test public void rejectsPicOrderCycleCount256ThroughSpsParser() {
+        IllegalArgumentException error=assertThrows(IllegalArgumentException.class,
+            () -> AnnexBDecoder.parseSps(annexB(PROFILE_144_CYCLE_256)));
+        assertEquals("MALFORMED_SPS",error.getMessage());
     }
 
     @Test public void appliesChromaAndInterlacedCropUnits() {

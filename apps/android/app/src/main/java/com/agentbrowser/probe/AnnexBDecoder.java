@@ -18,6 +18,7 @@ import java.util.Arrays;
 
 /** One pending access unit; all codec operations run on one worker. */
 public final class AnnexBDecoder {
+    private static final int MAX_NUM_REF_FRAMES_IN_PIC_ORDER_CNT_CYCLE = 255;
     public record Receipt(long generation, long ptsUs, int renderedFrames) { }
     /** SPS coded frame includes macroblock padding; display frame includes SPS crop. */
     static record SpsGeometry(int codedWidth, int codedHeight, int displayWidth, int displayHeight) { }
@@ -133,6 +134,7 @@ public final class AnnexBDecoder {
 
     private static boolean highProfile(int profile) {
         return switch(profile) {
+            // profile_idc 144 carries the high-profile SPS fields too.
             case 44,83,86,100,110,118,122,128,134,135,138,139,144,244 -> true;
             default -> false;
         };
@@ -156,7 +158,7 @@ public final class AnnexBDecoder {
     }
 
     static int boundedCount(long value) {
-        if(value<0 || value>255) throw malformedSps();
+        if(value<0 || value>MAX_NUM_REF_FRAMES_IN_PIC_ORDER_CNT_CYCLE) throw malformedSps();
         return (int)value;
     }
 
