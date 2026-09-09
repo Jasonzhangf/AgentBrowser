@@ -6,6 +6,8 @@
 # END APPSDK MANAGED
 
 
+
+
 # Local worktrees and private execution evidence
 /playground/
 /.agent-collab/

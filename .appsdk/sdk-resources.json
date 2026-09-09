@@ -1,5 +1,5 @@
 {
-  "bundle_digest": "sha256:391d99fa6fa2d74e850b5b102dbdace7896a34319b2efe163e7c432c55b25281",
+  "bundle_digest": "sha256:612a11fb36dafebd5a60b27bd991c724c4926b1b3d7e8b5f2b1f99e32aad4c97",
   "manifest_digest": "sha256:28ef0950599c04eb9e045b2ee30d3e878d09ff07faef6dc1b287c47ea377b1f0",
   "resources": [
     {
@@ -286,13 +286,13 @@
     },
     {
       "class": "rules",
-      "digest": "sha256:3802ffd6a686b484949816939ef168e6eafbb9c729ac9fc8b20851cc4ea2dbb9",
+      "digest": "sha256:62f6e9d673cfb1dce90291fb94e64533bafb2677e41dda4279d2070d6cdf3625",
       "path": ".appsdk/rules/appsdk-project-governance.md",
       "source": "skills/appsdk-project-governance/SKILL.md"
     },
     {
       "class": "skills",
-      "digest": "sha256:3802ffd6a686b484949816939ef168e6eafbb9c729ac9fc8b20851cc4ea2dbb9",
+      "digest": "sha256:62f6e9d673cfb1dce90291fb94e64533bafb2677e41dda4279d2070d6cdf3625",
       "path": ".appsdk/skills/appsdk-project-governance/SKILL.md",
       "source": "skills/appsdk-project-governance/SKILL.md"
     },
