@@ -1345,22 +1345,13 @@ class CombinedRunner:
             if isinstance(receipt, Mapping)
             and nonnegative_integer(receipt.get("generation"))
             and positive_integer(receipt.get("ticket"))
+            and receipt.get("generation") == getattr(self.bridge, "active_generation", None)
         ]
         if not ack_receipts:
             ack_receipts = [
                 {"generation": frame.get("generation"), "ticket": frame.get("ticket")}
                 for frame in transport_frames
             ]
-        mac_status = next(
-            (
-                snapshot.get("value")
-                for snapshot in reversed(getattr(self, "mac_snapshots", []))
-                if isinstance(snapshot.get("value"), Mapping)
-                and isinstance(snapshot["value"].get("sessionId"), str)
-                and snapshot["value"].get("sessionId")
-            ),
-            None,
-        )
         last_frame = frames[-1] if frames else None
         if isinstance(last_frame, Mapping):
             mac_viewport = dimension_evidence(
@@ -1379,9 +1370,9 @@ class CombinedRunner:
         else:
             mac_viewport = unknown("Mac bridge emitted no active-generation frame header")
             mac_source = unknown("Mac bridge emitted no active-generation frame header")
-            mac_session = mac_status.get("sessionId") if isinstance(mac_status, Mapping) else None
-            mac_vr = mac_status.get("viewportRevision") if isinstance(mac_status, Mapping) else None
-            mac_dr = mac_status.get("documentRevision") if isinstance(mac_status, Mapping) else None
+            mac_session = None
+            mac_vr = None
+            mac_dr = None
         mac_side = {
             "session_id": known(mac_session, ["Mac bridge frame header"]) if isinstance(mac_session, str) and mac_session else unknown("Mac bridge active-generation frame omitted sessionId"),
             "attachment": unknown("Mac bridge snapshot intentionally omits numeric attachment_id; control ownership is exposed as controlMode"),
