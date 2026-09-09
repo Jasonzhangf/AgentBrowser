@@ -110,8 +110,10 @@ def test_adb_reverse_mapping() -> None:
     check(runner.adb_reverse_mappings(output.encode(), 52512) == [], "unrelated reverse ports must not be reported")
     check(runner.adb_reverse_mappings("52510\n", 52510) == [], "adb command output is not a reverse mapping row")
     check(runner.adb_reverse_mappings("host-11 tcp:52510 tcp:525100\n", 52510) == ["host-11 tcp:52510 tcp:525100"], "device-side mapping parser must retain changed host socket for ownership checks")
+    check(runner.adb_reverse_mappings("host-11 tcp:52510 tcp:52510\n", 52510, "100.104.163.65:5555") == ["host-11 tcp:52510 tcp:52510"], "scoped adb listing may expose a host-local alias for the selected serial")
     check(runner.exact_adb_reverse_mapping(["host-11 tcp:52510 tcp:525100"], "host-11", 52510) is None, "cleanup must reject a changed host socket")
     check(runner.exact_adb_reverse_mapping(["host-11 tcp:52510 tcp:52510"], "host-11", 52510) == "host-11 tcp:52510 tcp:52510", "cleanup must accept only the exact owned mapping")
+    check(runner.exact_adb_reverse_mapping(["host-11 tcp:52510 tcp:52510"], "100.104.163.65:5555", 52510) == "host-11 tcp:52510 tcp:52510", "cleanup must bind the scoped host alias to the selected serial")
 
 
 def test_typed_evidence() -> None:

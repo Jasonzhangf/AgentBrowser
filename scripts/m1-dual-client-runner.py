@@ -314,15 +314,27 @@ def adb_reverse_mappings(output: bytes | str, device_port: int, serial: Optional
         line.strip()
         for line in text.splitlines()
         if len(line.split()) == 3
-        and (serial is None or line.split()[0] == serial)
+        # `adb -s <serial> reverse --list` scopes the listing to the selected
+        # device, but recent adb servers print a host-local alias (for example
+        # `host-11`) instead of the remote serial in the first column. The
+        # command scope is the ownership proof; retain the alias for exact
+        # cleanup while still rejecting malformed rows and wrong ports.
+        and (serial is None or line.split()[0] == serial or line.split()[0].startswith("host-"))
         and line.split()[1] == device
     ]
 
 
 def exact_adb_reverse_mapping(rows: Sequence[str], serial: str, port: int) -> Optional[str]:
-    expected = f"{serial} tcp:{port} tcp:{port}"
-    matches = [row for row in rows if row == expected]
-    return expected if len(matches) == 1 else None
+    expected_device = f"tcp:{port}"
+    matches = [
+        row
+        for row in rows
+        if len(row.split()) == 3
+        and row.split()[1] == expected_device
+        and row.split()[2] == expected_device
+        and (row.split()[0] == serial or row.split()[0].startswith("host-"))
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def environment_identity(
