@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PixelCopy;
@@ -74,8 +75,30 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         } while(SystemClock.elapsedRealtime()<deadline);
         fail("Viewport declaration lost: expected "+width+"x"+height+", status="+js("JSON.stringify("+STATUS+")"));
     }
+    private void awaitInputWindow() throws Exception {
+        long deadline=SystemClock.elapsedRealtime()+6000;
+        boolean[] ready={false};
+        do {
+            getInstrumentation().runOnMainSync(()->{
+                android.view.View decor=activity.getWindow().getDecorView();
+                ready[0]=activity.hasWindowFocus()&&decor.isShown()&&activity.video.isShown()
+                    &&activity.video.getWindowToken()!=null&&activity.video.getWidth()>0&&activity.video.getHeight()>0;
+            });
+            if(ready[0])return;
+            SystemClock.sleep(50);
+        } while(SystemClock.elapsedRealtime()<deadline);
+        fail("Activity Surface window did not become focused for real input");
+    }
+    private void injectPointer(MotionEvent event) {
+        if((event.getSource()&InputDevice.SOURCE_CLASS_POINTER)==0)event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        // Instrumentation.sendPointerSync is targeted at the instrumentation UID on Android 16.
+        // UiAutomation is the supported cross-window test ingress; focus and geometry are checked
+        // by awaitInputWindow and the caller before any event is sent.
+        assertTrue("UiAutomation input injection",getInstrumentation().getUiAutomation().injectInputEvent(event,true));
+    }
     private void touch(float x,float y)throws Exception{
         until(STATUS+".inputReady",6000);
+        awaitInputWindow();
         float[] location=new float[2];
         getInstrumentation().runOnMainSync(()->{
             int[] origin=new int[2];activity.video.getLocationOnScreen(origin);
@@ -85,10 +108,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         long now=SystemClock.uptimeMillis();
         MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,location[0],location[1],0);
         MotionEvent up=MotionEvent.obtain(now,now+10,MotionEvent.ACTION_UP,location[0],location[1],0);
-        try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(up);}finally{down.recycle();up.recycle();}
+        try{injectPointer(down);injectPointer(up);}finally{down.recycle();up.recycle();}
     }
     private void swipe(float x,float fromY,float toY)throws Exception{
         until(STATUS+".inputReady",6000);
+        awaitInputWindow();
         float[] location=new float[3];
         getInstrumentation().runOnMainSync(()->{
             int[] origin=new int[2];activity.video.getLocationOnScreen(origin);
@@ -100,7 +124,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,location[0],location[1],0);
         MotionEvent move=MotionEvent.obtain(time,time+50,MotionEvent.ACTION_MOVE,location[0],location[2],0);
         MotionEvent up=MotionEvent.obtain(time,time+100,MotionEvent.ACTION_UP,location[0],location[2],0);
-        try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(move);getInstrumentation().sendPointerSync(up);}
+        try{injectPointer(down);injectPointer(move);injectPointer(up);}
         finally{down.recycle();move.recycle();up.recycle();}
     }
     private void interruptedTouch(boolean resize)throws Exception{
