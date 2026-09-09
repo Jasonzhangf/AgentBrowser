@@ -1,4 +1,4 @@
-"""Strict parser for the Android NetworkDeviceTest instrumentation contract."""
+"""Strict parser for Android instrumentation result contracts."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ class InstrumentationExpectation:
     test_count: int
     summary: str
     instrumentation_code: int
+    test_entries: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -145,10 +146,13 @@ def _failed(
     )
 
 
-def parse_instrumentation_result(output: bytes) -> InstrumentationResult:
-    """Parse one complete NetworkDeviceTest result, failing closed."""
+def parse_instrumentation_result(
+    output: bytes,
+    expected: Optional[InstrumentationExpectation] = None,
+) -> InstrumentationResult:
+    """Parse one complete instrumentation result, failing closed."""
 
-    expected = _expected()
+    expected = _expected() if expected is None else expected
     if not isinstance(output, bytes):
         return _failed(expected, _observation([]), "OUTPUT_TYPE_INVALID", "instrumentation output must be bytes")
     try:
@@ -189,8 +193,13 @@ def parse_instrumentation_result(output: bytes) -> InstrumentationResult:
         return _failed(expected, observed, "TEST_COUNT_MISMATCH", "instrumentation numtests does not match the expected test count")
     if observed.test_count != expected.test_count:
         return _failed(expected, observed, "TEST_COUNT_MISMATCH", "instrumentation test count does not match the expected test count")
-    if any(value != expected.test_class for value in observed.classes):
-        return _failed(expected, observed, "TEST_ENTRY_MISMATCH", "instrumentation output does not identify the expected NetworkDeviceTest entry")
+    if expected.test_entries:
+        expected_entries = tuple(entry for entry in expected.test_entries for _ in range(2))
+        observed_entries = tuple(zip(observed.classes, observed.tests))
+        if observed_entries != expected_entries:
+            return _failed(expected, observed, "TEST_ENTRY_MISMATCH", "instrumentation output does not identify the expected test entries")
+    elif any(value != expected.test_class for value in observed.classes):
+        return _failed(expected, observed, "TEST_ENTRY_MISMATCH", "instrumentation output does not identify the expected test entry")
     if observed.summary != expected.summary:
         return _failed(expected, observed, "SUMMARY_INVALID", "instrumentation success summary is not the expected summary")
     if observed.completed_tests != expected.test_count:
