@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Focused checks for the M1 combined replay's validation and evidence rules."""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+import json
+import math
+import pathlib
+import sys
+import tempfile
+from typing import Any, Callable
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+RUNNER_PATH = ROOT / "scripts" / "m1-dual-client-runner.py"
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("agentbrowser_m1_dual_runner_tests", RUNNER_PATH)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"unable to load {RUNNER_PATH}")
+runner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = runner
+spec.loader.exec_module(runner)
+
+
+def check(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def raises(expected: type[BaseException], function: Callable[[], Any], message: str) -> None:
+    try:
+        function()
+    except expected:
+        return
+    raise AssertionError(message)
+
+
+def arguments(*values: str):
+    return runner.parser().parse_args(values)
+
+
+def test_argument_validation() -> None:
+    raises(
+        ValueError,
+        lambda: runner.build_arguments(arguments("--run-id", "bad id", "--dry-run")),
+        "run IDs with whitespace must be rejected",
+    )
+    raises(
+        ValueError,
+        lambda: runner.build_arguments(arguments("--bind-ip", "192.0.2.10", "--dry-run")),
+        "non-loopback bind addresses must be rejected",
+    )
+    raises(
+        ValueError,
+        lambda: runner.build_arguments(arguments("--android-serial", "device with-space")),
+        "real runs must reject serials containing whitespace",
+    )
+    raises(
+        ValueError,
+        lambda: runner.build_arguments(arguments("--timeout", "-1", "--dry-run")),
+        "negative timeout must be rejected",
+    )
+    for option in ("--timeout", "--poll", "--android-test-timeout"):
+        for value in ("nan", "inf", "-inf"):
+            raises(ValueError, lambda option=option, value=value: runner.build_arguments(arguments(f"{option}={value}", "--dry-run")), f"{option} {value} must be rejected")
+    raises(
+        ValueError,
+        lambda: runner.build_arguments(arguments("--android-test-class", "com.example.Other", "--dry-run")),
+        "instrumentation class must be fixed",
+    )
+    raises(
+        ValueError,
+        lambda: runner.build_arguments(arguments("--android-test-component", "com.example.OtherRunner", "--dry-run")),
+        "instrumentation component must be fixed",
+    )
+    relative = runner.build_arguments(
+        arguments("--dry-run", "--fixture-bin", "fixture", "--run-id", "relative-path"),
+        cwd=pathlib.Path("/tmp/m1-relative-cwd"),
+    )
+    check(relative.fixture_bin == pathlib.Path("/tmp/m1-relative-cwd/fixture").resolve(), "relative executable paths must bind to cwd")
+
+
+def test_environment_identity() -> None:
+    responses = {
+        ("get-state",): (0, "device\n"),
+        ("shell", "getprop", "ro.product.model"): (0, "Test phone\n"),
+        ("shell", "getprop", "ro.build.version.sdk"): (0, "36\n"),
+        ("shell", "getprop", "ro.product.cpu.abi"): (0, "arm64-v8a\n"),
+    }
+
+    def fake_adb(command):
+        return responses[tuple(command)]
+
+    value = runner.environment_identity("serial-1", fake_adb)
+    android = value["android"]
+    check(android["availability"] == "known", "fake device must be recognized as available")
+    check(android["model"] == "Test phone" and android["sdk"] == "36", "ADB identity fields must be recorded")
+    check(android["abi"] == "arm64-v8a" and android["errors"] == [], "complete ADB identity must have no errors")
+
+
+def test_adb_reverse_mapping() -> None:
+    output = "host-19 tcp:52510 tcp:52510\nhost-19 tcp:52511 tcp:52511\n"
+    check(
+        runner.adb_reverse_mappings(output, 52510) == ["host-19 tcp:52510 tcp:52510"],
+        "reverse listing must identify the selected device-side port",
+    )
+    check(runner.adb_reverse_mappings(output.encode(), 52512) == [], "unrelated reverse ports must not be reported")
+    check(runner.adb_reverse_mappings("52510\n", 52510) == [], "adb command output is not a reverse mapping row")
+    check(runner.adb_reverse_mappings("host-11 tcp:52510 tcp:525100\n", 52510) == ["host-11 tcp:52510 tcp:525100"], "device-side mapping parser must retain changed host socket for ownership checks")
+    check(runner.exact_adb_reverse_mapping(["host-11 tcp:52510 tcp:525100"], "host-11", 52510) is None, "cleanup must reject a changed host socket")
+    check(runner.exact_adb_reverse_mapping(["host-11 tcp:52510 tcp:52510"], "host-11", 52510) == "host-11 tcp:52510 tcp:52510", "cleanup must accept only the exact owned mapping")
+
+
+def test_typed_evidence() -> None:
+    check(runner.boolean_evidence(True, ["test"], "missing")["status"] == "known", "explicit true must be known")
+    check(runner.boolean_evidence(False, ["test"], "missing")["value"] is False, "explicit false must remain false")
+    check(runner.boolean_evidence(None, ["test"], "missing")["status"] == "unknown", "missing bool must remain unknown")
+    check(runner.combined_status({"one": runner.known(True, ["test"]), "two": runner.known(True, ["test"])}) == "proved", "known true dependencies must prove")
+    check(runner.combined_status({"one": runner.known(True, ["test"]), "two": runner.unknown("missing")}) == "unknown", "missing dependency must block proof")
+
+
+def test_acknowledged_active_frames() -> None:
+    class Bridge:
+        active_generation = 7
+        acked_tickets = {(7, 2), (6, 9)}
+        frames = [
+            {"generation": 6, "ticket": 9},
+            {"generation": 7, "ticket": 1},
+            {"generation": 7, "ticket": 2},
+        ]
+    check(runner.acknowledged_active_frames(Bridge()) == [{"generation": 7, "ticket": 2}], "only active-generation ACKed frames may support Mac evidence")
+
+
+def test_git_probe_failure_is_distinct() -> None:
+    check(runner.git_value(pathlib.Path("/definitely/missing/worktree"), "status") is None, "Git probe failure must remain distinguishable from clean output")
+
+
+def test_schema_and_comparison() -> None:
+    schema = runner.schema_document()
+    required = set(schema["required"])
+    check({"schema", "run_id", "candidate", "environment", "fixture", "sides", "cross_side", "required_claims", "result", "cleanup"} <= required, "schema must require the evidence roots")
+    check(schema["properties"]["result"]["enum"] == ["pending", "dry_run", "pass", "partial", "failed"], "schema result enum must include dry-run")
+
+    known = lambda value: runner.known(value, ["test"])
+    missing = runner.compare_field("session_id", {"host": {"session_id": known("s")}, "android": {}, "mac": {"session_id": known("s")}})
+    check(missing["status"] == "unknown" and missing["missing_sides"] == ["android"], "missing side must remain unknown")
+    mismatch = runner.compare_field("session_id", {"host": {"session_id": known("one")}, "android": {"session_id": known("two")}, "mac": {"session_id": known("one")}})
+    check(mismatch["status"] == "failed", "different side values must fail")
+    equal = runner.compare_field("session_id", {"host": {"session_id": known("same")}, "android": {"session_id": known("same")}, "mac": {"session_id": known("same")}})
+    check(equal["status"] == "proved", "equal complete side values must be proved")
+    check(runner.integer_pair([391.0, 845]) == [391, 845], "integer-valued protocol floats must normalize")
+    check(runner.integer_pair([391.5, 845]) is None, "fractional dimensions must not be rounded")
+    check(runner.combined_status({"one": runner.unknown("missing"), "two": {"status": "proved"}}) == "unknown", "dependent unknown must remain unknown")
+    check(runner.combined_status({"one": runner.failed("different"), "two": {"status": "proved"}}) == "failed", "dependent failure must remain failed")
+
+
+def test_result_classification() -> None:
+    check(runner.classify_result(None, {"claim": runner.unknown("not emitted")}) == "partial", "unknown claim must not become pass")
+    check(runner.classify_result(None, {"claim": runner.failed("different")}) == "failed", "failed claim must fail result")
+    check(runner.classify_result({"code": "FIRST"}, {"claim": {"status": "proved"}}) == "failed", "first failure must dominate claims")
+    check(runner.classify_result(None, {"claim": {"status": "proved"}}) == "pass", "complete proved claims may pass")
+
+
+def test_write_exclusive() -> None:
+    with tempfile.TemporaryDirectory(prefix="m1-dual-write-") as raw:
+        root = pathlib.Path(raw)
+        text_path = root / "nested" / "text.txt"
+        binary_path = root / "nested" / "bytes.bin"
+        runner.write_exclusive(text_path, "中文\n")
+        runner.write_exclusive(binary_path, b"\x00\xff")
+        check(text_path.read_text(encoding="utf-8") == "中文\n", "text evidence must preserve UTF-8")
+        check(binary_path.read_bytes() == b"\x00\xff", "binary evidence must preserve bytes")
+
+
+def test_schema_dry_run_switch() -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        code = runner.main(["--print-schema", "--dry-run"])
+    check(code == 2, "schema and dry-run must reject the ambiguous invocation")
+    check("mutually exclusive" in stderr.getvalue(), "ambiguous invocation must explain the rejection")
+
+
+def test_dry_run() -> None:
+    with tempfile.TemporaryDirectory(prefix="m1-dual-dry-run-") as raw:
+        evidence_dir = pathlib.Path(raw) / "evidence"
+        args = runner.build_arguments(
+            arguments(
+                "--dry-run",
+                "--run-id",
+                "dry-run-test",
+                "--evidence-dir",
+                str(evidence_dir),
+            )
+        )
+        combined = runner.CombinedRunner(args)
+        code = combined.dry_run()
+        check(code == 0, "dry-run must exit zero after validating its invocation")
+        evidence = json.loads((evidence_dir / "evidence.json").read_text(encoding="utf-8"))
+        check(evidence["result"] == "dry_run", "dry-run evidence must use dry_run result")
+        check(evidence["result"] != "pass" and evidence["unknown"], "dry-run must expose unknown runtime claims")
+
+
+def main() -> int:
+    tests = (
+        test_argument_validation,
+        test_environment_identity,
+        test_adb_reverse_mapping,
+        test_typed_evidence,
+        test_acknowledged_active_frames,
+        test_git_probe_failure_is_distinct,
+        test_schema_and_comparison,
+        test_result_classification,
+        test_write_exclusive,
+        test_schema_dry_run_switch,
+        test_dry_run,
+    )
+    for test in tests:
+        test()
+        print(f"PASS {test.__name__}")
+    print(f"M1 dual runner focused tests: {len(tests)} passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
