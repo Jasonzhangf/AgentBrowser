@@ -78,7 +78,9 @@ final class NetworkSession {
                 .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
             if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
-                .put("displayedDocumentRevision",displayed.documentRevision).put("displayedViewportRevision",displayed.viewportRevision);
+                .put("displayedDocumentRevision",displayed.documentRevision).put("displayedViewportRevision",displayed.viewportRevision)
+                .put("displayedCodedWidth",displayed.codedWidth).put("displayedCodedHeight",displayed.codedHeight)
+                .put("displayedVisibleWidth",displayed.visibleWidth).put("displayedVisibleHeight",displayed.visibleHeight);
             return value;
         }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_HOST_STATUS",invalid);}
     }

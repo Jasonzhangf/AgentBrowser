@@ -471,6 +471,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             assertEquals("No stale decoder callback after disconnect",frames,activity.annex.snapshot().getLong("renderedFrames"));
             click("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             assertEquals("Reconnect preserves live document",session,js(STATUS+".sessionId"));
+            JSONObject statusEvidence=new JSONObject(js("JSON.stringify("+STATUS+")"));
             Bitmap reconnected=capture("reconnected");assertTrue(Color.green(reconnected.getPixel(30,30))>160&&Color.red(reconnected.getPixel(30,30))<100);
             // Disconnecting the human controller suspends Agent control. Restore
             // it only through the real explicit takeover/release UI protocol.
@@ -482,6 +483,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true).put("addressNavigation",true)
                 .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
                 .put("viewport",viewport)
+                .put("statusEvidence",statusEvidence)
+                .put("sourceDimensions",new JSONObject().put("codedWidth",statusEvidence.optInt("displayedCodedWidth",-1)).put("codedHeight",statusEvidence.optInt("displayedCodedHeight",-1)))
+                .put("frameAck",new JSONObject().put("ticket",statusEvidence.optLong("displayedTicket",-1)).put("renderedFrames",statusEvidence.optInt("renderedFrames",-1)).put("displayed",true))
+                .put("operationReceipts",new org.json.JSONArray().put(new JSONObject().put("operation","observe").put("result","succeeded")).put(new JSONObject().put("operation","takeover").put("result","succeeded")).put(new JSONObject().put("operation","release").put("result","succeeded")))
                 .put("busyViewportCoalesced",true)
                 .put("hostRejectionKeepsConnection",true)
                 .put("reconnectPreservesDocument",true).put("backgroundRelease",true).put("staleCallbacksFenced",true)

@@ -1351,19 +1351,65 @@ class CombinedRunner:
             android_viewport = unknown("Android result omitted viewport dimensions")
             android_source = unknown("Android result omitted source dimensions")
         android_session = android.get("sessionId") if isinstance(android, Mapping) else None
+        status_evidence = android.get("statusEvidence") if isinstance(android, Mapping) else None
+        if not isinstance(status_evidence, Mapping):
+            status_evidence = {}
+        android_viewport_revision = integer_evidence(
+            status_evidence.get("viewportRevision"),
+            ["android-result.json:statusEvidence.viewportRevision"],
+            "Android result statusEvidence omitted viewport revision",
+        )
+        android_document_revision = integer_evidence(
+            status_evidence.get("documentRevision"),
+            ["android-result.json:statusEvidence.documentRevision"],
+            "Android result statusEvidence omitted document revision",
+        )
+        android_control_epoch = integer_evidence(
+            status_evidence.get("epoch"),
+            ["android-result.json:statusEvidence.epoch"],
+            "Android result statusEvidence omitted control epoch",
+        )
+        explicit_source = android.get("sourceDimensions") if isinstance(android, Mapping) else None
+        if isinstance(explicit_source, Mapping):
+            android_source = dimension_evidence(
+                [explicit_source.get("codedWidth"), explicit_source.get("codedHeight")],
+                ["android-result.json:sourceDimensions"],
+                "Android result sourceDimensions omitted positive coded dimensions",
+            )
+        explicit_frame_ack = android.get("frameAck") if isinstance(android, Mapping) else None
+        android_frame_ack = (
+            known(dict(explicit_frame_ack), ["android-result.json:frameAck"])
+            if isinstance(explicit_frame_ack, Mapping)
+            and explicit_frame_ack.get("displayed") is True
+            and nonnegative_integer(explicit_frame_ack.get("ticket"))
+            and nonnegative_integer(explicit_frame_ack.get("renderedFrames"))
+            else unknown("Android result omitted a displayed frame acknowledgement")
+        )
+        operation_receipts = android.get("operationReceipts") if isinstance(android, Mapping) else None
+        android_actions = {
+            name: unknown("Android result omitted per-operation receipts")
+            for name in ("observe", "takeover", "release")
+        }
+        if isinstance(operation_receipts, list):
+            succeeded = {
+                item.get("operation")
+                for item in operation_receipts
+                if isinstance(item, Mapping) and item.get("result") == "succeeded"
+            }
+            for name in android_actions:
+                if name in succeeded:
+                    android_actions[name] = known(True, [f"android-result.json:operationReceipts[{name}]"])
         android_side = {
             "session_id": known(android_session, ["android-result.json:sessionId"]) if isinstance(android_session, str) and android_session else unknown("Android result omitted sessionId"),
             "attachment": unknown("Android instrumentation result does not persist attachment_id"),
             "viewport": android_viewport,
             "source_dimensions": android_source,
-            "viewport_revision": unknown("Android instrumentation result does not persist viewport revision"),
-            "document_revision": unknown("Android instrumentation result does not persist document revision"),
-            "control_epoch": unknown("Android instrumentation result does not persist control epoch"),
-            "frame_ack": unknown("Android instrumentation result does not export frame ACK tickets"),
+            "viewport_revision": android_viewport_revision,
+            "document_revision": android_document_revision,
+            "control_epoch": android_control_epoch,
+            "frame_ack": android_frame_ack,
             "actions": {
-                "observe": unknown("NetworkDeviceTest does not emit per-operation receipts"),
-                "takeover": unknown("NetworkDeviceTest does not emit per-operation receipts"),
-                "release": unknown("NetworkDeviceTest does not emit per-operation receipts"),
+                **android_actions,
                 "rotation": boolean_evidence(android.get("rotationPreservesState"), ["android-result.json:rotationPreservesState"], "Android result omitted rotationPreservesState"),
                 "disconnect": boolean_evidence(android.get("backgroundRelease"), ["android-result.json:backgroundRelease"], "Android result omitted backgroundRelease"),
                 "reconnect": boolean_evidence(android.get("reconnectPreservesDocument"), ["android-result.json:reconnectPreservesDocument"], "Android result omitted reconnectPreservesDocument"),
@@ -1404,7 +1450,13 @@ class CombinedRunner:
             "source_dimensions": mac_source,
             "viewport_revision": integer_evidence(mac_vr, ["Mac bridge frame header"], "Mac bridge active-generation frame emitted no viewport revision"),
             "document_revision": integer_evidence(mac_dr, ["Mac bridge frame header"], "Mac bridge active-generation frame emitted no document revision"),
-            "control_epoch": unknown("Mac bridge frame header does not emit control epoch"),
+            "control_epoch": (
+                integer_evidence(
+                    self.mac_operations[-1].get("after", {}).get("epoch") if self.mac_operations else None,
+                    ["Mac bridge control response"],
+                    "Mac bridge control response omitted control epoch",
+                )
+            ),
             "frame_ack": unknown("combined runner sends ack_frame to advance bridge transport but does not observe native display"),
             "frame_transport_ack": known(
                 {
