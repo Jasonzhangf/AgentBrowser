@@ -96,6 +96,10 @@ async fn close_endpoint(endpoint: EndpointChannel) -> Result<()> {
     let mut socket = sink.reunite(stream).map_err(|_| {
         RelayHostError::Transport("Obscura endpoint channel halves mismatched".into())
     })?;
+    close_endpoint_socket(&mut socket).await
+}
+
+async fn close_endpoint_socket(socket: &mut EndpointSocket) -> Result<()> {
     let websocket_result = tokio::time::timeout(ENDPOINT_TIMEOUT, socket.close(None)).await;
     let websocket_result = match websocket_result {
         Ok(Ok(()))
@@ -651,17 +655,31 @@ async fn forward_tunnel(
 ) -> Result<()> {
     let (mut control, media_token) =
         connect_endpoint(endpoint_url, endpoint_tls, "/control", None).await?;
-    let ready = next_endpoint_message(&mut control).await?;
-    let Message::Text(ready) = ready else {
-        return Err(RelayHostError::Protocol(
-            "Obscura control Ready must be text".into(),
-        ));
+    let ready = match next_endpoint_message(&mut control).await {
+        Ok(ready) => ready,
+        Err(error) => {
+            return combine_endpoint_results(
+                Err(error),
+                [close_endpoint_socket(&mut control).await],
+            )
+        }
     };
-    tunnel
+    let Message::Text(ready) = ready else {
+        return combine_endpoint_results(
+            Err(RelayHostError::Protocol(
+                "Obscura control Ready must be text".into(),
+            )),
+            [close_endpoint_socket(&mut control).await],
+        );
+    };
+    if let Err(error) = tunnel
         .control()
         .send(ready.as_ref())
         .await
-        .map_err(RelayHostError::from)?;
+        .map_err(RelayHostError::from)
+    {
+        return combine_endpoint_results(Err(error), [close_endpoint_socket(&mut control).await]);
+    }
     let (control_sink, control_stream) = control.split();
     let control = EndpointChannel {
         sink: Mutex::new(control_sink),
