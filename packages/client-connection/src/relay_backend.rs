@@ -140,15 +140,13 @@ impl Backend for RelayBackend {
 
     fn close<'a>(&'a mut self) -> BackendFuture<'a, ()> {
         Box::pin(async move {
-            let (control_result, media_result) = if let Some(tunnel) = self.tunnel.as_ref() {
-                // Relay Host closes the endpoint control attachment first and
-                // drains endpoint media until it emits the terminal marker.
-                // Keep media open long enough to receive that marker before
-                // closing the relay media channel itself.
+            let (media_result, control_result) = if let Some(tunnel) = self.tunnel.as_ref() {
+                // Relay media has no browser-level close request. Close its
+                // secure writer first so the Host can close the endpoint media
+                // socket, then close the control attachment.
+                let media_result = tunnel.media().shutdown().await.map_err(map_relay_failure);
                 let control_result = tunnel.control().shutdown().await.map_err(map_relay_failure);
-                let media_result = drain_media_until_closed(tunnel).await;
-                let media_shutdown = tunnel.media().shutdown().await.map_err(map_relay_failure);
-                (control_result, media_result.and(media_shutdown))
+                (media_result, control_result)
             } else {
                 (Ok(()), Ok(()))
             };
@@ -162,24 +160,6 @@ impl Backend for RelayBackend {
                 ))),
             }
         })
-    }
-}
-
-async fn drain_media_until_closed(tunnel: &SecureRelayTunnel) -> Result<(), Failure> {
-    loop {
-        let bytes = tokio::time::timeout(MEDIA_TIMEOUT, tunnel.media().recv())
-            .await
-            .map_err(|_| Failure::Transport("Relay media close marker timed out".into()))?
-            .map_err(map_relay_failure)?;
-        let video = decode_video(&bytes)?;
-        if let crate::protocol::VideoPacket::Closed { session_id } = video.packet {
-            if session_id != tunnel.session_id() {
-                return Err(Failure::Protocol(
-                    "Relay media close marker session does not match tunnel".into(),
-                ));
-            }
-            return Ok(());
-        }
     }
 }
 
