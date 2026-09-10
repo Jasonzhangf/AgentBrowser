@@ -262,6 +262,10 @@ final class NetworkSession {
         if(commandPending||queuedCommand==null||!hostReady(host)
                 ||!java.util.Objects.equals(requestedViewport,submittedViewport))return;
         CommandRequest next=queuedCommand;queuedCommand=null;
+        if(!canQueueNavigation(next.epoch)){
+            error="STALE_CONTROL";
+            return;
+        }
         if(next.op>=3&&next.op!=6&&!inputReady()){queuedCommand=next;return;}
         startCommand(next);
     }
