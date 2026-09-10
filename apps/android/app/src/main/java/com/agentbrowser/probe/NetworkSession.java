@@ -261,11 +261,15 @@ final class NetworkSession {
     private synchronized void startQueuedIfReady(){
         if(commandPending||queuedCommand==null||!hostReady(host)
                 ||!java.util.Objects.equals(requestedViewport,submittedViewport))return;
-        CommandRequest next=queuedCommand;queuedCommand=null;
+        if(displayed==null||displayed.documentRevision!=host.optLong("document_revision",-1)
+                ||displayed.viewportRevision!=host.optLong("viewport_revision",-1))return;
+        CommandRequest next=queuedCommand;
         if(!canQueueNavigation(next.epoch)){
+            queuedCommand=null;
             error="STALE_CONTROL";
             return;
         }
+        queuedCommand=null;
         if(next.op>=3&&next.op!=6&&!inputReady()){queuedCommand=next;return;}
         startCommand(next);
     }
