@@ -51,7 +51,7 @@ execFileSync('openssl', [
   '-days', '1', '-subj', '/CN=AgentBrowser account fixture Relay',
 ], {stdio: 'ignore'});
 writeFileSync(extFile,
-  `subjectAltName=DNS:localhost,IP:127.0.0.1,IP:${advertiseHost}\n` +
+  `subjectAltName=DNS:localhost,IP:127.0.0.1,IP:${bindHost},IP:${advertiseHost}\n` +
   'basicConstraints=critical,CA:FALSE\n' +
   'keyUsage=critical,digitalSignature,keyEncipherment\n' +
   'extendedKeyUsage=serverAuth\n');
@@ -78,7 +78,7 @@ const relay = createRelayServer({store, directoryTtlMs: 30_000, ticketTtlMs: 10_
 }});
 const relayOrigin = await relay.listen(0, bindHost);
 const relayPort = new URL(relayOrigin).port;
-const localOrigin = `https://127.0.0.1:${relayPort}`;
+const bindOrigin = relayOrigin;
 const origin = `https://${advertiseHost}:${relayPort}`;
 const sockets = [];
 let hostControl;
@@ -97,7 +97,7 @@ function connect(url, options = {}) {
 }
 
 async function startHost() {
-  hostControl = await connect(`${localOrigin.replace(/^https:/, 'wss:')}/v2/control/host/${host.id}`);
+  hostControl = await connect(`${bindOrigin.replace(/^https:/, 'wss:')}/v2/control/host/${host.id}`);
   sockets.push(hostControl);
   return new Promise((resolveReady, reject) => {
     let ready = false;

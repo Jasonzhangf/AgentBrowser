@@ -77,3 +77,5 @@ with (evidence / "fixture.log").open("wb") as log:
                 raise RuntimeError("Fixture shutdown deadline")
         if fixture.returncode != 0:
             raise RuntimeError(f"Fixture failed: {fixture.returncode}")
+        teardown_log = (evidence / "fixture.log").read_text()
+        assert "Host media ended without Closed" not in teardown_log, teardown_log

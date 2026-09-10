@@ -114,7 +114,9 @@ public class AnnexBDeviceTest extends InstrumentationTestCase {
             // Structurally valid NAL headers, invalid codec contents: must fail decode, not hang or report a frame.
             byte[] broken={0,0,1,0x67,66,0,0,1,0x68,1,0,0,1,0x65,1};
             try { submit(new AccessUnit(broken,160,120,160,120,100000,3)).get(5,TimeUnit.SECONDS);fail("corrupt codec input accepted"); }
-            catch(java.util.concurrent.ExecutionException expected) { }
+            catch(java.util.concurrent.ExecutionException expected) {
+                assertTrue("broken fixture must preserve parser error",expected.getCause().toString().contains("MALFORMED_SPS"));
+            }
             released();assertEquals("error",activity.annex.snapshot().getString("state"));
             try { submit(new AccessUnit(before,162,120,162,120,100001,4)).get(5,TimeUnit.SECONDS);fail("coded size mismatch accepted"); }
             catch(java.util.concurrent.ExecutionException expected) { assertTrue(expected.toString(),expected.getCause().toString().contains("DIMENSIONS_MISMATCH")); }

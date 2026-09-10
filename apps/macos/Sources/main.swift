@@ -39,6 +39,7 @@ private struct Snapshot: Decodable {
     let codec: String
     let error: String?
     let connectionState: String?
+    let controlMode: String?
     let sessionId: String?
     let displayedTicket: UInt64?
     let epoch: UInt64?
@@ -248,6 +249,13 @@ private final class VideoSurfaceView: NSView {
     private var visibleHeight = 0
     private var activeSessionID: String?
     private(set) var activeGeneration: UInt64?
+    private struct PendingScroll {
+        let epoch: UInt64
+        let raw: String
+    }
+    private var pendingScrolls: [PendingScroll] = []
+    private var inputEpoch: UInt64?
+    private var inputControlMode: String?
 
     var onDisplayed: ((UInt64) -> Void)?
     var onDecodeError: ((UInt64, String) -> Void)?
@@ -274,6 +282,12 @@ private final class VideoSurfaceView: NSView {
     }
 
     func apply(snapshot: Snapshot) {
+        let epochChanged = inputEpoch != nil && inputEpoch != snapshot.epoch
+        inputEpoch = snapshot.epoch
+        inputControlMode = snapshot.controlMode
+        if epochChanged || snapshot.controlMode != "control" {
+            pendingScrolls.removeAll()
+        }
         if snapshot.connectionState == "stopped" || snapshot.connectionState == "error" || snapshot.released {
             reset()
         }
@@ -283,10 +297,14 @@ private final class VideoSurfaceView: NSView {
                 activeSessionID = sessionId
             }
         }
+        flushPendingScrolls(snapshot: snapshot)
         needsDisplay = true
     }
 
     func reset() {
+        pendingScrolls.removeAll()
+        inputEpoch = nil
+        inputControlMode = nil
         invalidateDecoder(clearParameterSets: false)
         image = nil
         visibleWidth = 0
@@ -358,14 +376,30 @@ private final class VideoSurfaceView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard inputReady?() == true, let epoch = currentEpoch?() else { return }
+        let ready = inputReady?() == true
+        guard let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
-        guard let coordinates = pageCoordinates(point), event.scrollingDeltaX.isFinite, event.scrollingDeltaY.isFinite else { return }
+        guard let coordinates = pageCoordinates(point), event.scrollingDeltaX.isFinite, event.scrollingDeltaY.isFinite else {
+            return
+        }
         // AppKit reports the physical wheel direction; browser wheel input
         // uses positive deltas to advance the page toward right/down.
         let dx = String(format: "%.4f", -event.scrollingDeltaX)
         let dy = String(format: "%.4f", -event.scrollingDeltaY)
-        onInput?("{\"op\":\"scroll\",\"epoch\":\(epoch),\"x\":\(coordinates.x),\"y\":\(coordinates.y),\"dx\":\(dx),\"dy\":\(dy)}")
+        let raw = "{\"op\":\"scroll\",\"epoch\":\(epoch),\"x\":\(coordinates.x),\"y\":\(coordinates.y),\"dx\":\(dx),\"dy\":\(dy)}"
+        if ready {
+            onInput?(raw)
+        } else if inputControlMode == "control" {
+            pendingScrolls.append(PendingScroll(epoch: epoch, raw: raw))
+        }
+    }
+
+    private func flushPendingScrolls(snapshot: Snapshot) {
+        guard snapshot.inputReady, snapshot.controlMode == "control",
+              let epoch = snapshot.epoch, let pending = pendingScrolls.first,
+              pending.epoch == epoch, let onInput else { return }
+        pendingScrolls.removeFirst()
+        onInput(pending.raw)
     }
 
     private func pageCoordinates(_ point: NSPoint) -> (x: String, y: String)? {

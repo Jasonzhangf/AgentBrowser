@@ -72,7 +72,14 @@ assert.deepEqual(externalPaths.map(path => hash(readFileSync(path))), externalHa
 assert.deepEqual(readFileSync(artifactFile), artifactBytes, 'Artifact record drift');
 function persist(path, value) { writeFileSync(path, JSON.stringify(value, null, 2) + '\n', {flag: 'wx'}); }
 persist(`${directory}/external-inputs.json`, externalPaths.map((path, i) => ({path, hash: externalHashes[i]})));
-const ids = {white: `whitebox-${prefix}`, black: `blackbox-${prefix}`};
+const ids = {
+  white: `whitebox-${prefix}`,
+  direct: `blackbox-${prefix}`,
+  webrtc: `webrtc-${prefix}`,
+  relay: `relay-${prefix}`,
+  relayReject: `relay-reject-${prefix}`,
+  relayConnection: `relay-connection-${prefix}`,
+};
 function evidence(id, phase, producer, time, log) {
   persist(`${records}/${id}.json`, {evidence_id: id, issue_id: moduleId, experiment_id: `${moduleId}-${prefix}`,
     phase, kind: phase === 'development_whitebox' ? 'gate' : 'sample_replay', source_commit: head,
@@ -82,14 +89,23 @@ function evidence(id, phase, producer, time, log) {
     scope_hash: scopeHash, raw_evidence: log});
 }
 evidence(ids.white, 'development_whitebox', whiteProducer, whiteTime, `${directory}/whitebox.log`);
-evidence(ids.black, 'deployed_blackbox', blackProducer, blackTime, `${directory}/blackbox.log`);
+const replayEvidence = [
+  ['direct', `${directory}/blackbox.log`],
+  ['webrtc', `${directory}/webrtc-blackbox.log`],
+  ['relay', `${directory}/relay-blackbox.log`],
+  ['relayReject', `${directory}/relay-reject-blackbox.log`],
+  ['relayConnection', `${directory}/relay-connection-blackbox.log`],
+];
+for (const [key, log] of replayEvidence) {
+  evidence(ids[key], 'deployed_blackbox', blackProducer, blackTime, log);
+}
 persist(candidatePath, {fix_candidate_id: `candidate-${prefix}`, issue_id: moduleId, module_id: moduleId,
   worktree_id: git('rev-parse', '--show-toplevel'), base_commit: base, head_commit: head, tree_hash: tree,
   diff_hash: hash(run('git', ['diff', '--binary', base, head])), design_id: 'docs/client-connection.md', owner: identity,
   scope_hash: scopeHash, changed_paths: paths, verification_evidence_ids: Object.values(ids), created_at: candidateTime});
 persist(validationPath, {validation_id: `validation-${prefix}`, issue_id: moduleId, module_id: moduleId,
   fix_candidate_id: `candidate-${prefix}`, candidate_commit: head, candidate_tree_hash: tree, artifact_hash: artifact.artifact_hash,
-  whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.black],
+  whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: replayEvidence.map(([key]) => ids[key]),
   deployment: {environment_id: environment, entrypoint, producer: blackProducer, observed_at: blackTime},
   source_unchanged: true, result: 'pass', created_at: now()});
 run('appsdk', ['verify', '--review-admission', '--module', moduleId], `${directory}/admission.log`);

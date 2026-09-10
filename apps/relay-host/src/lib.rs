@@ -4,7 +4,7 @@
 //! byte-preserving forwarding to an already-running Obscura endpoint. It does
 //! not read Host sockets, interpret browser operations, or own Session state.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 use agentbrowser_connection::{
     protocol::{Command, Mode, Request, Response, ResultValue},
@@ -20,6 +20,7 @@ use rustls::{
 };
 use thiserror::Error;
 use tokio::{
+    io::AsyncWriteExt,
     net::TcpStream,
     sync::{mpsc, Mutex, Semaphore, TryAcquireError},
     task::JoinSet,
@@ -87,6 +88,72 @@ struct EndpointTlsIdentity {
 struct EndpointChannel {
     sink: Mutex<SplitSink<EndpointSocket, Message>>,
     stream: Mutex<SplitStream<EndpointSocket>>,
+}
+
+async fn close_endpoint(endpoint: EndpointChannel) -> Result<()> {
+    let sink = endpoint.sink.into_inner();
+    let stream = endpoint.stream.into_inner();
+    let mut socket = sink.reunite(stream).map_err(|_| {
+        RelayHostError::Transport("Obscura endpoint channel halves mismatched".into())
+    })?;
+    close_endpoint_socket(&mut socket).await
+}
+
+async fn close_endpoint_socket(socket: &mut EndpointSocket) -> Result<()> {
+    let websocket_result = tokio::time::timeout(ENDPOINT_TIMEOUT, socket.close(None)).await;
+    let websocket_result = match websocket_result {
+        Ok(Ok(()))
+        | Ok(Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed))
+        | Ok(Err(tokio_tungstenite::tungstenite::Error::Protocol(
+            tokio_tungstenite::tungstenite::error::ProtocolError::SendAfterClosing,
+        ))) => Ok(()),
+        Ok(Err(error)) => Err(RelayHostError::Transport(format!(
+            "Obscura endpoint WebSocket close failed: {error}"
+        ))),
+        Err(_) => Err(RelayHostError::Transport(
+            "Obscura endpoint WebSocket close timed out".into(),
+        )),
+    };
+    let tls_result = tokio::time::timeout(ENDPOINT_TIMEOUT, socket.get_mut().shutdown()).await;
+    let tls_result = match tls_result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(RelayHostError::Transport(format!(
+            "Obscura endpoint TLS close_notify failed: {error}"
+        ))),
+        Err(_) => Err(RelayHostError::Transport(
+            "Obscura endpoint TLS close_notify timed out".into(),
+        )),
+    };
+    match (websocket_result, tls_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(websocket_error), Err(tls_error)) => Err(RelayHostError::Transport(format!(
+            "{websocket_error}; {tls_error}"
+        ))),
+    }
+}
+
+fn combine_endpoint_results(
+    result: Result<()>,
+    close_results: impl IntoIterator<Item = Result<()>>,
+) -> Result<()> {
+    let close_errors: Vec<RelayHostError> =
+        close_results.into_iter().filter_map(Result::err).collect();
+    if close_errors.is_empty() {
+        return result;
+    }
+    let close_message = close_errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ");
+    match result {
+        Ok(()) if close_errors.len() == 1 => Err(close_errors.into_iter().next().unwrap()),
+        Ok(()) => Err(RelayHostError::Transport(close_message)),
+        Err(error) => Err(RelayHostError::Transport(format!(
+            "{error}; endpoint close failed: {close_message}"
+        ))),
+    }
 }
 
 pub async fn run(settings: RelayHostSettings) -> Result<()> {
@@ -557,6 +624,30 @@ async fn send_endpoint_text<T: serde::Serialize>(
         .map_err(|error| RelayHostError::Transport(error.to_string()))
 }
 
+async fn finish_after_control<F>(
+    control_result: Result<()>,
+    media_result: F,
+    drain_timeout: Duration,
+) -> Result<()>
+where
+    F: Future<Output = Result<()>>,
+{
+    match control_result {
+        Ok(()) => tokio::time::timeout(drain_timeout, media_result)
+            .await
+            .map_err(|_| RelayHostError::Transport("Obscura media drain timed out".into()))?,
+        Err(error) => match tokio::time::timeout(drain_timeout, media_result).await {
+            Ok(Ok(())) => Err(error),
+            Ok(Err(media_error)) => Err(RelayHostError::Transport(format!(
+                "{error}; media forward failed: {media_error}"
+            ))),
+            Err(_) => Err(RelayHostError::Transport(format!(
+                "{error}; media forward failed: Obscura media drain timed out"
+            ))),
+        },
+    }
+}
+
 async fn forward_tunnel(
     tunnel: &SecureRelayTunnel,
     endpoint_url: &str,
@@ -564,39 +655,75 @@ async fn forward_tunnel(
 ) -> Result<()> {
     let (mut control, media_token) =
         connect_endpoint(endpoint_url, endpoint_tls, "/control", None).await?;
-    let ready = next_endpoint_message(&mut control).await?;
-    let Message::Text(ready) = ready else {
-        return Err(RelayHostError::Protocol(
-            "Obscura control Ready must be text".into(),
-        ));
+    let ready = match next_endpoint_message(&mut control).await {
+        Ok(ready) => ready,
+        Err(error) => {
+            return combine_endpoint_results(
+                Err(error),
+                [close_endpoint_socket(&mut control).await],
+            )
+        }
     };
-    tunnel
+    let Message::Text(ready) = ready else {
+        return combine_endpoint_results(
+            Err(RelayHostError::Protocol(
+                "Obscura control Ready must be text".into(),
+            )),
+            [close_endpoint_socket(&mut control).await],
+        );
+    };
+    if let Err(error) = tunnel
         .control()
         .send(ready.as_ref())
         .await
-        .map_err(RelayHostError::from)?;
+        .map_err(RelayHostError::from)
+    {
+        return combine_endpoint_results(Err(error), [close_endpoint_socket(&mut control).await]);
+    }
     let (control_sink, control_stream) = control.split();
     let control = EndpointChannel {
         sink: Mutex::new(control_sink),
         stream: Mutex::new(control_stream),
     };
-    forward_control_until_attached(tunnel.control(), &control).await?;
-    let media_token = media_token.ok_or_else(|| {
-        RelayHostError::Protocol("Obscura control did not return media token".into())
-    })?;
+    if let Err(error) = forward_control_until_attached(tunnel.control(), &control).await {
+        return combine_endpoint_results(Err(error), [close_endpoint(control).await]);
+    }
+    let media_token = match media_token {
+        Some(token) => token,
+        None => {
+            return combine_endpoint_results(
+                Err(RelayHostError::Protocol(
+                    "Obscura control did not return media token".into(),
+                )),
+                [close_endpoint(control).await],
+            )
+        }
+    };
     let (media, _) =
-        connect_endpoint(endpoint_url, endpoint_tls, "/media", Some(&media_token)).await?;
+        match connect_endpoint(endpoint_url, endpoint_tls, "/media", Some(&media_token)).await {
+            Ok(media) => media,
+            Err(error) => {
+                return combine_endpoint_results(Err(error), [close_endpoint(control).await])
+            }
+        };
     let (media_sink, media_stream) = media.split();
     let media = EndpointChannel {
         sink: Mutex::new(media_sink),
         stream: Mutex::new(media_stream),
     };
-    let control_result = forward_control(tunnel.control(), control);
-    let media_result = forward_media(tunnel.media(), media);
-    tokio::select! {
-        result = control_result => result,
-        result = media_result => result,
-    }
+    let result = {
+        let control_result = forward_control(tunnel.control(), &control);
+        let media_result = forward_media(tunnel.media(), &media);
+        tokio::pin!(control_result);
+        tokio::pin!(media_result);
+        tokio::select! {
+            result = &mut control_result => finish_after_control(result, &mut media_result, ENDPOINT_TIMEOUT).await,
+            result = &mut media_result => result,
+        }
+    };
+    let control_close = close_endpoint(control).await;
+    let media_close = close_endpoint(media).await;
+    combine_endpoint_results(result, [control_close, media_close])
 }
 
 async fn endpoint_recv(endpoint: &EndpointChannel) -> Result<Option<Message>> {
@@ -695,7 +822,7 @@ fn attachment_response(pending_attach_id: &mut Option<u64>, text: &str) -> Resul
     }
 }
 
-async fn forward_control(secure: &SecureRelayChannel, endpoint: EndpointChannel) -> Result<()> {
+async fn forward_control(secure: &SecureRelayChannel, endpoint: &EndpointChannel) -> Result<()> {
     loop {
         tokio::select! {
             frame = secure.recv() => {
@@ -721,16 +848,36 @@ async fn forward_control(secure: &SecureRelayChannel, endpoint: EndpointChannel)
     }
 }
 
-async fn forward_media(secure: &SecureRelayChannel, endpoint: EndpointChannel) -> Result<()> {
+async fn forward_media(secure: &SecureRelayChannel, endpoint: &EndpointChannel) -> Result<()> {
     loop {
         tokio::select! {
             frame = secure.recv() => {
-                frame.map_err(RelayHostError::from)?;
-                return Err(RelayHostError::Protocol("Relay media channel is read-only".into()));
+                match frame {
+                    Ok(_) => return Err(RelayHostError::Protocol("Relay media channel is read-only".into())),
+                    Err(RelayFailure::Closed) => {
+                        endpoint_send(endpoint, Message::Close(None)).await?;
+                        return Ok(());
+                    }
+                    Err(error) => return Err(RelayHostError::from(error)),
+                }
             }
             message = endpoint_recv(&endpoint) => {
-                match message? {
-                    None | Some(Message::Close(_)) => return Ok(()),
+                let message = match message {
+                    Ok(message) => message,
+                    Err(error) => {
+                        if let Err(drain_error) = secure.shutdown().await {
+                            return Err(RelayHostError::Transport(format!(
+                                "{error}; relay media drain failed: {drain_error}"
+                            )));
+                        }
+                        return Err(error);
+                    }
+                };
+                match message {
+                    None | Some(Message::Close(_)) => {
+                        secure.shutdown().await?;
+                        return Ok(());
+                    }
                     Some(Message::Ping(bytes)) => endpoint_send(&endpoint, Message::Pong(bytes)).await?,
                     Some(Message::Pong(_)) => {},
                     Some(Message::Binary(bytes)) => secure.send(&bytes).await.map_err(RelayHostError::from)?,
@@ -790,6 +937,35 @@ mod tests {
                 .expect("parse successful response")
         );
         assert_eq!(pending, None);
+    }
+
+    #[tokio::test]
+    async fn control_completion_bounds_media_drain() {
+        let result = finish_after_control(
+            Ok(()),
+            std::future::pending::<Result<()>>(),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(RelayHostError::Transport(message))
+                if message == "Obscura media drain timed out"
+        ));
+
+        let result = finish_after_control(
+            Err(RelayHostError::Protocol("control failed".into())),
+            std::future::pending::<Result<()>>(),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(RelayHostError::Transport(message))
+                if message.contains("control failed")
+                    && message.contains("media forward failed")
+                    && message.contains("timed out")
+        ));
     }
 
     fn peer(id: &str, byte: u8) -> RelayPeerBinding {

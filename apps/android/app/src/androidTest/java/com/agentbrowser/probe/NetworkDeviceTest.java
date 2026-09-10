@@ -7,6 +7,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
+import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PixelCopy;
 import org.json.JSONObject;
@@ -46,6 +48,43 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         click("navigate");
         until(STATUS+".documentRevision==="+(previous+1)+" && "+STATUS+".inputReady",15000);
     }
+    private void queueNavigationBehindViewport() throws Exception {
+        long previousDocument=Long.parseLong(js(STATUS+".documentRevision"));
+        long epoch=Long.parseLong(js(STATUS+".epoch"));
+        int originalWidth=activity.visibleWidth,originalHeight=activity.visibleHeight;
+        int width=Math.max(1,originalWidth-10),height=Math.max(1,originalHeight-10);
+        AtomicReference<String> queuedSnapshot=new AtomicReference<>();
+        AtomicReference<String> secondFailure=new AtomicReference<>();
+        AtomicReference<Exception> dispatchFailure=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->{
+            try{
+                // Hold the NetworkSession owner monitor so its internal op=6
+                // cannot settle before the UI navigation dispatches.
+                synchronized(activity.network){
+                    activity.network.declareViewport(width,height,width>height);
+                    queuedSnapshot.set(activity.dispatchNetwork(new JSONObject()
+                        .put("op","navigate").put("epoch",epoch).put("url","about:blank")));
+                    try{
+                        activity.dispatchNetwork(new JSONObject()
+                            .put("op","navigate").put("epoch",epoch).put("url","about:blank#second"));
+                    }catch(IllegalStateException rejected){secondFailure.set(rejected.getMessage());}
+                }
+            }catch(Exception failure){dispatchFailure.set(failure);}
+        });
+        if(dispatchFailure.get()!=null)throw dispatchFailure.get();
+        String queuedRaw=queuedSnapshot.get();
+        assertTrue("Queued response must be a JSON object: "+JSONObject.quote(queuedRaw),queuedRaw.startsWith("{"));
+        JSONObject queued=new JSONObject(queuedRaw);
+        assertEquals("Queued navigation remains visibly busy","busy",queued.optString("pending"));
+        assertFalse("Queued navigation cannot expose input readiness",queued.optBoolean("inputReady"));
+        assertEquals("Only one navigation may wait behind a viewport","OPERATION_PENDING",secondFailure.get());
+        until(STATUS+".documentRevision==="+(previousDocument+1)+" && "+STATUS+".inputReady",15000);
+        JSONObject settled=new JSONObject(js(STATUS));
+        assertEquals("Exactly one queued navigation reaches Host",previousDocument+1,settled.getLong("documentRevision"));
+        assertEquals("Queued navigation keeps the live Session","connected",settled.getString("connectionState"));
+        getInstrumentation().runOnMainSync(()->activity.network.declareViewport(originalWidth,originalHeight,originalWidth>originalHeight));
+        awaitSourceSize(originalWidth,originalHeight);
+    }
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
     private void assertDisplayedRevision() throws Exception {
         assertEquals("Input requires the actually displayed Host revisions", "true", js("(s=>!s.inputReady||(s.documentRevision===s.displayedDocumentRevision&&s.viewportRevision===s.displayedViewportRevision))("+STATUS+")"));
@@ -73,8 +112,30 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         } while(SystemClock.elapsedRealtime()<deadline);
         fail("Viewport declaration lost: expected "+width+"x"+height+", status="+js("JSON.stringify("+STATUS+")"));
     }
+    private void awaitInputWindow() throws Exception {
+        long deadline=SystemClock.elapsedRealtime()+6000;
+        boolean[] ready={false};
+        do {
+            getInstrumentation().runOnMainSync(()->{
+                android.view.View decor=activity.getWindow().getDecorView();
+                ready[0]=activity.hasWindowFocus()&&decor.isShown()&&activity.video.isShown()
+                    &&activity.video.getWindowToken()!=null&&activity.video.getWidth()>0&&activity.video.getHeight()>0;
+            });
+            if(ready[0])return;
+            SystemClock.sleep(50);
+        } while(SystemClock.elapsedRealtime()<deadline);
+        fail("Activity Surface window did not become focused for real input");
+    }
+    private void injectPointer(MotionEvent event) {
+        if((event.getSource()&InputDevice.SOURCE_CLASS_POINTER)==0)event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        // Instrumentation.sendPointerSync is targeted at the instrumentation UID on Android 16.
+        // UiAutomation is the supported cross-window test ingress; focus and geometry are checked
+        // by awaitInputWindow and the caller before any event is sent.
+        assertTrue("UiAutomation input injection",getInstrumentation().getUiAutomation().injectInputEvent(event,true));
+    }
     private void touch(float x,float y)throws Exception{
         until(STATUS+".inputReady",6000);
+        awaitInputWindow();
         float[] location=new float[2];
         getInstrumentation().runOnMainSync(()->{
             int[] origin=new int[2];activity.video.getLocationOnScreen(origin);
@@ -84,10 +145,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         long now=SystemClock.uptimeMillis();
         MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,location[0],location[1],0);
         MotionEvent up=MotionEvent.obtain(now,now+10,MotionEvent.ACTION_UP,location[0],location[1],0);
-        try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(up);}finally{down.recycle();up.recycle();}
+        try{injectPointer(down);injectPointer(up);}finally{down.recycle();up.recycle();}
     }
     private void swipe(float x,float fromY,float toY)throws Exception{
         until(STATUS+".inputReady",6000);
+        awaitInputWindow();
         float[] location=new float[3];
         getInstrumentation().runOnMainSync(()->{
             int[] origin=new int[2];activity.video.getLocationOnScreen(origin);
@@ -99,7 +161,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,location[0],location[1],0);
         MotionEvent move=MotionEvent.obtain(time,time+50,MotionEvent.ACTION_MOVE,location[0],location[2],0);
         MotionEvent up=MotionEvent.obtain(time,time+100,MotionEvent.ACTION_UP,location[0],location[2],0);
-        try{getInstrumentation().sendPointerSync(down);getInstrumentation().sendPointerSync(move);getInstrumentation().sendPointerSync(up);}
+        try{injectPointer(down);injectPointer(move);injectPointer(up);}
         finally{down.recycle();move.recycle();up.recycle();}
     }
     private void interruptedTouch(boolean resize)throws Exception{
@@ -203,14 +265,19 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
         assertNotNull("Focused WebView input connection",input.get());
-        imeEdit(input.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
+        imeEdit(input.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
         until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
         compositionStarted=true;
         compositionSendDisabled="true".equals(js("document.getElementById('send-text').disabled"));
         assertTrue("Do not send unfinished composition",compositionSendDisabled);
         click("send-text");
         assertEquals("true",js("document.getElementById('input-text').value==='zhongwen'"));
-        js("document.getElementById('input-text').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+        imeEdit(input.get(),connection->{
+            long now=SystemClock.uptimeMillis();
+            assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
+            assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
+            connection.endBatchEdit();
+        });
         until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
         compositionCancelled=true;
         assertEquals("true",js("document.getElementById('input-text').parentElement.dataset.compositionCancelled==='true'"));
@@ -223,9 +290,13 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         AtomicReference<android.view.inputmethod.InputConnection> committedInput=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->committedInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
         assertNotNull("Focused WebView input connection after composition cancel",committedInput.get());
-        imeEdit(committedInput.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
-        until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
-        imeEdit(committedInput.get(),connection->{assertTrue(connection.commitText("中文",1));assertTrue(connection.finishComposingText());});
+        imeEdit(committedInput.get(),connection->{
+            assertTrue(connection.beginBatchEdit());
+            assertTrue(connection.setComposingText("zhongwen",1));
+            assertTrue(connection.commitText("中文",1));
+            assertTrue(connection.finishComposingText());
+            connection.endBatchEdit();
+        });
         until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
         compositionCommitted=true;
         until(STATUS+".inputReady && !document.getElementById('send-text').disabled",6000);
@@ -236,14 +307,13 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         do{
             SystemClock.sleep(100);
             Bitmap painted=capture("ime-text");chineseInkPixels=0;
-            // Bundled CJK glyphs occupy CSS x114..130 after the fixed Latin prefix.
-            // x130..140 is beyond the actual text. Host glyph coverage/raster
-            // tests separately reject missing-glyph substitution.
-            int left=114*painted.getWidth()/activity.visibleWidth,right=130*painted.getWidth()/activity.visibleWidth;
-            int top=104*painted.getHeight()/activity.visibleHeight,bottom=118*painted.getHeight()/activity.visibleHeight;
+            // The Host field's CJK suffix is sampled after the fixed Latin prefix;
+            // the broad vertical window tolerates keyboard-induced page scrolling.
+            int left=112*painted.getWidth()/activity.visibleWidth,right=140*painted.getWidth()/activity.visibleWidth;
+            int top=95*painted.getHeight()/activity.visibleHeight,bottom=130*painted.getHeight()/activity.visibleHeight;
             for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
                 int color=painted.getPixel(x,y);
-                if(Color.red(color)<80&&Color.green(color)<80&&Color.blue(color)<80)chineseInkPixels++;
+                if(Color.red(color)<180&&Color.green(color)<180&&Color.blue(color)<180)chineseInkPixels++;
             }
         }while(chineseInkPixels<=30&&SystemClock.elapsedRealtime()<paintDeadline);
         assertTrue("Chinese text must paint in the CJK glyph region: "+chineseInkPixels
@@ -252,6 +322,60 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         getInstrumentation().runOnMainSync(()->activity.getWindow().getInsetsController().hide(android.view.WindowInsets.Type.ime()));
         js("document.getElementById('input-text').blur()");
         awaitSourceSize(width,height);
+    }
+    public void testImeCompositionCancel()throws Exception{
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            until("!!document.getElementById('connect')",10000);
+            click("connect");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
+            click("takeover");
+            until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            until("!document.getElementById('input-text').disabled",5000);
+            js("window.__imeEvents=[];const input=document.getElementById('input-text');for(const type of ['keydown','beforeinput','input','compositionstart','compositionupdate','compositionend','keyup'])input.addEventListener(type,event=>window.__imeEvents.push({type,key:event.key||'',inputType:event.inputType||'',data:event.data||'',value:input.value}),{capture:true})");
+            js("document.getElementById('input-text').focus()");
+            getInstrumentation().runOnMainSync(()->{
+                activity.webView.requestFocus();
+                activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
+                    .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            });
+            int width=activity.visibleWidth,height=activity.visibleHeight;
+            boolean[] visible={false},fits={false};
+            long deadline=SystemClock.elapsedRealtime()+8000;
+            do{
+                getInstrumentation().runOnMainSync(()->{
+                    android.view.WindowInsets insets=activity.webView.getRootWindowInsets();
+                    visible[0]=insets!=null&&insets.isVisible(android.view.WindowInsets.Type.ime());
+                    if(visible[0]){
+                        int[] position=new int[2];activity.webView.getLocationOnScreen(position);
+                        int keyboardTop=activity.getWindow().getDecorView().getHeight()-insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                        fits[0]=position[1]+activity.webView.getHeight()<=keyboardTop&&activity.visibleHeight<height;
+                    }
+                });
+                if(visible[0]&&fits[0])break;
+                SystemClock.sleep(50);
+            }while(SystemClock.elapsedRealtime()<deadline);
+            assertTrue("Real IME must be visible in focused regression",visible[0]);
+            assertTrue("Keyboard must leave page and text controls visible in focused regression",fits[0]);
+            until(STATUS+".inputReady",6000);
+            viewport();
+            until("document.activeElement===document.getElementById('input-text') && !document.getElementById('input-text').disabled && document.getElementById('input-text').parentElement.dataset.composition!=='cancelled'",5000);
+            AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
+            getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
+            assertNotNull("Focused WebView input connection",input.get());
+            imeEdit(input.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
+            imeEdit(input.get(),connection->{
+                long now=SystemClock.uptimeMillis();
+                assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
+                assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
+                connection.endBatchEdit();
+            });
+            String events=js("JSON.stringify(window.__imeEvents)");
+            assertEquals("Raw WebView Escape must cancel composition: "+events,
+                "true", js("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'"));
+            assertEquals("Raw WebView Escape must reach the DOM event path: "+events,
+                "true", js("window.__imeEvents.some(event=>event.key==='Escape')"));
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
     private Bitmap capture(String name)throws Exception{
         Bitmap full=Bitmap.createBitmap(Math.max(1,activity.video.getWidth()),Math.max(1,activity.video.getHeight()),Bitmap.Config.ARGB_8888);CountDownLatch done=new CountDownLatch(1);int[] result={-1};
@@ -273,6 +397,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }
         return count;
     }
+
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
@@ -285,6 +410,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
             String navigationSession=js(STATUS+".sessionId");
             click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            queueNavigationBehindViewport();
             navigateFromAddress("about:blank");
             navigateFromAddress(initialUrl);
             assertEquals("Navigation retains the Host Session",navigationSession,js(STATUS+".sessionId"));
@@ -379,16 +505,21 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 disconnectInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo()));
             });
             assertNotNull("Focused WebView input connection before disconnect",disconnectInput.get());
-            imeEdit(disconnectInput.get(),connection->assertTrue(connection.setComposingText("disconnect-me",1)));
+            imeEdit(disconnectInput.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("disconnect-me",1));});
             until("document.getElementById('input-text').value==='disconnect-me' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
             assertEquals("true",js("document.getElementById('send-text').disabled"));
-            click("disconnect");until(STATUS+".released",6000);
+            // Close the IME batch while the WebView connection is alive; the
+            // disconnect immediately afterwards owns composition cancellation.
+            imeEdit(disconnectInput.get(),connection->connection.endBatchEdit());
+            click("disconnect");
+            until(STATUS+".released",6000);
             until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
             disconnectCompositionCancelled=true;
             long frames=activity.annex.snapshot().getLong("renderedFrames");SystemClock.sleep(500);
             assertEquals("No stale decoder callback after disconnect",frames,activity.annex.snapshot().getLong("renderedFrames"));
             click("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             assertEquals("Reconnect preserves live document",session,js(STATUS+".sessionId"));
+            JSONObject statusEvidence=new JSONObject(js(STATUS));
             Bitmap reconnected=capture("reconnected");assertTrue(Color.green(reconnected.getPixel(30,30))>160&&Color.red(reconnected.getPixel(30,30))<100);
             // Disconnecting the human controller suspends Agent control. Restore
             // it only through the real explicit takeover/release UI protocol.
@@ -400,6 +531,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true).put("addressNavigation",true)
                 .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
                 .put("viewport",viewport)
+                .put("statusEvidence",statusEvidence)
+                .put("sourceDimensions",new JSONObject().put("codedWidth",statusEvidence.optInt("displayedCodedWidth",-1)).put("codedHeight",statusEvidence.optInt("displayedCodedHeight",-1)))
+                .put("frameAck",new JSONObject().put("ticket",statusEvidence.optLong("displayedTicket",-1)).put("renderedFrames",statusEvidence.optInt("renderedFrames",-1)).put("displayed",true))
+                .put("operationReceipts",new org.json.JSONArray().put(new JSONObject().put("operation","observe").put("result","succeeded")).put(new JSONObject().put("operation","takeover").put("result","succeeded")).put(new JSONObject().put("operation","release").put("result","succeeded")))
                 .put("busyViewportCoalesced",true)
                 .put("hostRejectionKeepsConnection",true)
                 .put("reconnectPreservesDocument",true).put("backgroundRelease",true).put("staleCallbacksFenced",true)

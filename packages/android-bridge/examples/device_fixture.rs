@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut id = 0;
     let attached = status(call(&mut local, &mut id, Command::Attach { mode: Mode::Agent, viewport: None }, None).await);
     let initial_url: String =
-        "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p><div style='height:1400px;background:blue'></div><script>window.maxScroll=0;window.addEventListener('scroll',()=>{window.maxScroll=Math.max(window.maxScroll,window.scrollY)});</script>".into()
+        "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p><div style='height:3000px;background:blue'></div><script>window.maxScroll=0;window.addEventListener('scroll',()=>{window.maxScroll=Math.max(window.maxScroll,window.scrollY)});</script>".into()
     ;
     let navigated = status(call(&mut local, &mut id, Command::Navigate { url: initial_url.clone() }, Some(identity(&attached))).await);
     let resized = status(call(&mut local, &mut id, Command::Resize { width:391,height:845 }, Some(identity(&navigated))).await);
@@ -69,7 +69,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}",serde_json::to_string(&result)?);
         } else { eprintln!("Expected status, inspect or quit"); }
     }
-    endpoint.kill().await?; endpoint.wait().await?;
+    let current = status(call(&mut local, &mut id, Command::Status {}, None).await);
+    match call(&mut local, &mut id, Command::CloseSession {}, Some(identity(&current))).await {
+        ResultValue::Closed { closed: true } => {}
+        other => panic!("Expected successful CloseSession, got {other:?}"),
+    }
+    let endpoint_status = tokio::time::timeout(Duration::from_secs(10), endpoint.wait()).await??;
+    if !endpoint_status.success() {
+        return Err(format!("Endpoint exited unsuccessfully after Closed: {endpoint_status}").into());
+    }
     host.kill().await?; host.wait().await?;
     std::fs::remove_dir_all(root)?;
     Ok(())

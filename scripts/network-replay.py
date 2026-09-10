@@ -10,6 +10,9 @@ import sys
 import time
 import uuid
 
+from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
+
+
 root = pathlib.Path(__file__).resolve().parent.parent
 run_id = uuid.uuid4().hex
 evidence = pathlib.Path(os.environ.get("NETWORK_EVIDENCE_DIR", str(root / "evidence" / "network" / run_id))).resolve()
@@ -17,6 +20,54 @@ evidence.mkdir(parents=True)
 print(f"Network replay evidence: {evidence}", flush=True)
 serial = os.environ["ANDROID_SERIAL"]
 protocol = pathlib.Path(os.environ["OBSCURA_PROTOCOL_ROOT"]).resolve(strict=True)
+
+
+def write_network_path_evidence(session_id, instrumentation):
+    """Persist the Android-owned path projection without inventing receipts."""
+    frame_ack = instrumentation.get("frameAck") if isinstance(instrumentation, dict) else None
+    if not isinstance(frame_ack, dict):
+        frame_ack = {}
+    rendered_frames = frame_ack.get("renderedFrames")
+    displayed = frame_ack.get("displayed") is True
+    has_positive_frames = isinstance(rendered_frames, int) and not isinstance(rendered_frames, bool) and rendered_frames > 0
+    media_proved = displayed and has_positive_frames
+    media = {
+        "status": "proved" if media_proved else "unknown",
+        "decoded_frames": rendered_frames if has_positive_frames else 0,
+        "displayed": displayed if has_positive_frames else False,
+        "evidence": ["network-result.json", "network-screen.png"],
+    }
+    if not media_proved:
+        media["reason"] = "Android replay did not provide a positive displayed frame acknowledgement"
+    record = {
+        "schema": "agentbrowser.network-path.evidence.v1",
+        "path_id": "local-direct",
+        "network_path": "local",
+        "transport": "WSS",
+        "session_id": session_id,
+        "run_id": run_id,
+        "signaling": {
+            "status": "proved",
+            "evidence": ["network-test.log", "network-host.log"],
+        },
+        "media": media,
+        "operation_evidence": {
+            "status": "unknown",
+            "evidence": [],
+            "reason": "Existing instrumentation operationReceipts omit operation IDs and generations; no operation receipt is projected",
+        },
+        "operation_receipts": [],
+        "source": {
+            "root": str(evidence),
+            "files": ["network-result.json", "network-test.log", "network-screen.png"],
+            "run_id": run_id,
+            "producer": "scripts/network-replay.py",
+        },
+        "result": "UNPROVEN",
+    }
+    (evidence / "network-path-evidence.json").write_text(json.dumps(record, indent=2) + "\n")
+
+
 subprocess.run(["bash", "scripts/android.sh", "assembleDebug", "assembleDebugAndroidTest"], cwd=root, check=True)
 installed = {}
 for package, relative in [
@@ -59,11 +110,11 @@ with (evidence / "network-host.log").open("wb") as log:
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
         subprocess.run(["bash", "scripts/device.sh", "prepare"], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
-            "com.agentbrowser.probe.NetworkDeviceTest", "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
+            EXPECTED_TEST_CLASS, "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)
         (evidence / "network-test.log").write_bytes(result.stdout)
-        if b"OK (1 test)" not in result.stdout:
+        if not parse_instrumentation_result(result.stdout).ok:
             raise RuntimeError(f"Network instrumentation failed; see {evidence / 'network-test.log'}")
         instrumentation = json.loads(subprocess.check_output(
             ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", "files/network-evidence/result.json"]
@@ -86,12 +137,11 @@ with (evidence / "network-host.log").open("wb") as log:
             if name == "result.json" and json.loads(result.stdout).get("runId") != run_id:
                 raise RuntimeError("Instrumentation evidence is not from this replay")
             (evidence / f"network-{name}").write_bytes(result.stdout)
+        write_network_path_evidence(str(ready["session"]), instrumentation)
         print("Network device + independent Host DOM replay PASS")
     finally:
         try:
-            if pairing:
-                subprocess.run([sys.executable, "scripts/device-pairing.py", "remove", pairing], cwd=root, check=True)
-        finally:
+            # device_fixture's quit performs CloseSession and waits for Closed before it exits.
             if fixture.poll() is None:
                 fixture.stdin.write(b"quit\n"); fixture.stdin.flush()
                 try:
@@ -102,3 +152,6 @@ with (evidence / "network-host.log").open("wb") as log:
                     raise RuntimeError("Fixture shutdown deadline exceeded")
             if fixture.returncode:
                 raise RuntimeError(f"Fixture failed: {fixture.returncode}")
+        finally:
+            if pairing:
+                subprocess.run([sys.executable, "scripts/device-pairing.py", "remove", pairing], cwd=root, check=True)
