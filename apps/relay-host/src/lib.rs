@@ -849,11 +849,15 @@ async fn forward_control(secure: &SecureRelayChannel, endpoint: &EndpointChannel
 }
 
 async fn forward_media(secure: &SecureRelayChannel, endpoint: &EndpointChannel) -> Result<()> {
+    let mut relay_open = true;
     loop {
         tokio::select! {
-            frame = secure.recv() => {
-                frame.map_err(RelayHostError::from)?;
-                return Err(RelayHostError::Protocol("Relay media channel is read-only".into()));
+            frame = secure.recv(), if relay_open => {
+                match frame {
+                    Ok(_) => return Err(RelayHostError::Protocol("Relay media channel is read-only".into())),
+                    Err(RelayFailure::Closed) => relay_open = false,
+                    Err(error) => return Err(RelayHostError::from(error)),
+                }
             }
             message = endpoint_recv(&endpoint) => {
                 let message = match message {

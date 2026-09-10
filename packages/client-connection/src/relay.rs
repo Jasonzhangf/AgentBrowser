@@ -1242,6 +1242,9 @@ impl<R: AsyncRead + Unpin> SecureFrameReader<R> {
                 .await
                 .map_err(|error| RelayFailure::Transport(error.to_string()))?;
             if read == 0 {
+                if self.header_filled == 0 {
+                    return Err(RelayFailure::Closed);
+                }
                 return Err(RelayFailure::Transport(
                     "secure frame ended before length header".into(),
                 ));
