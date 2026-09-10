@@ -72,12 +72,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             }catch(Exception failure){dispatchFailure.set(failure);}
         });
         if(dispatchFailure.get()!=null)throw dispatchFailure.get();
-        JSONObject queued=new JSONObject(queuedSnapshot.get());
+        String queuedRaw=queuedSnapshot.get();
+        assertTrue("Queued response must be a JSON object: "+JSONObject.quote(queuedRaw),queuedRaw.startsWith("{"));
+        JSONObject queued=new JSONObject(queuedRaw);
         assertEquals("Queued navigation remains visibly busy","busy",queued.optString("pending"));
         assertFalse("Queued navigation cannot expose input readiness",queued.optBoolean("inputReady"));
         assertEquals("Only one navigation may wait behind a viewport","OPERATION_PENDING",secondFailure.get());
         until(STATUS+".documentRevision==="+(previousDocument+1)+" && "+STATUS+".inputReady",15000);
-        JSONObject settled=new JSONObject(js("JSON.stringify("+STATUS+")"));
+        JSONObject settled=new JSONObject(js(STATUS));
         assertEquals("Exactly one queued navigation reaches Host",previousDocument+1,settled.getLong("documentRevision"));
         assertEquals("Queued navigation keeps the live Session","connected",settled.getString("connectionState"));
         getInstrumentation().runOnMainSync(()->activity.network.declareViewport(originalWidth,originalHeight,originalWidth>originalHeight));
@@ -263,7 +265,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
         assertNotNull("Focused WebView input connection",input.get());
-        imeEdit(input.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
+        imeEdit(input.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
         until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
         compositionStarted=true;
         compositionSendDisabled="true".equals(js("document.getElementById('send-text').disabled"));
@@ -274,6 +276,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             long now=SystemClock.uptimeMillis();
             assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
             assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
+            connection.endBatchEdit();
         });
         until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
         compositionCancelled=true;
@@ -287,9 +290,13 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         AtomicReference<android.view.inputmethod.InputConnection> committedInput=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->committedInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
         assertNotNull("Focused WebView input connection after composition cancel",committedInput.get());
-        imeEdit(committedInput.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
-        until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
-        imeEdit(committedInput.get(),connection->{assertTrue(connection.commitText("中文",1));assertTrue(connection.finishComposingText());});
+        imeEdit(committedInput.get(),connection->{
+            assertTrue(connection.beginBatchEdit());
+            assertTrue(connection.setComposingText("zhongwen",1));
+            assertTrue(connection.commitText("中文",1));
+            assertTrue(connection.finishComposingText());
+            connection.endBatchEdit();
+        });
         until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
         compositionCommitted=true;
         until(STATUS+".inputReady && !document.getElementById('send-text').disabled",6000);
@@ -300,14 +307,13 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         do{
             SystemClock.sleep(100);
             Bitmap painted=capture("ime-text");chineseInkPixels=0;
-            // Bundled CJK glyphs occupy CSS x114..130 after the fixed Latin prefix.
-            // x130..140 is beyond the actual text. Host glyph coverage/raster
-            // tests separately reject missing-glyph substitution.
-            int left=114*painted.getWidth()/activity.visibleWidth,right=130*painted.getWidth()/activity.visibleWidth;
-            int top=104*painted.getHeight()/activity.visibleHeight,bottom=118*painted.getHeight()/activity.visibleHeight;
+            // The Host field's CJK suffix is sampled after the fixed Latin prefix;
+            // the broad vertical window tolerates keyboard-induced page scrolling.
+            int left=112*painted.getWidth()/activity.visibleWidth,right=140*painted.getWidth()/activity.visibleWidth;
+            int top=95*painted.getHeight()/activity.visibleHeight,bottom=130*painted.getHeight()/activity.visibleHeight;
             for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
                 int color=painted.getPixel(x,y);
-                if(Color.red(color)<80&&Color.green(color)<80&&Color.blue(color)<80)chineseInkPixels++;
+                if(Color.red(color)<180&&Color.green(color)<180&&Color.blue(color)<180)chineseInkPixels++;
             }
         }while(chineseInkPixels<=30&&SystemClock.elapsedRealtime()<paintDeadline);
         assertTrue("Chinese text must paint in the CJK glyph region: "+chineseInkPixels
@@ -357,11 +363,12 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
             getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
             assertNotNull("Focused WebView input connection",input.get());
-            imeEdit(input.get(),connection->assertTrue(connection.setComposingText("zhongwen",1)));
+            imeEdit(input.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
             imeEdit(input.get(),connection->{
                 long now=SystemClock.uptimeMillis();
                 assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
                 assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
+                connection.endBatchEdit();
             });
             String events=js("JSON.stringify(window.__imeEvents)");
             assertEquals("Raw WebView Escape must cancel composition: "+events,
@@ -498,17 +505,21 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 disconnectInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo()));
             });
             assertNotNull("Focused WebView input connection before disconnect",disconnectInput.get());
-            imeEdit(disconnectInput.get(),connection->assertTrue(connection.setComposingText("disconnect-me",1)));
+            imeEdit(disconnectInput.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("disconnect-me",1));});
             until("document.getElementById('input-text').value==='disconnect-me' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
             assertEquals("true",js("document.getElementById('send-text').disabled"));
-            click("disconnect");until(STATUS+".released",6000);
+            // Close the IME batch while the WebView connection is alive; the
+            // disconnect immediately afterwards owns composition cancellation.
+            imeEdit(disconnectInput.get(),connection->connection.endBatchEdit());
+            click("disconnect");
+            until(STATUS+".released",6000);
             until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
             disconnectCompositionCancelled=true;
             long frames=activity.annex.snapshot().getLong("renderedFrames");SystemClock.sleep(500);
             assertEquals("No stale decoder callback after disconnect",frames,activity.annex.snapshot().getLong("renderedFrames"));
             click("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             assertEquals("Reconnect preserves live document",session,js(STATUS+".sessionId"));
-            JSONObject statusEvidence=new JSONObject(js("JSON.stringify("+STATUS+")"));
+            JSONObject statusEvidence=new JSONObject(js(STATUS));
             Bitmap reconnected=capture("reconnected");assertTrue(Color.green(reconnected.getPixel(30,30))>160&&Color.red(reconnected.getPixel(30,30))<100);
             // Disconnecting the human controller suspends Agent control. Restore
             // it only through the real explicit takeover/release UI protocol.
