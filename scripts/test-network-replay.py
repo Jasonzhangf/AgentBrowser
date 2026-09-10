@@ -188,7 +188,16 @@ def main() -> int:
         "EXPECTED_TEST_CLASS" in (ROOT / "network-replay.py").read_text(encoding="utf-8"),
         "replay instrumentation entry must use the parser contract",
     )
-    print("Network replay parser focused tests: 20 passed")
+    replay_source = (ROOT / "network-replay.py").read_text(encoding="utf-8")
+    pairing_remove = replay_source.index('device-pairing.py", "remove"')
+    fixture_quit = replay_source.index('fixture.stdin.write(b"quit\\n")')
+    fixture_wait = replay_source.index("fixture.wait(timeout=10)")
+    fixture_exit_check = replay_source.index('raise RuntimeError(f"Fixture failed: {fixture.returncode}")')
+    check(
+        fixture_quit < fixture_wait < fixture_exit_check < pairing_remove,
+        "fixture CloseSession/Closed completion must precede pairing removal",
+    )
+    print("Network replay parser and teardown focused tests: 24 passed")
     return 0
 
 

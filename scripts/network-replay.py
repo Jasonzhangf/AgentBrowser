@@ -92,9 +92,7 @@ with (evidence / "network-host.log").open("wb") as log:
         print("Network device + independent Host DOM replay PASS")
     finally:
         try:
-            if pairing:
-                subprocess.run([sys.executable, "scripts/device-pairing.py", "remove", pairing], cwd=root, check=True)
-        finally:
+            # device_fixture's quit performs CloseSession and waits for Closed before it exits.
             if fixture.poll() is None:
                 fixture.stdin.write(b"quit\n"); fixture.stdin.flush()
                 try:
@@ -105,3 +103,6 @@ with (evidence / "network-host.log").open("wb") as log:
                     raise RuntimeError("Fixture shutdown deadline exceeded")
             if fixture.returncode:
                 raise RuntimeError(f"Fixture failed: {fixture.returncode}")
+        finally:
+            if pairing:
+                subprocess.run([sys.executable, "scripts/device-pairing.py", "remove", pairing], cwd=root, check=True)
