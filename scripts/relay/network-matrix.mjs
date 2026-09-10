@@ -18,6 +18,11 @@ import {tmpdir} from 'node:os';
 import {dirname, join, relative, resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {request as httpsRequest} from 'node:https';
+import {
+  NETWORK_EVIDENCE_SCHEMA,
+  loadNetworkPathEvidence,
+  projectNetworkMatrix,
+} from './network-matrix-contract.mjs';
 
 const RELAY_ABI_ID = 'agentbrowser-relay-v0';
 const scriptPath = fileURLToPath(import.meta.url);
@@ -33,9 +38,11 @@ function option(name) {
 }
 
 const candidateRoot = resolve(option('--candidate-root') ?? selfRoot);
-const evidenceRoot = resolve(option('--evidence-root') ?? join(selfRoot, '..', 'evidence', `network-matrix-${Date.now()}`));
+const runId = option('--run-id') ?? `network-matrix-${Date.now()}`;
+const pathEvidenceRoot = option('--path-evidence-root') ?? option('--external-evidence-root');
+const evidenceRoot = resolve(option('--evidence-root') ?? join(selfRoot, 'evidence', 'm1-network', runId));
 mkdirSync(evidenceRoot, {recursive: true});
-const runContext = {source: undefined, cleanup: undefined};
+const runContext = {source: undefined, cleanup: undefined, pathEvidence: undefined};
 
 function git(root, ...gitArgs) {
   const result = spawnSync('git', ['-C', root, ...gitArgs], {encoding: 'utf8'});
@@ -592,6 +599,63 @@ function applyCleanupResult(matrixResult, cleanup) {
   matrixResult.cleanup = cleanup.result;
 }
 
+function relayPathEvidence({hostId, hostDeviceId}) {
+  return {
+    schema: NETWORK_EVIDENCE_SCHEMA,
+    path_id: 'relay',
+    network_path: 'relay',
+    transport: 'WSS',
+    session_id: 'matrix-session',
+    run_id: runId,
+    identity: {account_id: 'alice', host_id: hostId, device_id: hostDeviceId},
+    signaling: {
+      status: 'proved',
+      evidence: ['api-transcript.json'],
+    },
+    data_plane: {
+      status: 'proved',
+      evidence: ['relay-data-plane.json'],
+    },
+    media: {
+      status: 'unknown',
+      decoded_frames: 0,
+      displayed: false,
+      transport_acknowledgements: 0,
+      evidence: ['relay-data-plane.json'],
+      reason: 'Relay forwarded opaque bytes; no Browser decoder or displayed native frame ran in this runner',
+    },
+    operation_evidence: {
+      status: 'unknown',
+      evidence: [],
+      reason: 'Relay owns signaling and tunnel forwarding, not Browser operation execution or receipts',
+    },
+    operation_receipts: [],
+    source: {
+      root: evidenceRoot,
+      files: ['api-transcript.json', 'relay-data-plane.json'],
+      run_id: runId,
+      producer: 'scripts/relay/network-matrix.mjs',
+    },
+    result: 'UNPROVEN',
+  };
+}
+
+function projectPathEvidence(relayEvidence) {
+  const external = pathEvidenceRoot === undefined
+    ? {root: undefined, records: [], sources: []}
+    : loadNetworkPathEvidence(pathEvidenceRoot);
+  const records = external.records.some(item => item.path_id === 'relay')
+    ? external.records
+    : [relayEvidence, ...external.records];
+  const rows = projectNetworkMatrix(records);
+  const networkResult = rows.some(row => row.result === 'FAIL')
+    ? 'FAIL'
+    : rows.every(row => row.result === 'PASS')
+      ? 'PASS'
+      : 'UNPROVEN';
+  return {external, records, rows, networkResult};
+}
+
 function sourceFile(root, path, label) {
   const absolute = requiredFile(join(root, path), label);
   return {path, sha256: sha256File(absolute)};
@@ -1000,9 +1064,39 @@ async function main() {
       runnerIdentity.status_after = runnerStatusAfter;
       assert.equal(runnerStatusAfter, '', `Runner worktree changed during replay: ${runnerStatusAfter}`);
 
+      const relayDataPlane = {
+        result: 'PASS',
+        network_path: 'relay',
+        transport: 'WSS',
+        tunnel_id: clientOffer.tunnelId,
+        control: {forwarded_bytes: controlBytes.length},
+        media: {forwarded_bytes: mediaBytes.length},
+        opaque: true,
+        decoded_frames: 0,
+        displayed: false,
+        operation_receipts: 0,
+        note: 'Relay forwarding proves only authenticated opaque data-plane delivery; Browser decoding and operation execution are separate owners.',
+      };
+      writeEvidence('relay-data-plane.json', relayDataPlane);
+      writeEvidence('api-transcript.json', apiEvents);
+      const relayEvidence = relayPathEvidence({hostId, hostDeviceId: hostDevice.id});
+      writeEvidence('relay-path-evidence.json', relayEvidence);
+      const pathProjection = projectPathEvidence(relayEvidence);
+      runContext.pathEvidence = {
+        external_root: pathProjection.external.root,
+        external_sources: pathProjection.external.sources,
+        records: pathProjection.records,
+        rows: pathProjection.rows,
+        result: pathProjection.networkResult,
+      };
+      writeEvidence('path-evidence.json', runContext.pathEvidence);
+
       matrixResult = {
         schema: 'agentbrowser.relay.network-matrix.v2',
-        result: 'PASS',
+        result: pathProjection.networkResult === 'FAIL' ? 'FAIL' : 'PASS',
+        relay_result: 'PASS',
+        network_matrix_result: pathProjection.networkResult,
+        network_evidence_schema: NETWORK_EVIDENCE_SCHEMA,
         source: {runner: runnerIdentity, relay: candidateIdentity},
         candidate: candidateIdentity,
         artifact_execution: {
@@ -1012,34 +1106,13 @@ async function main() {
           process: 'compiled artifact child process',
           process_identity: runtimeIdentity,
         },
-        network_matrix: [
-          {
-            network_path: 'local',
-            transport: 'WSS',
-            protocol_path: '/v2/control/client',
-            endpoint,
-            result: 'PASS',
-            evidence: 'network-matrix.json',
-          },
-          {
-            network_path: 'tailscale',
-            transport: 'WSS over Tailscale TCP',
-            protocol_path: '/v2/control/client',
-            endpoint: null,
-            result: 'UNPROVEN',
-            evidence: null,
-            note: 'No Tailscale listener or target-device replay was run by this local artifact runner.',
-          },
-          {
-            network_path: 'local-direct',
-            transport: 'direct/IPC (Obscura)',
-            protocol_path: null,
-            endpoint: null,
-            result: 'UNPROVEN',
-            evidence: null,
-            note: 'The Relay artifact exposes HTTPS/WSS only; Obscura direct transport is outside this runner.',
-          },
-        ],
+        network_matrix: pathProjection.rows,
+        path_evidence: {
+          schema: NETWORK_EVIDENCE_SCHEMA,
+          external_root: pathProjection.external.root,
+          external_sources: pathProjection.external.sources,
+          relay_record: relayEvidence,
+        },
         assertions: {
           tls: 'verified with task CA',
           signed_device_authentication: 'PASS',
@@ -1077,6 +1150,15 @@ async function main() {
           media_binary: mediaBytes.length,
           control_media_separation: 'PASS',
           control_media_separation_evidence: separationEvidence,
+          relay_data_plane: relayDataPlane,
+          relay_media: {
+            result: 'UNPROVEN',
+            reason: 'No decoded or displayed Browser frame was observed by the Relay runner',
+          },
+          relay_operations: {
+            result: 'UNPROVEN',
+            reason: 'No Browser operation receipt with operation ID and generation was emitted by the Relay runner',
+          },
           token_revoke: revoke.status,
           revoke_close: closeReasons,
         },

@@ -197,7 +197,25 @@ def main() -> int:
         fixture_quit < fixture_wait < fixture_exit_check < pairing_remove,
         "fixture CloseSession/Closed completion must precede pairing removal",
     )
-    print("Network replay parser and teardown focused tests: 24 passed")
+    check(
+        '"schema": "agentbrowser.network-path.evidence.v1"' in replay_source,
+        "replay must emit the shared network path evidence schema",
+    )
+    copied_network_evidence = replay_source.index('(evidence / f"network-{name}").write_bytes(result.stdout)')
+    path_evidence_write = replay_source.index('write_network_path_evidence(str(ready["session"]), instrumentation)')
+    check(
+        copied_network_evidence < path_evidence_write,
+        "path evidence must be written only after the raw replay artifacts are persisted",
+    )
+    check(
+        '"operation_receipts": []' in replay_source,
+        "replay must not project operation IDs from legacy operationReceipts",
+    )
+    check(
+        "operationReceipts omit operation IDs and generations" in replay_source,
+        "replay must retain the reason that operation evidence is unproven",
+    )
+    print("Network replay parser and teardown focused tests: 28 passed")
     return 0
 
 

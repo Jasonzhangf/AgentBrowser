@@ -20,6 +20,54 @@ evidence.mkdir(parents=True)
 print(f"Network replay evidence: {evidence}", flush=True)
 serial = os.environ["ANDROID_SERIAL"]
 protocol = pathlib.Path(os.environ["OBSCURA_PROTOCOL_ROOT"]).resolve(strict=True)
+
+
+def write_network_path_evidence(session_id, instrumentation):
+    """Persist the Android-owned path projection without inventing receipts."""
+    frame_ack = instrumentation.get("frameAck") if isinstance(instrumentation, dict) else None
+    if not isinstance(frame_ack, dict):
+        frame_ack = {}
+    rendered_frames = frame_ack.get("renderedFrames")
+    displayed = frame_ack.get("displayed") is True
+    has_positive_frames = isinstance(rendered_frames, int) and not isinstance(rendered_frames, bool) and rendered_frames > 0
+    media_proved = displayed and has_positive_frames
+    media = {
+        "status": "proved" if media_proved else "unknown",
+        "decoded_frames": rendered_frames if has_positive_frames else 0,
+        "displayed": displayed if has_positive_frames else False,
+        "evidence": ["network-result.json", "network-screen.png"],
+    }
+    if not media_proved:
+        media["reason"] = "Android replay did not provide a positive displayed frame acknowledgement"
+    record = {
+        "schema": "agentbrowser.network-path.evidence.v1",
+        "path_id": "local-direct",
+        "network_path": "local",
+        "transport": "WSS",
+        "session_id": session_id,
+        "run_id": run_id,
+        "signaling": {
+            "status": "proved",
+            "evidence": ["network-test.log", "network-host.log"],
+        },
+        "media": media,
+        "operation_evidence": {
+            "status": "unknown",
+            "evidence": [],
+            "reason": "Existing instrumentation operationReceipts omit operation IDs and generations; no operation receipt is projected",
+        },
+        "operation_receipts": [],
+        "source": {
+            "root": str(evidence),
+            "files": ["network-result.json", "network-test.log", "network-screen.png"],
+            "run_id": run_id,
+            "producer": "scripts/network-replay.py",
+        },
+        "result": "UNPROVEN",
+    }
+    (evidence / "network-path-evidence.json").write_text(json.dumps(record, indent=2) + "\n")
+
+
 subprocess.run(["bash", "scripts/android.sh", "assembleDebug", "assembleDebugAndroidTest"], cwd=root, check=True)
 installed = {}
 for package, relative in [
@@ -89,6 +137,7 @@ with (evidence / "network-host.log").open("wb") as log:
             if name == "result.json" and json.loads(result.stdout).get("runId") != run_id:
                 raise RuntimeError("Instrumentation evidence is not from this replay")
             (evidence / f"network-{name}").write_bytes(result.stdout)
+        write_network_path_evidence(str(ready["session"]), instrumentation)
         print("Network device + independent Host DOM replay PASS")
     finally:
         try:

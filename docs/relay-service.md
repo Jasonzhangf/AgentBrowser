@@ -32,3 +32,24 @@ appsdk verify
 当前测试覆盖真实 HTTPS/WSS 和解包后 CLI 的账号、双通道转发、撤销授权及 Host typed rejection；ABI envelope、旧 wire 拒绝、Host identity binding、control 帧上限负例已验证，慢接收方队列压力尚未做负载验收。当前证据不代表手机到浏览器端到端联调，也不单独证明 inner mTLS、TunnelHello、Obscura endpoint replay 或安装后的产品入口。`packages/client-connection` 与 Android fixture 仍需单独迁移到该 ABI，Relay service 的绿测不替代下游适配证据。
 
 AppSDK 模块已绑定真实 build、6 项 regression、唯一 owner 和 `relay.tar`。`deployment_operations: []` 对应临时 CLI 消费者，无安装/重启常驻服务的交付范围。正式 admission 适配器为 `node services/relay/validate-admission.mjs`，要求干净 owner 候选提交；它实际编译、测试并再次解包调用 HTTPS/WSS 入口后生成记录，任何失败不产出 PASS。现阶段候选提交和 admission/AGY 尚未完成，不能将普通 verify 等同于 review PASS。
+
+## M1 network evidence projection
+
+`scripts/relay/network-matrix-contract.mjs` owns the evidence-only projection
+used by the M1 network matrix. It keeps `network_path` separate from
+`transport` and accepts only these path identities: `local-direct` (`local`
+with `IPC` or `WSS`), `udp-webrtc` (`lan`/`public` with `WebRTC`),
+`tailscale-direct` (`tailscale` with `WebRTC` or direct `WSS`), and `relay`
+(`relay` with `WSS`). Tailscale evidence must retain an explicit `underlay`
+status; an unavailable underlay remains `unknown`.
+
+A path is `PASS` only when its owner evidence contains a positive decoded and
+displayed frame plus successful operation receipts carrying a unique operation
+ID, session ID, and current connection generation. Signaling, channel readiness,
+transport acknowledgements, and Relay opaque byte forwarding remain
+`UNPROVEN` for media or Browser operations. The validator rejects duplicate
+operation IDs, cross-account identities, stale generation updates, replayed
+operations, and path/transport mismatches. External records can be supplied to
+the Relay runner with `--path-evidence-root <directory>`; unrelated JSON files
+are ignored, while records carrying the evidence schema are validated before
+they are merged into the four matrix rows.
