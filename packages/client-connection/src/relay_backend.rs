@@ -140,11 +140,24 @@ impl Backend for RelayBackend {
 
     fn close<'a>(&'a mut self) -> BackendFuture<'a, ()> {
         Box::pin(async move {
-            // Drop secure channels before their generation source. This closes
-            // both bridge tasks and both Relay channel sockets.
+            let (media_result, control_result) = if let Some(tunnel) = self.tunnel.as_ref() {
+                // Close media first so the Obscura endpoint can emit its
+                // terminal media marker before control attachment teardown.
+                let media_result = tunnel.media().shutdown().await.map_err(map_relay_failure);
+                let control_result = tunnel.control().shutdown().await.map_err(map_relay_failure);
+                (media_result, control_result)
+            } else {
+                (Ok(()), Ok(()))
+            };
             self.tunnel.take();
             self.connection.take();
-            Ok(())
+            match (media_result, control_result) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+                (Err(media), Err(control)) => Err(Failure::Transport(format!(
+                    "media close failed: {media}; control close failed: {control}"
+                ))),
+            }
         })
     }
 }
