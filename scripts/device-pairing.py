@@ -11,7 +11,7 @@ parser.add_argument("action", choices=["install", "remove"])
 parser.add_argument("fixture")
 parser.add_argument("--adb", default=None)
 args = parser.parse_args()
-fixture = pathlib.Path(args.fixture).resolve(strict=True)
+fixture = pathlib.Path(args.fixture).resolve(strict=args.action == "install")
 if fixture.parent != pathlib.Path("/tmp").resolve() or not fixture.name.startswith("an-"):
     parser.error("Expected the owned /tmp/an-* fixture directory")
 serial = os.environ["ANDROID_SERIAL"]
