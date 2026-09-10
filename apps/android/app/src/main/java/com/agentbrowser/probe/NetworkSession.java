@@ -61,6 +61,16 @@ final class NetworkSession {
         return requested!=null&&!requested.equals(submitted)&&!requested.equals(rejected);
     }
     static boolean queuesBehindViewport(int op,int pendingOp){return pendingOp==6&&op==7;}
+    private synchronized boolean canQueueNavigation(long epoch){
+        if(!connected()||displayed==null||host==null||!hostReady(host))return false;
+        if(displayed.documentRevision!=host.optLong("document_revision",-1)
+                ||displayed.viewportRevision!=host.optLong("viewport_revision",-1))return false;
+        try{
+            JSONObject control=host.getJSONObject("control"),phase=control.getJSONObject("phase");
+            return epoch==control.getLong("epoch")&&"human".equals(phase.getString("type"))
+                    &&phase.optLong("attachment_id",-1)==host.optLong("attachment_id",-2);
+        }catch(org.json.JSONException invalid){return false;}
+    }
     static boolean queuedCommandWaitsForViewport(CommandRequest queued,Viewport requested,Viewport submitted){
         return queued!=null&&!java.util.Objects.equals(requested,submitted);
     }
@@ -195,7 +205,7 @@ final class NetworkSession {
     synchronized void command(int op,long epoch,double x,double y,double dx,double dy,String text){
         if(!connected())throw new IllegalStateException("NETWORK_NOT_CONNECTED");
         if(commandPending){
-            if(queuesBehindViewport(op,commandPendingOp)&&queuedCommand==null){
+            if(queuesBehindViewport(op,commandPendingOp)&&queuedCommand==null&&canQueueNavigation(epoch)){
                 queuedCommand=new CommandRequest(op,epoch,x,y,dx,dy,text==null?"":text);
                 return;
             }
