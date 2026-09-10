@@ -32,13 +32,13 @@ observation mode; takeover and release remain Host operations.
 ## Protocol binding
 
 The browser protocol input for this slice is the clean, read-only Obscura
-candidate at `/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908`.
+candidate at `/Volumes/extension/code/obscura/playground/m1-obscura-host-candidate-20260910`.
 The binding is reproducible from these Git identities:
 
 | Object | Git identity |
 | --- | --- |
-| Obscura candidate commit | `fc0bc1fdf9a494d0edaff4068ade15b7446a4271` |
-| Obscura candidate tree | `b1bc9c9c92c7bec45e000d2ebae97bd5582cd95a` |
+| Obscura candidate commit | `b22df6706f3e0a48b75ece577e7e8e35280649c2` |
+| Obscura candidate tree | `3644233f6ff38d72578e3dd216500c6eeacdc967` |
 | `protocol/browser` commit | `b0d6eaa72fa713b845c07726a84a486e6be97db6` |
 | `protocol/browser` tree | `820b576a81a69d13252d3a1c782fc627e50dcad1` |
 | `protocol/browser/Cargo.toml` blob | `81d38b19a6cc9467337f4591a0928ff6a7d49089` |
