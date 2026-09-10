@@ -62,9 +62,7 @@ final class NetworkSession {
     }
     static boolean queuesBehindViewport(int op,int pendingOp){return pendingOp==6&&op==7;}
     private synchronized boolean canQueueNavigation(long epoch){
-        if(!connected()||displayed==null||host==null||!hostReady(host))return false;
-        if(displayed.documentRevision!=host.optLong("document_revision",-1)
-                ||displayed.viewportRevision!=host.optLong("viewport_revision",-1))return false;
+        if(!connected()||host==null||!hostReady(host))return false;
         try{
             JSONObject control=host.getJSONObject("control"),phase=control.getJSONObject("phase");
             return epoch==control.getLong("epoch")&&"human".equals(phase.getString("type"))
