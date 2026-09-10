@@ -48,6 +48,41 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         click("navigate");
         until(STATUS+".documentRevision==="+(previous+1)+" && "+STATUS+".inputReady",15000);
     }
+    private void queueNavigationBehindViewport() throws Exception {
+        long previousDocument=Long.parseLong(js(STATUS+".documentRevision"));
+        long epoch=Long.parseLong(js(STATUS+".epoch"));
+        int originalWidth=activity.visibleWidth,originalHeight=activity.visibleHeight;
+        int width=Math.max(1,originalWidth-10),height=Math.max(1,originalHeight-10);
+        AtomicReference<String> queuedSnapshot=new AtomicReference<>();
+        AtomicReference<String> secondFailure=new AtomicReference<>();
+        AtomicReference<Exception> dispatchFailure=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->{
+            try{
+                // Hold the NetworkSession owner monitor so its internal op=6
+                // cannot settle before the UI navigation dispatches.
+                synchronized(activity.network){
+                    activity.network.declareViewport(width,height,width>height);
+                    queuedSnapshot.set(activity.dispatchNetwork(new JSONObject()
+                        .put("op","navigate").put("epoch",epoch).put("url","about:blank")));
+                    try{
+                        activity.dispatchNetwork(new JSONObject()
+                            .put("op","navigate").put("epoch",epoch).put("url","about:blank#second"));
+                    }catch(IllegalStateException rejected){secondFailure.set(rejected.getMessage());}
+                }
+            }catch(Exception failure){dispatchFailure.set(failure);}
+        });
+        if(dispatchFailure.get()!=null)throw dispatchFailure.get();
+        JSONObject queued=new JSONObject(queuedSnapshot.get());
+        assertEquals("Queued navigation remains visibly busy","busy",queued.optString("pending"));
+        assertFalse("Queued navigation cannot expose input readiness",queued.optBoolean("inputReady"));
+        assertEquals("Only one navigation may wait behind a viewport","OPERATION_PENDING",secondFailure.get());
+        until(STATUS+".documentRevision==="+(previousDocument+1)+" && "+STATUS+".inputReady",15000);
+        JSONObject settled=new JSONObject(js("JSON.stringify("+STATUS+")"));
+        assertEquals("Exactly one queued navigation reaches Host",previousDocument+1,settled.getLong("documentRevision"));
+        assertEquals("Queued navigation keeps the live Session","connected",settled.getString("connectionState"));
+        getInstrumentation().runOnMainSync(()->activity.network.declareViewport(originalWidth,originalHeight,originalWidth>originalHeight));
+        awaitSourceSize(originalWidth,originalHeight);
+    }
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
     private void assertDisplayedRevision() throws Exception {
         assertEquals("Input requires the actually displayed Host revisions", "true", js("(s=>!s.inputReady||(s.documentRevision===s.displayedDocumentRevision&&s.viewportRevision===s.displayedViewportRevision))("+STATUS+")"));
@@ -355,6 +390,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }
         return count;
     }
+
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
@@ -367,6 +403,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
             String navigationSession=js(STATUS+".sessionId");
             click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            queueNavigationBehindViewport();
             navigateFromAddress("about:blank");
             navigateFromAddress(initialUrl);
             assertEquals("Navigation retains the Host Session",navigationSession,js(STATUS+".sessionId"));

@@ -21,9 +21,12 @@ final class NetworkSession {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private long handle,token,generation,shownEpoch;
-    private record Viewport(int width,int height,boolean landscape) { }
-    private Viewport requestedViewport,submittedViewport;
+    record Viewport(int width,int height,boolean landscape) { }
+    record CommandRequest(int op,long epoch,double x,double y,double dx,double dy,String text) { }
+    private Viewport requestedViewport,submittedViewport,rejectedViewport;
     private boolean running,closed,framePending,commandPending;
+    private int commandPendingOp=-1;
+    private CommandRequest queuedCommand;
     private NetworkFrame displayed;
     private JSONObject host;
     private String state="idle",error,shownMode="observe",selectedTransport="";
@@ -32,7 +35,7 @@ final class NetworkSession {
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized String transport(){return selectedTransport;}
     synchronized boolean current(long value){return connected()&&token==value;}
-    synchronized boolean inputReady(){return connected()&&!commandPending&&displayed!=null
+    synchronized boolean inputReady(){return connected()&&!commandPending&&queuedCommand==null&&displayed!=null
         &&java.util.Objects.equals(requestedViewport,submittedViewport)&&hostReady(host)
         &&displayed.documentRevision==host.optLong("document_revision",-1)
         &&displayed.viewportRevision==host.optLong("viewport_revision",-1);}
@@ -49,11 +52,27 @@ final class NetworkSession {
     synchronized void declareViewport(int cssWidth,int cssHeight,boolean landscape){
         if(cssWidth<=0||cssHeight<=0||cssWidth>4096||cssHeight>4096||(long)cssWidth*cssHeight>4194304)
             throw new IllegalArgumentException("INVALID_VIEWPORT");
-        requestedViewport=new Viewport(cssWidth,cssHeight,landscape);
+        Viewport viewport=new Viewport(cssWidth,cssHeight,landscape);
+        if(!viewport.equals(requestedViewport))rejectedViewport=null;
+        requestedViewport=viewport;
         flushViewport();
     }
+    static boolean viewportNeedsSubmission(Viewport requested,Viewport submitted,Viewport rejected){
+        return requested!=null&&!requested.equals(submitted)&&!requested.equals(rejected);
+    }
+    static boolean queuesBehindViewport(int op,int pendingOp){return pendingOp==6&&op==7;}
+    static boolean queuedCommandWaitsForViewport(CommandRequest queued,Viewport requested,Viewport submitted){
+        return queued!=null&&!java.util.Objects.equals(requested,submitted);
+    }
+    enum CommandAdvance { SUBMIT_VIEWPORT, START_QUEUED, BLOCK_QUEUED, IDLE }
+    static CommandAdvance nextCommandAdvance(CommandRequest queued,Viewport requested,Viewport submitted,Viewport rejected){
+        if(queuedCommandWaitsForViewport(queued,requested,submitted))
+            return viewportNeedsSubmission(requested,submitted,rejected)?CommandAdvance.SUBMIT_VIEWPORT:CommandAdvance.BLOCK_QUEUED;
+        if(queued!=null)return CommandAdvance.START_QUEUED;
+        return viewportNeedsSubmission(requested,submitted,rejected)?CommandAdvance.SUBMIT_VIEWPORT:CommandAdvance.IDLE;
+    }
     private synchronized void flushViewport(){
-        if(!connected()||commandPending||requestedViewport==null||requestedViewport.equals(submittedViewport))return;
+        if(!connected()||commandPending||!viewportNeedsSubmission(requestedViewport,submittedViewport,rejectedViewport))return;
         Viewport viewport=requestedViewport;
         command(6,0,viewport.width(),viewport.height(),viewport.landscape()?1:0,0,"");
     }
@@ -74,7 +93,7 @@ final class NetworkSession {
                 .put("codec",media.optString("codec","")).put("error",error==null?JSONObject.NULL:error)
                 .put("source","network").put("connectionState",state).put("controlMode",mode).put("epoch",epoch)
                 .put("transport",selectedTransport)
-                .put("inputReady",inputReady()).put("pending",commandPending||framePending?"busy":JSONObject.NULL)
+                .put("inputReady",inputReady()).put("pending",commandPending||queuedCommand!=null||framePending?"busy":JSONObject.NULL)
                 .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
             if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
@@ -124,7 +143,7 @@ final class NetworkSession {
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
         token=next(token);generation=next(generation);long expected=token;
         state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";selectedTransport="";
-        submittedViewport=null;
+        submittedViewport=null;rejectedViewport=null;queuedCommand=null;commandPendingOp=-1;
         worker.execute(()->open(expected));
     }
     private void open(long expected){
@@ -169,38 +188,76 @@ final class NetworkSession {
                 synchronized(this){if(!current(expected))return;displayed=frame;framePending=false;}
             }
             JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
-            synchronized(this){if(!current(expected))return;host=status;}
+            synchronized(this){if(!current(expected))return;host=status;startQueuedIfReady();}
             worker.schedule(()->poll(expected),30,TimeUnit.MILLISECONDS);
         }catch(Exception failure){terminate(expected,failure);}
     }
     synchronized void command(int op,long epoch,double x,double y,double dx,double dy,String text){
         if(!connected())throw new IllegalStateException("NETWORK_NOT_CONNECTED");
-        if(commandPending)throw new IllegalStateException("OPERATION_PENDING");
+        if(commandPending){
+            if(queuesBehindViewport(op,commandPendingOp)&&queuedCommand==null){
+                queuedCommand=new CommandRequest(op,epoch,x,y,dx,dy,text==null?"":text);
+                return;
+            }
+            throw new IllegalStateException("OPERATION_PENDING");
+        }
+        if(queuedCommand!=null&&op!=6)throw new IllegalStateException("OPERATION_PENDING");
         if(op>=3&&op!=6&&!inputReady())throw new IllegalStateException("DISPLAY_NOT_READY");
-        long expected=token,nativeHandle=handle,ticket=displayed==null?0:displayed.ticket;commandPending=true;error=null;
+        startCommand(new CommandRequest(op,epoch,x,y,dx,dy,text==null?"":text));
+    }
+    private synchronized void startCommand(CommandRequest request){
+        long expected=token,nativeHandle=handle,ticket=displayed==null?0:displayed.ticket;
+        commandPending=true;commandPendingOp=request.op;error=null;
         worker.execute(()->{
             try{
                 synchronized(this){if(!current(expected))return;}
-                String result=NativeConnection.command(nativeHandle,op,epoch,ticket,x,y,dx,dy,text==null?"":text);
-                JSONObject status=new JSONObject(op<=2?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
+                String result=NativeConnection.command(nativeHandle,request.op,request.epoch,ticket,request.x,request.y,request.dx,request.dy,request.text);
+                JSONObject status=new JSONObject(request.op<=2?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
                 synchronized(this){if(current(expected)){
                     host=status;
-                    if(op==6)submittedViewport=new Viewport((int)x,(int)y,dx!=0.0);
-                    commandPending=false;
-                    flushViewport();
+                    if(request.op==6){
+                        submittedViewport=new Viewport((int)request.x,(int)request.y,request.dx!=0.0);
+                        rejectedViewport=null;
+                    }
+                    commandPending=false;commandPendingOp=-1;
+                    advanceAfterCommand();
                 }}
             }catch(HostCommandException rejection){
                 try{
                     synchronized(this){if(!current(expected))return;}
                     JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
-                    synchronized(this){if(current(expected)){host=status;commandPending=false;error=rejection.toString();flushViewport();}}
+                    synchronized(this){if(current(expected)){
+                        host=status;commandPending=false;commandPendingOp=-1;error=rejection.toString();
+                        if(request.op==6){
+                            rejectedViewport=new Viewport((int)request.x,(int)request.y,request.dx!=0.0);
+                            if(queuedCommand!=null){
+                                CommandRequest dropped=queuedCommand;queuedCommand=null;
+                                error += "; queued operation op="+dropped.op+" was not submitted";
+                            }
+                        }
+                        advanceAfterCommand();
+                    }}
                 }catch(Exception failure){failure.addSuppressed(rejection);terminate(expected,failure);}
             }catch(Exception failure){terminate(expected,failure);}
         });
     }
+    private synchronized void advanceAfterCommand(){
+        switch(nextCommandAdvance(queuedCommand,requestedViewport,submittedViewport,rejectedViewport)){
+            case SUBMIT_VIEWPORT -> flushViewport();
+            case START_QUEUED -> startQueuedIfReady();
+            case BLOCK_QUEUED,IDLE -> { }
+        }
+    }
+    private synchronized void startQueuedIfReady(){
+        if(commandPending||queuedCommand==null||!hostReady(host)
+                ||!java.util.Objects.equals(requestedViewport,submittedViewport))return;
+        CommandRequest next=queuedCommand;queuedCommand=null;
+        if(next.op>=3&&next.op!=6&&!inputReady()){queuedCommand=next;return;}
+        startCommand(next);
+    }
     synchronized void disconnect(){
         if(!active()&&handle==0)return;
-        token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;state="stopping";
+        token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="stopping";
         long old=handle;handle=0;main.post(release);
         worker.execute(()->{
             try{if(old!=0)NativeConnection.close(old);synchronized(this){state="stopped";}}
@@ -213,7 +270,7 @@ final class NetworkSession {
         try{if(old!=0)NativeConnection.close(old);}catch(Exception close){failure.addSuppressed(close);synchronized(this){error=failure+"; close: "+close;}}
         main.post(release);
     }
-    private void failState(Exception failure){running=false;framePending=false;commandPending=false;state="error";error=failure.toString();}
+    private void failState(Exception failure){running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="error";error=failure.toString();}
     private byte[] read(String name)throws Exception{
         File file=new File(context.getFilesDir(),"pairing/"+name);
         if(!file.isFile()||file.length()>65536)throw new IllegalStateException("PAIRING_FILE_MISSING_OR_OVERSIZED:"+name);
