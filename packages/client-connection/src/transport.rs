@@ -354,9 +354,27 @@ impl Backend for DirectBackend {
 
     fn close<'a>(&'a mut self) -> BackendFuture<'a, ()> {
         Box::pin(async move {
+            let media = async {
+                self.media
+                    .send(Message::Close(None))
+                    .await
+                    .map_err(transport)?;
+                let acknowledgement = tokio::time::timeout(Duration::from_secs(2), self.media.next())
+                    .await
+                    .map_err(|_| transport("Media close acknowledgement deadline"))?;
+                match acknowledgement {
+                    None | Some(Ok(Message::Close(_))) => {}
+                    Some(Err(tokio_tungstenite::tungstenite::Error::Protocol(
+                        tokio_tungstenite::tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+                    ))) => {}
+                    Some(Err(error)) => return Err(transport(error)),
+                    Some(Ok(message)) => return Err(transport(format!("Unexpected media close acknowledgement: {message:?}"))),
+                }
+                Ok::<(), Failure>(())
+            }
+            .await;
             let control = self.control.close(None).await.map_err(transport);
-            let media = self.media.close(None).await.map_err(transport);
-            control.and(media)
+            media.and(control)
         })
     }
 }
