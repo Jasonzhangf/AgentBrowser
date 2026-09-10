@@ -62,7 +62,7 @@ Build the app bundle with the checked-out Browser ABI owner and this worktree's
 Cargo target:
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/obscura/playground/m1-obscura-host-candidate-20260910/protocol/browser \
   scripts/build-macos.sh build
 ```
 
@@ -73,7 +73,7 @@ module's local entrypoint. For AppSDK consumers, the same build also emits the
 complete bundle as `generated/modules/macos-shell/lib/AgentBrowserMac.app.zip`.
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/obscura/playground/m1-obscura-host-candidate-20260910/protocol/browser \
   scripts/build-macos.sh run --pairing-dir /private/path/to/pairing
 ```
 
@@ -85,10 +85,10 @@ run it on `127.0.0.1` with Obscura binaries already validated by the Obscura
 owner:
 
 ```sh
-OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/protocol/browser \
+OBSCURA_PROTOCOL_ROOT=/Volumes/extension/code/obscura/playground/m1-obscura-host-candidate-20260910/protocol/browser \
   cargo build --release --locked -p agentbrowser-android --example device_fixture \
   --config "patch.crates-io.obscura-host-protocol.path=\"$OBSCURA_PROTOCOL_ROOT\""
-OBSCURA_BIN_DIR=/Volumes/extension/code/AgentBrowser/playground/m1-obscura-combined-build-20260908/target/release \
+OBSCURA_BIN_DIR=/Volumes/extension/code/obscura/playground/m1-obscura-host-candidate-20260910/target/release \
 OBSCURA_ENDPOINT_BIND_IP=127.0.0.1 \
   target/release/examples/device_fixture
 ```
