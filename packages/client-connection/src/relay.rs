@@ -1320,11 +1320,48 @@ impl SecureRelayChannel {
         let mut reader = self.reader.lock().await;
         reader.read_frame(self.kind).await
     }
+
+    /// Close the inner TLS stream only after the bridge has forwarded every
+    /// encrypted byte already written to it to the Relay channel.
+    pub async fn shutdown(&self) -> Result<()> {
+        {
+            let mut writer = self.writer.lock().await;
+            writer
+                .shutdown()
+                .await
+                .map_err(|error| RelayFailure::Transport(error.to_string()))?;
+        }
+        let mut done = self._bridge.outbound_done.clone();
+        tokio::time::timeout(TUNNEL_TIMEOUT, async {
+            while !*done.borrow() {
+                done.changed().await.map_err(|_| {
+                    RelayFailure::Transport("relay bridge ended before outbound drain".into())
+                })?;
+            }
+            Ok::<(), RelayFailure>(())
+        })
+        .await
+        .map_err(|_| RelayFailure::Transport("relay bridge outbound drain timed out".into()))??;
+        if let Some(error) = self
+            ._bridge
+            .outbound_error
+            .lock()
+            .expect("relay bridge error owner")
+            .clone()
+        {
+            return Err(RelayFailure::Transport(format!(
+                "relay bridge outbound failed: {error}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 struct RelayBridge {
     relay_to_tls: JoinHandle<()>,
     tls_to_relay: JoinHandle<()>,
+    outbound_done: watch::Receiver<bool>,
+    outbound_error: Arc<StdMutex<Option<String>>>,
 }
 
 impl Drop for RelayBridge {
@@ -1697,8 +1734,11 @@ async fn secure_channel(
 fn bridge_channel(channel: RelayChannel) -> (DuplexStream, Arc<RelayBridge>) {
     let (tls_io, bridge_io) = tokio::io::duplex(INNER_BRIDGE_BUFFER);
     let (mut bridge_reader, mut bridge_writer) = tokio::io::split(bridge_io);
+    let (outbound_done_tx, outbound_done) = watch::channel(false);
+    let outbound_error = Arc::new(StdMutex::new(None));
     let inbound = channel.clone();
     let outbound = channel;
+    let outbound_error_owner = Arc::clone(&outbound_error);
     let relay_to_tls = tokio::spawn(async move {
         while let Ok(bytes) = inbound.recv().await {
             if bridge_writer.write_all(&bytes).await.is_err() {
@@ -1708,19 +1748,26 @@ fn bridge_channel(channel: RelayChannel) -> (DuplexStream, Arc<RelayBridge>) {
     });
     let tls_to_relay = tokio::spawn(async move {
         let mut bytes = vec![0u8; 16 * 1024];
-        loop {
+        let error = loop {
             let read = match bridge_reader.read(&mut bytes).await {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break None,
+                Err(error) => break Some(error.to_string()),
                 Ok(read) => read,
             };
-            if outbound.send(&bytes[..read]).await.is_err() {
-                break;
+            if let Err(error) = outbound.send(&bytes[..read]).await {
+                break Some(error.to_string());
             }
-        }
+        };
+        *outbound_error_owner
+            .lock()
+            .expect("relay bridge error owner") = error;
+        let _ = outbound_done_tx.send(true);
     });
     let bridge = Arc::new(RelayBridge {
         relay_to_tls,
         tls_to_relay,
+        outbound_done,
+        outbound_error,
     });
     (tls_io, bridge)
 }

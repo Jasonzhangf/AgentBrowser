@@ -4,7 +4,7 @@
 //! byte-preserving forwarding to an already-running Obscura endpoint. It does
 //! not read Host sockets, interpret browser operations, or own Session state.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 use agentbrowser_connection::{
     protocol::{Command, Mode, Request, Response, ResultValue},
@@ -557,6 +557,30 @@ async fn send_endpoint_text<T: serde::Serialize>(
         .map_err(|error| RelayHostError::Transport(error.to_string()))
 }
 
+async fn finish_after_control<F>(
+    control_result: Result<()>,
+    media_result: F,
+    drain_timeout: Duration,
+) -> Result<()>
+where
+    F: Future<Output = Result<()>>,
+{
+    match control_result {
+        Ok(()) => tokio::time::timeout(drain_timeout, media_result)
+            .await
+            .map_err(|_| RelayHostError::Transport("Obscura media drain timed out".into()))?,
+        Err(error) => match tokio::time::timeout(drain_timeout, media_result).await {
+            Ok(Ok(())) => Err(error),
+            Ok(Err(media_error)) => Err(RelayHostError::Transport(format!(
+                "{error}; media forward failed: {media_error}"
+            ))),
+            Err(_) => Err(RelayHostError::Transport(format!(
+                "{error}; media forward failed: Obscura media drain timed out"
+            ))),
+        },
+    }
+}
+
 async fn forward_tunnel(
     tunnel: &SecureRelayTunnel,
     endpoint_url: &str,
@@ -593,9 +617,11 @@ async fn forward_tunnel(
     };
     let control_result = forward_control(tunnel.control(), control);
     let media_result = forward_media(tunnel.media(), media);
+    tokio::pin!(control_result);
+    tokio::pin!(media_result);
     tokio::select! {
-        result = control_result => result,
-        result = media_result => result,
+        result = &mut control_result => finish_after_control(result, &mut media_result, ENDPOINT_TIMEOUT).await,
+        result = &mut media_result => result,
     }
 }
 
@@ -729,8 +755,22 @@ async fn forward_media(secure: &SecureRelayChannel, endpoint: EndpointChannel) -
                 return Err(RelayHostError::Protocol("Relay media channel is read-only".into()));
             }
             message = endpoint_recv(&endpoint) => {
-                match message? {
-                    None | Some(Message::Close(_)) => return Ok(()),
+                let message = match message {
+                    Ok(message) => message,
+                    Err(error) => {
+                        if let Err(drain_error) = secure.shutdown().await {
+                            return Err(RelayHostError::Transport(format!(
+                                "{error}; relay media drain failed: {drain_error}"
+                            )));
+                        }
+                        return Err(error);
+                    }
+                };
+                match message {
+                    None | Some(Message::Close(_)) => {
+                        secure.shutdown().await?;
+                        return Ok(());
+                    }
                     Some(Message::Ping(bytes)) => endpoint_send(&endpoint, Message::Pong(bytes)).await?,
                     Some(Message::Pong(_)) => {},
                     Some(Message::Binary(bytes)) => secure.send(&bytes).await.map_err(RelayHostError::from)?,
@@ -790,6 +830,35 @@ mod tests {
                 .expect("parse successful response")
         );
         assert_eq!(pending, None);
+    }
+
+    #[tokio::test]
+    async fn control_completion_bounds_media_drain() {
+        let result = finish_after_control(
+            Ok(()),
+            std::future::pending::<Result<()>>(),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(RelayHostError::Transport(message))
+                if message == "Obscura media drain timed out"
+        ));
+
+        let result = finish_after_control(
+            Err(RelayHostError::Protocol("control failed".into())),
+            std::future::pending::<Result<()>>(),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(RelayHostError::Transport(message))
+                if message.contains("control failed")
+                    && message.contains("media forward failed")
+                    && message.contains("timed out")
+        ));
     }
 
     fn peer(id: &str, byte: u8) -> RelayPeerBinding {
