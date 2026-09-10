@@ -1054,7 +1054,46 @@ class CombinedRunner:
         if result.returncode != 0:
             self.abort("ANDROID_PAIRING_INSTALL_FAILED", bounded_text(result.stdout), owner="Android pairing owner", next_action="preserve the absent-private-pairing failure and selected device", stage="android_install")
         self.pairing_installed = True
+        self.prepare_android_surface()
         self.stage_finish("android_install", "passed", self.android_install)
+
+    def prepare_android_surface(self) -> None:
+        """Put the owned probe Activity in the foreground before instrumentation."""
+
+        for command in (
+            ["shell", "input", "keyevent", "KEYCODE_WAKEUP"],
+            ["shell", "wm", "dismiss-keyguard"],
+            ["shell", "cmd", "statusbar", "collapse"],
+            ["shell", "am", "start", "-W", "-n", "com.agentbrowser.probe/.MainActivity"],
+        ):
+            code, output = self.adb(command, timeout=30.0)
+            if code != 0:
+                self.abort(
+                    "ANDROID_SURFACE_PREPARE_FAILED",
+                    bounded_text(output),
+                    owner="Android environment owner",
+                    next_action="wake the selected device and foreground the probe Activity",
+                    stage="android_install",
+                )
+        deadline = time.monotonic() + 8.0
+        last_output = b""
+        while time.monotonic() < deadline:
+            code, output = self.adb(["shell", "dumpsys", "window"], timeout=15.0)
+            last_output = output
+            text_output = output.decode(errors="replace")
+            if code == 0 and "mCurrentFocus=" in text_output and "com.agentbrowser.probe" in text_output and "mFocusedApp=" in text_output and "com.agentbrowser.probe" in text_output:
+                self.evidence["events"]["android"].append(
+                    {"event": "surface_prepared", "observed_at": utc_now(), "value": "com.agentbrowser.probe/.MainActivity"}
+                )
+                return
+            time.sleep(0.1)
+        self.abort(
+            "ANDROID_SURFACE_NOT_FOCUSED",
+            bounded_text(last_output),
+            owner="Android environment owner",
+            next_action="preserve window focus state and foreground the probe Activity",
+            stage="android_install",
+        )
 
     def verify_android_build_provenance(self, artifacts: Mapping[str, pathlib.Path], stage: str) -> None:
         path = self.args.android_build_provenance
