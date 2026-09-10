@@ -33,9 +33,12 @@ final class NetworkSession {
     synchronized String transport(){return selectedTransport;}
     synchronized boolean current(long value){return connected()&&token==value;}
     synchronized boolean inputReady(){return connected()&&!commandPending&&displayed!=null
-        &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null&&!host.optBoolean("viewport_pending")
+        &&java.util.Objects.equals(requestedViewport,submittedViewport)&&hostReady(host)
         &&displayed.documentRevision==host.optLong("document_revision",-1)
         &&displayed.viewportRevision==host.optLong("viewport_revision",-1);}
+    static boolean hostReady(JSONObject host){
+        return host!=null&&!host.optBoolean("viewport_pending")&&!host.optBoolean("operation_running");
+    }
     synchronized long epoch(){return shownEpoch;}
     synchronized boolean humanShown(){return shownMode.equals("control");}
     record InputContext(long connection,long epoch,long document,long viewport) { }
@@ -53,7 +56,6 @@ final class NetworkSession {
         if(!connected()||commandPending||requestedViewport==null||requestedViewport.equals(submittedViewport))return;
         Viewport viewport=requestedViewport;
         command(6,0,viewport.width(),viewport.height(),viewport.landscape()?1:0,0,"");
-        submittedViewport=viewport;
     }
     private static long next(long value){if(value==Long.MAX_VALUE)throw new IllegalStateException("GENERATION_EXHAUSTED");return value+1;}
     synchronized JSONObject snapshot(JSONObject media){
@@ -178,8 +180,13 @@ final class NetworkSession {
             try{
                 synchronized(this){if(!current(expected))return;}
                 String result=NativeConnection.command(nativeHandle,op,epoch,ticket,x,y,dx,dy,text==null?"":text);
-                JSONObject status=new JSONObject(op<=2||op==6?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
-                synchronized(this){if(current(expected)){host=status;commandPending=false;flushViewport();}}
+                JSONObject status=new JSONObject(op<=2?result:NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
+                synchronized(this){if(current(expected)){
+                    host=status;
+                    if(op==6)submittedViewport=new Viewport((int)x,(int)y,dx!=0.0);
+                    commandPending=false;
+                    flushViewport();
+                }}
             }catch(HostCommandException rejection){
                 try{
                     synchronized(this){if(!current(expected))return;}
