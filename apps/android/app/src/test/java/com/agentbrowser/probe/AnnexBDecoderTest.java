@@ -131,6 +131,15 @@ public class AnnexBDecoderTest {
         AnnexBDecoder.validateCodecOutput(value,160,120,160,128,0,0,159,119);
     }
 
+    @Test public void acceptsCodecOutputAtDisplayDimensionsWhenPaddingIsOmitted() {
+        AnnexBDecoder.SpsGeometry before=AnnexBDecoder.parseSps(annexB(
+            "00 00 00 01 67 42 c0 0a dc 28 47 e5 9a 81 01 00 a0 00 00 03 00 20 00 00 03 00 d1 e2 44 f0"));
+        AnnexBDecoder.validateCodecOutput(before,160,120,160,120,0,0,159,119);
+        AnnexBDecoder.SpsGeometry resized=AnnexBDecoder.parseSps(annexB(
+            "00 00 00 01 67 42 c0 16 dc 19 06 be 5a 9a 81 01 00 a0 00 00 03 00 20 00 00 03 00 d1 e2 c5 f0"));
+        AnnexBDecoder.validateCodecOutput(resized,392,846,392,846,0,0,391,845);
+    }
+
     @Test public void acceptsResizedCodecPaddingAndDisplayCrop() {
         AnnexBDecoder.SpsGeometry value=AnnexBDecoder.parseSps(annexB(
             "00 00 00 01 67 42 c0 16 dc 19 06 be 5a 9a 81 01 00 a0 00 00 03 00 20 00 00 03 00 d1 e2 c5 f0"));
@@ -138,11 +147,19 @@ public class AnnexBDecoderTest {
         AnnexBDecoder.validateCodecOutput(value,392,846,416,864,0,0,391,845);
     }
 
-    @Test public void rejectsCodecOutputSmallerThanSpsCodedGeometry() {
+    @Test public void rejectsCodecOutputSmallerThanSpsDisplayGeometry() {
         AnnexBDecoder.SpsGeometry value=AnnexBDecoder.parseSps(annexB(
             "00 00 00 01 67 42 c0 0a dc 28 47 e5 9a 81 01 00 a0 00 00 03 00 20 00 00 03 00 d1 e2 44 f0"));
         IllegalArgumentException error=assertThrows(IllegalArgumentException.class,
-            () -> AnnexBDecoder.validateCodecOutput(value,160,120,160,120,0,0,159,119));
+            () -> AnnexBDecoder.validateCodecOutput(value,160,120,160,119,0,0,159,118));
+        assertTrue(error.getMessage().contains("BITSTREAM_DIMENSIONS_MISMATCH"));
+    }
+
+    @Test public void rejectsCodecOutputBetweenDisplayAndCodedGeometry() {
+        AnnexBDecoder.SpsGeometry value=AnnexBDecoder.parseSps(annexB(
+            "00 00 00 01 67 42 c0 16 dc 19 06 be 5a 9a 81 01 00 a0 00 00 03 00 20 00 00 03 00 d1 e2 c5 f0"));
+        IllegalArgumentException error=assertThrows(IllegalArgumentException.class,
+            () -> AnnexBDecoder.validateCodecOutput(value,392,846,396,846,0,0,391,845));
         assertTrue(error.getMessage().contains("BITSTREAM_DIMENSIONS_MISMATCH"));
     }
 
@@ -154,6 +171,9 @@ public class AnnexBDecoderTest {
         assertTrue(error.getMessage().contains("BITSTREAM_DIMENSIONS_MISMATCH"));
         error=assertThrows(IllegalArgumentException.class,
             () -> AnnexBDecoder.validateCodecOutput(value,392,846,400,848,0,0,391,844));
+        assertTrue(error.getMessage().contains("BITSTREAM_DIMENSIONS_MISMATCH"));
+        error=assertThrows(IllegalArgumentException.class,
+            () -> AnnexBDecoder.validateCodecOutput(value,392,846,400,848,0,0,399,847));
         assertTrue(error.getMessage().contains("BITSTREAM_DIMENSIONS_MISMATCH"));
     }
 

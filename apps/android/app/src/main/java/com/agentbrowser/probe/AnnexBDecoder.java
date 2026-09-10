@@ -175,20 +175,25 @@ public final class AnnexBDecoder {
                 +" declared="+declaredWidth+"x"+declaredHeight);
     }
 
-    /** MediaCodec output can retain additional raw macroblock padding. */
+    /** MediaCodec output may expose SPS display dimensions or retain padding. */
     static void validateCodecOutput(SpsGeometry sps,int declaredWidth,int declaredHeight,
-            int actualCodedWidth,int actualCodedHeight,int cropLeft,int cropTop,int cropRight,int cropBottom) {
+            int outputWidth,int outputHeight,int cropLeft,int cropTop,int cropRight,int cropBottom) {
         long displayWidth=(long)cropRight-cropLeft+1L;
         long displayHeight=(long)cropBottom-cropTop+1L;
         if(sps.displayWidth!=declaredWidth || sps.displayHeight!=declaredHeight
-                || actualCodedWidth<sps.codedWidth || actualCodedHeight<sps.codedHeight
+                || !outputDimensionMatches(outputWidth,sps.displayWidth,sps.codedWidth)
+                || !outputDimensionMatches(outputHeight,sps.displayHeight,sps.codedHeight)
                 || cropLeft<0 || cropTop<0 || cropRight<cropLeft || cropBottom<cropTop
-                || cropRight>=actualCodedWidth || cropBottom>=actualCodedHeight
+                || cropRight>=outputWidth || cropBottom>=outputHeight
                 || displayWidth!=sps.displayWidth || displayHeight!=sps.displayHeight)
             throw new IllegalArgumentException("BITSTREAM_DIMENSIONS_MISMATCH: output="
-                +actualCodedWidth+"x"+actualCodedHeight+" crop="+cropLeft+","+cropTop+"-"+cropRight+","+cropBottom
+                +outputWidth+"x"+outputHeight+" crop="+cropLeft+","+cropTop+"-"+cropRight+","+cropBottom
                 +" sps="+sps.codedWidth+"x"+sps.codedHeight+"/"+sps.displayWidth+"x"+sps.displayHeight
                 +" declared="+declaredWidth+"x"+declaredHeight);
+    }
+
+    private static boolean outputDimensionMatches(int output,int display,int coded) {
+        return output==display || output>=coded;
     }
 
     private static int startCodeLength(byte[] bytes,int offset) {
@@ -296,14 +301,14 @@ public final class AnnexBDecoder {
                 if(index==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat actual=active.getOutputFormat();
                     // Codec buffers can include macroblock padding beyond the SPS display rectangle.
-                    int actualCodedWidth=actual.getInteger(MediaFormat.KEY_WIDTH);
-                    int actualCodedHeight=actual.getInteger(MediaFormat.KEY_HEIGHT);
+                    int outputWidth=actual.getInteger(MediaFormat.KEY_WIDTH);
+                    int outputHeight=actual.getInteger(MediaFormat.KEY_HEIGHT);
                     int cropLeft=actual.getInteger("crop-left",0);
                     int cropTop=actual.getInteger("crop-top",0);
-                    int cropRight=actual.getInteger("crop-right",actualCodedWidth-1);
-                    int cropBottom=actual.getInteger("crop-bottom",actualCodedHeight-1);
+                    int cropRight=actual.getInteger("crop-right",outputWidth-1);
+                    int cropBottom=actual.getInteger("crop-bottom",outputHeight-1);
                     validateCodecOutput(sps,unit.codedWidth,unit.codedHeight,
-                        actualCodedWidth,actualCodedHeight,cropLeft,cropTop,cropRight,cropBottom);
+                        outputWidth,outputHeight,cropLeft,cropTop,cropRight,cropBottom);
                 } else if(index>=0) {
                     output=info.size>0;
                     active.releaseOutputBuffer(index,output && current(token));
