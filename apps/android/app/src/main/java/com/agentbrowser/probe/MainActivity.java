@@ -136,7 +136,7 @@ public final class MainActivity extends Activity {
         videoClip.setClipChildren(true);
         videoClip.addView(video);
         stage.addView(videoClip);
-        video.setOnTouchListener((view, event) -> { touchActive=true; return networkTouch(event); });
+        video.setClickable(true); video.setOnTouchListener((view, event) -> { touchActive=true; return networkTouch(event); });
         stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
             layoutVideo();
             if (networkSelected && (r-l!=or-ol || b-t!=ob-ot)) reportViewport();
@@ -450,7 +450,7 @@ public final class MainActivity extends Activity {
                     pointerScrolled.put(pointerId,true);
                     if (!wasScrolled) network.pointer(pointerId,11,current.epoch(),x,y,1);
                 }
-                network.pointer(pointerId,12,current.epoch(),x,y,Boolean.TRUE.equals(pointerScrolled.get(pointerId))?1:1);
+                network.pointer(pointerId,12,current.epoch(),x,y,1);
                 pointerLastX.put(pointerId,x);
                 pointerLastY.put(pointerId,y);
             }
