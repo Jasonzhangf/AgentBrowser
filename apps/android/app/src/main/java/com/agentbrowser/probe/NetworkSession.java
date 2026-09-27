@@ -230,7 +230,7 @@ final class NetworkSession {
     synchronized void pointer(int pointerId,int op,long epoch,double x,double y,int buttons){
         if(!connected())throw new IllegalStateException("NETWORK_NOT_CONNECTED");
         if(op<11||op>13)throw new IllegalArgumentException("INVALID_POINTER_OP");
-        if(pointerId<0||x<0||y<0||!Double.isFinite(x)||!Double.isFinite(y)||buttons<0)throw new IllegalArgumentException("INVALID_POINTER_COORDINATE");
+        if(pointerId<0||!Double.isFinite(x)||!Double.isFinite(y)||buttons<0)return;if(x<0)x=0;if(y<0)y=0;
         NetworkFrame currentFrame=displayed;
         if(currentFrame==null)throw new IllegalStateException("DISPLAY_NOT_READY");
         submitPointer(pointerId,op,epoch,x,y,buttons,currentFrame);

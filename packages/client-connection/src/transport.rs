@@ -470,7 +470,7 @@ async fn establish(
         .media_token
         .as_deref()
         .ok_or_else(|| Failure::Protocol("Missing media binding".into()))?;
-    let (media, _) = tokio::time::timeout(Duration::from_secs(10), open(&bootstrap.base, "/media", &bootstrap.tls, Some(token)))
+    let (media, _) = tokio::time::timeout(Duration::from_secs(30), open(&bootstrap.base, "/media", &bootstrap.tls, Some(token)))
         .await
         .map_err(|_| Failure::Transport("Media WebSocket open deadline".into()))??;
     Ok((bootstrap.control, media, bootstrap.status, bootstrap.id))
@@ -569,7 +569,7 @@ async fn open(
         .map_err(transport)?;
     log_connection_stage(&format!("tls_handshake:{path}"));
     let stream = tokio::time::timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(15),
         tls.connect(ServerName::try_from(host.to_owned()).map_err(transport)?, tcp),
     )
     .await
