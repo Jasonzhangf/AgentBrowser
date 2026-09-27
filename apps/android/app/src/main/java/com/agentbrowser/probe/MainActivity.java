@@ -448,7 +448,7 @@ public final class MainActivity extends Activity {
                     pointerDownX.put(pointerId,x);
                     pointerDownY.put(pointerId,y);
                     pointerScrolled.put(pointerId,true);
-                    if (!wasScrolled) network.pointer(pointerId,11,current.epoch(),x,y,1);
+                    // Do not resend pointerdown; it resets the host scroll baseline.
                 }
                 network.pointer(pointerId,12,current.epoch(),x,y,1);
                 pointerLastX.put(pointerId,x);
