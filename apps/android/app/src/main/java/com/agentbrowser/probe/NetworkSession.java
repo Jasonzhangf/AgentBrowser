@@ -3,6 +3,7 @@ package com.agentbrowser.probe;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import org.json.JSONObject;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -25,7 +26,7 @@ final class NetworkSession {
     record Viewport(int width,int height,boolean landscape) { }
     record CommandRequest(int op,long epoch,double x,double y,double dx,double dy,String text) { }
     private Viewport requestedViewport,submittedViewport,rejectedViewport;
-    private boolean running,closed,framePending,commandPending,shouldReconnect;
+    private boolean running,closed,framePending,commandPending,shouldReconnect;private long navigateGraceUntil;
     private int commandPendingOp=-1;
     private CommandRequest queuedCommand;
     private NetworkFrame displayed;
@@ -205,7 +206,7 @@ final class NetworkSession {
                 rendered.get(6,TimeUnit.SECONDS); // Only the worker waits; never the main looper.
                 synchronized(this){if(!current(expected))return;}
                 NativeConnection.acknowledge(nativeHandle,frame.ticket);
-                synchronized(this){if(!current(expected))return;displayed=frame;framePending=false;}
+                synchronized(this){if(!current(expected))return;displayed=frame;framePending=false;if(host!=null&&frame.documentRevision==host.optLong("document_revision",-1)&&frame.viewportRevision==host.optLong("viewport_revision",-1))navigateGraceUntil=0;}
             }
             JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
             synchronized(this){if(!current(expected))return;host=status;startQueuedIfReady();}
@@ -224,7 +225,8 @@ final class NetworkSession {
             throw new IllegalStateException("OPERATION_PENDING");
         }
         if(queuedCommand!=null&&op!=6)throw new IllegalStateException("OPERATION_PENDING");
-        if(op>=3&&op!=6&&!inputReady())throw new IllegalStateException("DISPLAY_NOT_READY");
+        if(op>=3&&op!=6&&op!=7&&op!=8&&op!=9&&op!=10&&!inputReady())throw new IllegalStateException("DISPLAY_NOT_READY");
+        if(op==7||op==8||op==9||op==10)navigateGraceUntil=SystemClock.elapsedRealtime()+15000;
         startCommand(new CommandRequest(op,epoch,x,y,dx,dy,text==null?"":text));
     }
     synchronized void pointer(int pointerId,int op,long epoch,double x,double y,int buttons){

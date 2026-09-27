@@ -188,16 +188,28 @@ impl Connection {
         status(self.call(Action::Release(epoch)).await?)
     }
     pub async fn navigate(&self, url: String, epoch: u64) -> Result<SessionStatus, Failure> {
-        status(self.call(Action::Navigate(url, epoch)).await?)
+        self.navigation_status(self.call(Action::Navigate(url, epoch)).await).await
     }
     pub async fn back(&self, epoch: u64) -> Result<SessionStatus, Failure> {
-        status(self.call(Action::Back(epoch)).await?)
+        self.navigation_status(self.call(Action::Back(epoch)).await).await
     }
     pub async fn forward(&self, epoch: u64) -> Result<SessionStatus, Failure> {
-        status(self.call(Action::Forward(epoch)).await?)
+        self.navigation_status(self.call(Action::Forward(epoch)).await).await
     }
     pub async fn reload(&self, epoch: u64) -> Result<SessionStatus, Failure> {
-        status(self.call(Action::Reload(epoch)).await?)
+        self.navigation_status(self.call(Action::Reload(epoch)).await).await
+    }
+    /// Navigation operations (navigate/back/forward/reload) return ResultValue::Input
+    /// on success. Convert that to a SessionStatus by requesting a fresh status.
+    async fn navigation_status(&self, result: Result<ResultValue, Failure>) -> Result<SessionStatus, Failure> {
+        match result? {
+            ResultValue::Status(status) => Ok(status),
+            ResultValue::Input { .. } => self.status().await,
+            other => Err(Failure::Protocol(format!(
+                "Expected status or input receipt after navigation, got {:?}",
+                std::mem::discriminant(&other)
+            ))),
+        }
     }
     pub async fn input(
         &self,
