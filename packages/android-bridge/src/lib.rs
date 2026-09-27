@@ -39,6 +39,7 @@ pub(crate) fn fail(env: &mut JNIEnv, message: String) {
     if !env.exception_check().unwrap_or(true) { let _ = env.throw_new("java/lang/IllegalStateException", message); }
 }
 
+#[derive(Debug)]
 enum CommandFailure { Local(String), Connection(Failure) }
 impl From<String> for CommandFailure { fn from(value: String) -> Self { Self::Local(value) } }
 impl From<&str> for CommandFailure { fn from(value: &str) -> Self { Self::Local(value.into()) } }
@@ -113,7 +114,10 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_open(
     let result = (|| -> Result<jlong> {
         open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::Wss)
     })();
-    match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
+    match result {
+        Ok(id) => id,
+        Err(message) => { fail(&mut env, message); 0 }
+    }
 }
 
 #[no_mangle]
@@ -125,7 +129,10 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_openWebRtc(
         let bind_ip = parse_webrtc_bind_ip(&bind_ip)?;
         open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::WebRtc(bind_ip))
     })();
-    match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
+    match result {
+        Ok(id) => id,
+        Err(message) => { fail(&mut env, message); 0 }
+    }
 }
 
 #[cfg(test)]
@@ -168,12 +175,12 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_frame(mut en
             VideoPacket::Unavailable { message, .. } => Err(format!("Host media unavailable: {message}")),
             VideoPacket::EncoderUnavailable { session_id, message } => Err(encoder_unavailable_error(session_id, message)),
             VideoPacket::Closed { .. } => Err("Host media closed".into()),
-            VideoPacket::AccessUnit { source, pts_us, coded_width, coded_height, .. } => {
+            VideoPacket::AccessUnit { source, pts_us, .. } => {
                 if video.bytes.len() > 1024 * 1024 { return Err("Access unit exceeds Android decoder 1MiB limit".into()); }
                 if [source.sequence, *pts_us, source.document_revision, source.viewport_revision].iter().any(|value| *value > i64::MAX as u64) { return Err("Native frame identity overflow".into()); }
                 let bytes = env.byte_array_from_slice(&video.bytes).map_err(error)?;
                 let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJJJ)V", &[
-                    JValue::Object(&JObject::from(bytes)), JValue::Int(*coded_width as i32), JValue::Int(*coded_height as i32),
+                    JValue::Object(&JObject::from(bytes)), JValue::Int(source.source_dimensions.width as i32), JValue::Int(source.source_dimensions.height as i32),
                     JValue::Int(source.width as i32), JValue::Int(source.height as i32), JValue::Long(*pts_us as i64), JValue::Long(source.sequence as i64),
                     JValue::Long(source.document_revision as i64), JValue::Long(source.viewport_revision as i64),
                 ]).map_err(error)?;
@@ -231,17 +238,16 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_command(
                 1 => Ok(serde_json::to_string(&connection.takeover(epoch as u64).await?).map_err(error)?),
                 2 => Ok(serde_json::to_string(&connection.release(epoch as u64).await?).map_err(error)?),
                 7 => Ok(serde_json::to_string(&connection.navigate(text, epoch as u64).await?).map_err(error)?),
+                8 => Ok(serde_json::to_string(&connection.back(epoch as u64).await?).map_err(error)?),
+                9 => Ok(serde_json::to_string(&connection.forward(epoch as u64).await?).map_err(error)?),
+                10 => Ok(serde_json::to_string(&connection.reload(epoch as u64).await?).map_err(error)?),
                 3..=5 => {
                     if ![x,y,dx,dy].iter().all(|number| number.is_finite()) { return Err("Nonfinite input coordinates".into()); }
                     let frame = session.displayed.iter().find(|(id,_)|ticket>0&&*id==ticket as u64)
                         .map(|(_,frame)|frame.clone()).ok_or("No retained acknowledged displayed frame")?;
                     let input = match op { 3 => Input::Click { x,y }, 4 => Input::Text(text), _ => Input::Scroll { x,y,delta_x:dx,delta_y:dy } };
                     connection.input(input, frame, epoch as u64).await?;
-                    // The Host receipt is represented by the successful typed API;
-                    // subsequent status remains a separate authoritative read.
-                    Ok(serde_json::to_string(&agentbrowser_connection::protocol::ResultValue::Input {
-                        input: agentbrowser_connection::protocol::InputReceipt { state: agentbrowser_connection::protocol::InputState::Succeeded }
-                    }).map_err(error)?)
+                    Ok(serde_json::to_string(&connection.status().await?).map_err(error)?)
                 }
                 _ => Err("Unknown native command".into()),
             }
@@ -262,4 +268,57 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_close(mut en
         Ok(())
     })();
     if let Err(message) = result { fail(&mut env, message); }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_pointer(
+    mut env: JNIEnv, _: JClass, handle: jlong, op: jint, epoch: jlong, ticket: jlong,
+    pointer_id: jlong, x: jdouble, y: jdouble, buttons: jint,
+) -> jstring {
+    let result = (|| -> std::result::Result<jstring, CommandFailure> {
+        if epoch < 0 || pointer_id < 0 || buttons < 0 || x < 0.0 || y < 0.0 || !x.is_finite() || !y.is_finite() {
+            return Err("Invalid pointer gesture".into());
+        }
+        let session = session(handle)?; let session = session.lock().map_err(error)?;
+        let connection = &session.connection;
+        let frame = session.displayed.iter().find(|(id,_)| ticket > 0 && *id == ticket as u64)
+            .map(|(_, frame)| frame.clone()).ok_or("No retained acknowledged displayed frame")?;
+        let input = match op {
+            11 => Input::PointerDown { pointer_id: pointer_id as u64, x, y, buttons: buttons as u64 },
+            12 => Input::PointerMove { pointer_id: pointer_id as u64, x, y, buttons: buttons as u64 },
+            13 => Input::PointerUp { pointer_id: pointer_id as u64, x, y, buttons: buttons as u64 },
+            _ => return Err("Unknown pointer command".into()),
+        };
+        let response = runtime()?.block_on(async {
+            connection.input(input, frame, epoch as u64).await.map_err(CommandFailure::Connection)?;
+            serde_json::to_string(&connection.status().await?).map_err(|e| CommandFailure::Local(error(e)))
+        })?;
+        Ok(env.new_string(response).map_err(error)?.into_raw())
+    })();
+    match result { Ok(value) => value, Err(failure) => { fail_command(&mut env, failure); std::ptr::null_mut() } }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_keyEvent(
+    mut env: JNIEnv, _: JClass, handle: jlong, epoch: jlong, ticket: jlong,
+    key: JString, code: JString, text: JString,
+) -> jstring {
+    let result = (|| -> std::result::Result<jstring, CommandFailure> {
+        let key: String = env.get_string(&key).map_err(error)?.into();
+        let code: String = env.get_string(&code).map_err(error)?.into();
+        let text: String = env.get_string(&text).map_err(error)?.into();
+        if epoch < 0 || key.is_empty() || code.is_empty() || text.chars().count() > 4096 {
+            return Err("Invalid key event".into());
+        }
+        let session = session(handle)?; let session = session.lock().map_err(error)?;
+        let connection = &session.connection;
+        let frame = session.displayed.iter().find(|(id,_)| ticket > 0 && *id == ticket as u64)
+            .map(|(_, frame)| frame.clone()).ok_or("No retained acknowledged displayed frame")?;
+        let response = runtime()?.block_on(async {
+            connection.input(Input::Key { key, code, text }, frame, epoch as u64).await.map_err(CommandFailure::Connection)?;
+            serde_json::to_string(&connection.status().await?).map_err(|e| CommandFailure::Local(error(e)))
+        })?;
+        Ok(env.new_string(response).map_err(error)?.into_raw())
+    })();
+    match result { Ok(value) => value, Err(failure) => { fail_command(&mut env, failure); std::ptr::null_mut() } }
 }

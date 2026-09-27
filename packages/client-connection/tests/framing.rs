@@ -10,8 +10,9 @@ fn frame() -> serde_json::Value {
     serde_json::json!({"type":"access_unit","source":{
         "session_id":"s","sequence":1,"document_revision":1,"viewport_revision":1,
         "width":391,"height":845,"stride":1564,"byte_length":1321580,
+        "source_dimensions":{"width":392,"height":846},
         "pixel_format":"premultiplied_rgba8"},"encoder_id":"e","pts_us":1,
-        "coded_width":392,"coded_height":846,"codec":"h264_annex_b","keyframe":true,"byte_length":5})
+        "codec":"h264_annex_b","keyframe":true,"byte_length":5})
 }
 
 #[test]
@@ -19,7 +20,7 @@ fn validates_raw_dimensions_padding_and_payload_bounds() {
     let original = frame();
     let payload = [0, 0, 0, 1, 0x65];
     assert!(decode_video(&wire(&original, &payload)).is_ok());
-    for field in ["coded_width", "coded_height", "byte_length"] {
+    for field in ["source_dimensions", "byte_length"] {
         let mut packet = original.clone(); packet[field] = 1.into();
         assert!(decode_video(&wire(&packet, &payload)).is_err(), "{field}");
     }

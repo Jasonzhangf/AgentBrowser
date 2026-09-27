@@ -55,12 +55,12 @@ impl RelayBackend {
         let ready = backend.receive_control().await?;
         let ready_session = match ready {
             Response::Ready {
-                version: 4,
+                version: 9,
                 session_id,
             } => session_id,
             Response::Ready { version, .. } => {
                 return Err(Failure::Protocol(format!(
-                    "Expected Host protocol version 4, got {version}"
+                    "Expected Host protocol version 9, got {version}"
                 )))
             }
             other => {

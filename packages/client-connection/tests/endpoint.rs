@@ -1,6 +1,6 @@
 #![cfg(unix)]
 use std::{path::PathBuf, process::Stdio, time::Duration, os::unix::fs::{DirBuilderExt, PermissionsExt}};
-use agentbrowser_connection::{Connector, DisplayedFrame, Failure, Input, Pairing, protocol::{Command, ControlPhase, Mode, Operation, Request, Response, ResultValue, SessionStatus, VideoPacket}};
+use agentbrowser_connection::{Connector, DisplayedFrame, Failure, Input, Pairing, protocol::{Command, ControlPhase, Mode, Operation, OperationId, Request, Response, ResultValue, SessionStatus, VideoPacket}};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
@@ -34,9 +34,10 @@ async fn exercise() {
     let mut line = String::new(); local.read_line(&mut line).await.unwrap();
     let mut id = 0;
     let attached = state(local_call(&mut local, &mut id, Command::Attach { mode: Mode::Agent, viewport: None }, None).await);
-    let navigated = state(local_call(&mut local, &mut id, Command::Navigate { url:
+    local_call(&mut local, &mut id, Command::Navigate { url:
         "data:text/html,<button style='width:200px;height:100px' onclick='window.clicked=(window.clicked||0)+1'>click</button>".into()
-    }, Some(identity(&attached))).await);
+    }, Some(identity(&attached))).await;
+    let navigated = state(local_call(&mut local, &mut id, Command::Status {}, None).await);
     let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = reservation.local_addr().unwrap(); drop(reservation);
     let mut endpoint = tokio::process::Command::new(bin.join("obscura-endpoint"))
@@ -110,9 +111,9 @@ async fn exercise() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-fn state(value: ResultValue) -> SessionStatus { match value { ResultValue::Status(status) => status, _ => panic!("Expected status") } }
+fn state(value: ResultValue) -> SessionStatus { match value { ResultValue::Status(status) => status, other => panic!("Expected status, got {other:?}") } }
 fn identity(state: &SessionStatus) -> Operation {
-    Operation { session_id: state.session_id.clone(), attachment_id: state.attachment_id.unwrap(), sequence: state.next_sequence,
+    Operation { operation_id: OperationId(format!("op-{}", state.next_sequence)), session_id: state.session_id.clone(), attachment_id: state.attachment_id.unwrap(), sequence: state.next_sequence,
         control_epoch: state.control.epoch, viewport_revision: state.viewport_revision, document_revision: state.document_revision }
 }
 async fn local_call(local: &mut BufReader<tokio::net::UnixStream>, id: &mut u64, command: Command, operation: Option<Operation>) -> ResultValue {

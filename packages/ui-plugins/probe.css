@@ -30,7 +30,9 @@ footer p { margin: 2px 0; }
 .text-entry input { min-width: 0; flex: 1; border: 1px solid #cad6cc; border-radius: 8px; padding: 9px; font: inherit; }
 .text-entry button { min-height: 42px; padding: 8px 12px; font-size: 13px; }
 ::selection { background: #d3eadb; }
-.remote > h1, .remote > .intro, .remote > .status, .remote > .local-probe, .remote > details { display: none; }
+.remote > h1, .remote > .intro, .remote > .status, .remote > .local-probe, .remote > details:not(.account-settings) { display: none; }
+.needs-network-setup > h1, .needs-network-setup > .intro, .needs-network-setup > .status, .needs-network-setup > .local-probe, .needs-network-setup > details:not(.account-settings) { display: block; }
+.needs-network-setup .network .address-entry, .needs-network-setup .network .navigation-actions, .needs-network-setup .network .text-entry { display: none; }
 .remote .network { margin: 0; padding: 0; border: 0; }
 .remote .network h2 { display: none; }
 .remote .network .detail { margin: 0 0 6px; }
@@ -40,6 +42,14 @@ footer p { margin: 2px 0; }
 .remote .text-entry { margin-top: 6px; }
 body:has(.remote) { padding: 10px 14px; }
 body:has(.remote) footer { display: none; }
+.account-settings { margin: 0 0 8px; padding: 0; border: 0; }
+.account-settings > summary { min-height: 40px; padding: 0; font-size: 13px; font-weight: 600; }
+.remote .account-settings { margin: 0 0 8px; padding: 8px 10px; border: 1px solid #d6dfd6; border-radius: 10px; }
+.remote .account-settings[open] > summary { min-height: 34px; }
+.account-settings .account-directory { margin: 10px 0 0; padding-top: 8px; }
+.remote .account-settings .account-directory { margin: 0; padding: 0; border: 0; }
+.remote .account-settings .directory { display: none; }
+.remote .account-settings:not([open]) { display: none; }
 .account-directory { border-top: 1px solid #d6dfd6; margin-top: 16px; padding-top: 12px; }
 .account-heading, .directory-heading, .account-actions { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .account-directory h2 { margin: 0; font-size: 15px; }

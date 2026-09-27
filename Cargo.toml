@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["packages/client-connection", "packages/android-bridge", "apps/relay-host", "apps/macos/connection-bridge"]
+
+[patch.crates-io]
+obscura-host-protocol = { path = "/Volumes/extension/code/obscura/playground/m1-nav-and-hostguard-20260926/protocol/browser" }

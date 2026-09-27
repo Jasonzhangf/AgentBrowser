@@ -18,6 +18,7 @@ final class NetworkSession {
     private final Context context;
     private final FrameSink sink;
     private final Runnable release;
+    private final Runnable refreshUi;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private long handle,token,generation,shownEpoch;
@@ -30,7 +31,7 @@ final class NetworkSession {
     private NetworkFrame displayed;
     private JSONObject host;
     private String state="idle",error,shownMode="observe",selectedTransport="";
-    NetworkSession(Context context,FrameSink sink,Runnable release){this.context=context.getApplicationContext();this.sink=sink;this.release=release;}
+    NetworkSession(Context context,FrameSink sink,Runnable release,Runnable refreshUi){this.context=context.getApplicationContext();this.sink=sink;this.release=release;this.refreshUi=refreshUi;}
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized String transport(){return selectedTransport;}
@@ -102,6 +103,7 @@ final class NetworkSession {
                 .put("source","network").put("connectionState",state).put("controlMode",mode).put("epoch",epoch)
                 .put("transport",selectedTransport)
                 .put("inputReady",inputReady()).put("pending",commandPending||queuedCommand!=null||framePending?"busy":JSONObject.NULL)
+                .put("remoteFocus",host!=null?host.opt("remote_focus"):JSONObject.NULL)
                 .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
             if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
@@ -160,8 +162,10 @@ final class NetworkSession {
             NativeConnection.load();
             NativeConnection.TransportConfig config=transportConfig();
             opened=NativeConnection.open(new String(read("endpoint.txt"),StandardCharsets.UTF_8).trim(),read("ca.der"),read("client.der"),read("key.der"),config);
+            if(opened==0) throw new IllegalStateException("OPEN_HANDLE_ZERO");
             JSONObject status=new JSONObject(NativeConnection.command(opened,0,0,0,0,0,0,0,""));
             synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";selectedTransport=config.transport().name().toLowerCase(java.util.Locale.ROOT);flushViewport();}
+            main.post(release);
             poll(expected);
         }catch(Exception failure){
             if(opened!=0){try{NativeConnection.close(opened);}catch(Exception close){failure.addSuppressed(close);}}
@@ -172,6 +176,8 @@ final class NetworkSession {
     private void poll(long expected){
         long nativeHandle;synchronized(this){if(!current(expected))return;nativeHandle=handle;}
         try{
+            worker.execute(() -> {
+            try {
             NetworkFrame frame=NativeConnection.frame(nativeHandle);
             if(frame!=null){
                 long decodeGeneration;
@@ -187,6 +193,12 @@ final class NetworkSession {
                         if(!current(expected))throw new IllegalStateException("STALE_CONNECTION");
                         sink.submit(frame,expected,decodeGeneration).whenComplete((receipt,failure)->{
                             if(failure!=null)rendered.completeExceptionally(failure);else rendered.complete(receipt);
+                            main.post(() -> {
+                                try {
+                                    synchronized(this){ if(!current(expected)) return; JSONObject status = new JSONObject(NativeConnection.command(handle,0,0,0,0,0,0,0,"")); if(current(expected)){ host=status; startQueuedIfReady(); } }
+                                } catch (Exception statusFailure) { synchronized(this){ if(current(expected)) failState(statusFailure); } }
+                                refreshUi.run();
+                            });
                         });
                     }catch(Exception failure){rendered.completeExceptionally(failure);}
                 });
@@ -198,6 +210,8 @@ final class NetworkSession {
             JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
             synchronized(this){if(!current(expected))return;host=status;startQueuedIfReady();}
             worker.schedule(()->poll(expected),30,TimeUnit.MILLISECONDS);
+            } catch(Exception failure){ terminate(expected,failure); }
+        });
         }catch(Exception failure){terminate(expected,failure);}
     }
     synchronized void command(int op,long epoch,double x,double y,double dx,double dy,String text){
@@ -212,6 +226,42 @@ final class NetworkSession {
         if(queuedCommand!=null&&op!=6)throw new IllegalStateException("OPERATION_PENDING");
         if(op>=3&&op!=6&&!inputReady())throw new IllegalStateException("DISPLAY_NOT_READY");
         startCommand(new CommandRequest(op,epoch,x,y,dx,dy,text==null?"":text));
+    }
+    synchronized void pointer(int pointerId,int op,long epoch,double x,double y,int buttons){
+        if(!connected())throw new IllegalStateException("NETWORK_NOT_CONNECTED");
+        if(op<11||op>13)throw new IllegalArgumentException("INVALID_POINTER_OP");
+        if(pointerId<0||x<0||y<0||!Double.isFinite(x)||!Double.isFinite(y)||buttons<0)throw new IllegalArgumentException("INVALID_POINTER_COORDINATE");
+        NetworkFrame currentFrame=displayed;
+        if(currentFrame==null)throw new IllegalStateException("DISPLAY_NOT_READY");
+        submitPointer(pointerId,op,epoch,x,y,buttons,currentFrame);
+    }
+    private void submitPointer(int pointerId,int op,long epoch,double x,double y,int buttons,NetworkFrame currentFrame){
+        worker.execute(() -> {
+            try {
+                JSONObject status=new JSONObject(NativeConnection.pointer(handle,op,epoch,currentFrame.ticket,pointerId,x,y,buttons));
+                synchronized(this){if(current(token)){host=status;error=null;}}
+            } catch (Exception failure) {
+                synchronized(this){if(current(token)){error=failure.toString();}}
+            }
+        });
+    }
+    synchronized void keyEvent(long epoch,String key,String code,String text){
+        if(!connected())throw new IllegalStateException("NETWORK_NOT_CONNECTED");
+        if(commandPending)throw new IllegalStateException("OPERATION_PENDING");
+        if(queuedCommand!=null)throw new IllegalStateException("OPERATION_PENDING");
+        if(key==null||key.isEmpty()||code==null||code.isEmpty())throw new IllegalArgumentException("INVALID_KEY_EVENT");
+        if(text==null||text.length()>4096)throw new IllegalArgumentException("INVALID_KEY_TEXT");
+        NetworkFrame currentFrame=displayed;
+        if(currentFrame==null)throw new IllegalStateException("DISPLAY_NOT_READY");
+        worker.execute(() -> {
+            try {
+                String result=NativeConnection.keyEvent(handle,epoch,currentFrame.ticket,key,code,text);
+                JSONObject status=new JSONObject(result);
+                synchronized(this){if(current(token)){host=status;error=null;}}
+            } catch (Exception failure) {
+                synchronized(this){if(current(token)){error=failure.toString();}}
+            }
+        });
     }
     private synchronized void startCommand(CommandRequest request){
         long expected=token,nativeHandle=handle,ticket=displayed==null?0:displayed.ticket;

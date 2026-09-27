@@ -39,8 +39,12 @@ public final class NativeConnection {
     }
 
     public static native NetworkFrame frame(long handle);
+    public static native String initialStatus(long handle);
     public static native void acknowledge(long handle, long ticket);
     public static native String command(long handle, int op, long epoch, long ticket, double x, double y,
                                         double dx, double dy, String text);
+    public static native String pointer(long handle, int op, long epoch, long ticket, int pointerId,
+                                        double x, double y, int buttons);
+    public static native String keyEvent(long handle, long epoch, long ticket, String key, String code, String text);
     public static native void close(long handle);
 }

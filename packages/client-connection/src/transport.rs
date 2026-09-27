@@ -2,7 +2,7 @@ use crate::{
     decode_video,
     protocol::{
         Command, Mode, Operation, Request, Response, ResultValue, SessionStatus,
-        ViewportDeclaration,
+        InputEvent, PointerButton, ViewportDeclaration,
     },
     relay_backend::RelayBackend,
     webrtc::{WebRtcBackend, WebRtcConfig},
@@ -60,6 +60,11 @@ pub struct DisplayedFrame {
 }
 
 pub enum Input {
+    Key {
+        key: String,
+        code: String,
+        text: String,
+    },
     Click {
         x: f64,
         y: f64,
@@ -71,6 +76,45 @@ pub enum Input {
         delta_x: f64,
         delta_y: f64,
     },
+    PointerDown {
+        pointer_id: u64,
+        x: f64,
+        y: f64,
+        buttons: u64,
+    },
+    PointerMove {
+        pointer_id: u64,
+        x: f64,
+        y: f64,
+        buttons: u64,
+    },
+    PointerUp {
+        pointer_id: u64,
+        x: f64,
+        y: f64,
+        buttons: u64,
+    },
+}
+impl Input {
+    fn to_command(self) -> Command {
+        match self {
+            Input::Key { key, code, text } => Command::InputEvent {
+                event: InputEvent::Key { key, code, modifiers: 0, text },
+            },
+            Input::Click { x, y } => Command::Click { x, y },
+            Input::Text(text) => Command::InputText { text },
+            Input::Scroll { x, y, delta_x, delta_y } => Command::Scroll { x, y, delta_x, delta_y },
+            Input::PointerDown { pointer_id, x, y, buttons } => Command::InputEvent {
+                event: InputEvent::PointerDown { pointer_id, x, y, button: PointerButton::Left, buttons, modifiers: 0 },
+            },
+            Input::PointerMove { pointer_id, x, y, buttons } => Command::InputEvent {
+                event: InputEvent::PointerMove { pointer_id, x, y, button: PointerButton::Left, buttons, modifiers: 0 },
+            },
+            Input::PointerUp { pointer_id, x, y, buttons } => Command::InputEvent {
+                event: InputEvent::PointerUp { pointer_id, x, y, button: PointerButton::Left, buttons, modifiers: 0 },
+            },
+        }
+    }
 }
 
 enum Action {
@@ -79,6 +123,9 @@ enum Action {
     Takeover(u64),
     Release(u64),
     Navigate(String, u64),
+    Back(u64),
+    Forward(u64),
+    Reload(u64),
     Input(Input, DisplayedFrame, u64),
 }
 
@@ -143,6 +190,15 @@ impl Connection {
     pub async fn navigate(&self, url: String, epoch: u64) -> Result<SessionStatus, Failure> {
         status(self.call(Action::Navigate(url, epoch)).await?)
     }
+    pub async fn back(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::Back(epoch)).await?)
+    }
+    pub async fn forward(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::Forward(epoch)).await?)
+    }
+    pub async fn reload(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::Reload(epoch)).await?)
+    }
     pub async fn input(
         &self,
         input: Input,
@@ -163,6 +219,21 @@ impl Connection {
 fn transport(error: impl std::fmt::Display) -> Failure {
     Failure::Transport(error.to_string())
 }
+fn log_connection_stage(stage: &str) {
+    #[cfg(target_os = "android")]
+    unsafe {
+        extern "C" {
+            fn __android_log_write(priority: i32, tag: *const std::os::raw::c_char, text: *const std::os::raw::c_char)
+                -> i32;
+        }
+        let message = format!("AgentBrowserConnection stage {}", stage);
+        let tag = b"AgentBrowserNative\0";
+        let message = std::ffi::CString::new(message).unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+        __android_log_write(4, tag.as_ptr().cast(), message.as_ptr());
+    }
+    #[cfg(not(target_os = "android"))]
+    eprintln!("AgentBrowserConnection stage {stage}");
+}
 pub(crate) fn status(value: ResultValue) -> Result<SessionStatus, Failure> {
     match value {
         ResultValue::Status(status) => Ok(status),
@@ -177,10 +248,12 @@ impl Connector {
         viewport: Option<ViewportDeclaration>,
     ) -> Result<Connection, Failure> {
         let generation = self.begin_generation()?;
+        log_connection_stage("connect_establish_start");
         let (control, media, initial_status, id) =
             tokio::time::timeout(Duration::from_secs(15), establish(pairing, viewport))
                 .await
                 .map_err(transport)??;
+        log_connection_stage("connect_establish_complete");
         Ok(spawn_connection(
             generation,
             initial_status,
@@ -397,7 +470,9 @@ async fn establish(
         .media_token
         .as_deref()
         .ok_or_else(|| Failure::Protocol("Missing media binding".into()))?;
-    let (media, _) = open(&bootstrap.base, "/media", &bootstrap.tls, Some(token)).await?;
+    let (media, _) = tokio::time::timeout(Duration::from_secs(10), open(&bootstrap.base, "/media", &bootstrap.tls, Some(token)))
+        .await
+        .map_err(|_| Failure::Transport("Media WebSocket open deadline".into()))??;
     Ok((bootstrap.control, media, bootstrap.status, bootstrap.id))
 }
 
@@ -405,7 +480,9 @@ async fn establish_control(
     pairing: Pairing,
     viewport: Option<ViewportDeclaration>,
 ) -> Result<Bootstrap, Failure> {
+    log_connection_stage("parse_endpoint");
     let base = url::Url::parse(&pairing.endpoint).map_err(transport)?;
+    log_connection_stage("validate_endpoint");
     if base.scheme() != "wss"
         || base.host_str().is_none()
         || !base.username().is_empty()
@@ -433,15 +510,22 @@ async fn establish_control(
         PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pairing.client_key_pkcs8_der)),
     )
     .map_err(transport)?;
+    log_connection_stage("tls_client_config");
     let tls = TlsConnector::from(Arc::new(config));
-    let (mut control, token) = open(&base, "/control", &tls, None).await?;
-    let session = match response(&mut control).await? {
+    log_connection_stage("open_control");
+    let (mut control, token) = tokio::time::timeout(Duration::from_secs(10), open(&base, "/control", &tls, None))
+        .await
+        .map_err(|_| Failure::Transport("Control WebSocket open deadline".into()))??;
+    log_connection_stage("await_ready");
+    let response_result = tokio::time::timeout(Duration::from_secs(5), response(&mut control)).await;
+    let session = match response_result.map_err(transport)?? {
         Response::Ready {
-            version: 4,
+            version: 9,
             session_id,
         } if !session_id.is_empty() => session_id,
-        _ => return Err(Failure::Protocol("Expected Host protocol version 4".into())),
+        _ => return Err(Failure::Protocol("Expected Host protocol version 9".into())),
     };
+    log_connection_stage("attach_before");
     let mut id = 0;
     let attached = status(
         exchange(
@@ -478,16 +562,20 @@ async fn open(
     token: Option<&str>,
 ) -> Result<(Socket, Option<String>), Failure> {
     let host = base.host_str().unwrap().trim_matches(['[', ']']);
-    let tcp = TcpStream::connect((host, base.port().unwrap_or(443)))
+    log_connection_stage(&format!("tcp_connect:{path}"));
+    let tcp = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect((host, base.port().unwrap_or(443))))
         .await
+        .map_err(|_| Failure::Transport(format!("TCP connect deadline: {path}")))?
         .map_err(transport)?;
-    let stream = tls
-        .connect(
-            ServerName::try_from(host.to_owned()).map_err(transport)?,
-            tcp,
-        )
-        .await
-        .map_err(transport)?;
+    log_connection_stage(&format!("tls_handshake:{path}"));
+    let stream = tokio::time::timeout(
+        Duration::from_secs(5),
+        tls.connect(ServerName::try_from(host.to_owned()).map_err(transport)?, tcp),
+    )
+    .await
+    .map_err(|_| Failure::Transport(format!("TLS handshake deadline: {path}")))?
+    .map_err(transport)?;
+    log_connection_stage(&format!("websocket_handshake:{path}"));
     let mut url = base.clone();
     url.set_path(path);
     let mut request = url.as_str().into_client_request().map_err(transport)?;
@@ -500,9 +588,12 @@ async fn open(
     let config = WebSocketConfig::default()
         .max_message_size(Some(4 * 1024 * 1024 + 4099))
         .max_frame_size(Some(4 * 1024 * 1024 + 4099));
-    let (socket, reply) = client_async_with_config(request, stream, Some(config))
+    let handshake = tokio::time::timeout(Duration::from_secs(5), client_async_with_config(request, stream, Some(config)))
         .await
+        .map_err(|_| Failure::Transport("WebSocket handshake deadline".into()))?
         .map_err(transport)?;
+    log_connection_stage(&format!("websocket_open:{path}"));
+    let (socket, reply) = handshake;
     let token = reply
         .headers()
         .get("x-obscura-media-token")
@@ -534,8 +625,10 @@ async fn next(socket: &mut Socket) -> Result<Message, Failure> {
 }
 
 async fn response(socket: &mut Socket) -> Result<Response, Failure> {
+    log_connection_stage("response_read_start");
     match next(socket).await? {
         Message::Text(text) if text.len() <= 1024 * 1024 => {
+            log_connection_stage("response_text");
             serde_json::from_str(&text).map_err(|error| Failure::Protocol(error.to_string()))
         }
         _ => Err(Failure::Protocol("Expected bounded control JSON".into())),
@@ -633,7 +726,10 @@ async fn execute<B: Backend>(
         Action::DeclareViewport(viewport) => (Command::DeclareViewport { viewport }, None),
         Action::Takeover(epoch) => (Command::RequestTakeover { epoch }, None),
         Action::Release(epoch) => (Command::ReleaseControl { epoch }, None),
-        Action::Navigate(url, epoch) => {
+        Action::Navigate(_, epoch)
+        | Action::Back(epoch)
+        | Action::Forward(epoch)
+        | Action::Reload(epoch) => {
             let current = status(exchange_backend(backend, id, Command::Status {}, None).await?)?;
             if current.session_id != session || current.attachment_id != attachment {
                 return Err(Failure::Protocol("Control attachment changed".into()));
@@ -644,9 +740,17 @@ async fn execute<B: Backend>(
                     message: "Viewport layout is pending".into(),
                 });
             }
+            let command = match action {
+                Action::Back(_) => Command::Back {},
+                Action::Forward(_) => Command::Forward {},
+                Action::Reload(_) => Command::Reload {},
+                Action::Navigate(url, _) => Command::Navigate { url },
+                _ => unreachable!(),
+            };
             (
-                Command::Navigate { url },
+                command,
                 Some(Operation {
+                    operation_id: crate::protocol::OperationId(format!("op-{}", current.next_sequence)),
                     session_id: session.into(),
                     attachment_id: attachment.unwrap(),
                     sequence: current.next_sequence,
@@ -672,24 +776,10 @@ async fn execute<B: Backend>(
                     message: "Viewport layout is pending".into(),
                 });
             }
-            let command = match input {
-                Input::Click { x, y } => Command::Click { x, y },
-                Input::Text(text) => Command::InputText { text },
-                Input::Scroll {
-                    x,
-                    y,
-                    delta_x,
-                    delta_y,
-                } => Command::Scroll {
-                    x,
-                    y,
-                    delta_x,
-                    delta_y,
-                },
-            };
             (
-                command,
+                input.to_command(),
                 Some(Operation {
+                    operation_id: crate::protocol::OperationId(format!("op-{}", current.next_sequence)),
                     session_id: session.into(),
                     attachment_id: attachment.unwrap(),
                     sequence: current.next_sequence,
@@ -786,6 +876,7 @@ mod tests {
             operation_running: false,
             control: crate::protocol::Control {
                 epoch: 0,
+                token: "control".into(),
                 phase: crate::protocol::ControlPhase::Agent,
             },
             fault: None,
@@ -793,8 +884,27 @@ mod tests {
             viewport_revision: 1,
             document_revision: 1,
             viewport: None,
+            source_dimensions: None,
+            rotation: None,
             viewport_owner: None,
             viewport_pending: false,
+            remote_focus: None,
+            video_quality: crate::protocol::VideoQualityState {
+                requested: crate::protocol::VideoQualitySettings {
+                    profile: crate::protocol::VideoQualityProfile::Balanced,
+                    low_latency: true,
+                },
+                effective: crate::protocol::VideoQualitySettings {
+                    profile: crate::protocol::VideoQualityProfile::Balanced,
+                    low_latency: true,
+                },
+                link: crate::protocol::LinkQuality {
+                    rtt_ms: None,
+                    jitter_ms: None,
+                    loss_ratio: None,
+                    queue_ms: None,
+                },
+            },
         }
     }
 

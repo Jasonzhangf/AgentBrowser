@@ -1,0 +1,130 @@
+{
+  "id": "m1-host-nav-mvp",
+  "version": "3",
+  "inputs": [{"id": "user-intent", "schema": "Object"}],
+  "nodes": [
+    {
+      "id": "start-mobile-browser-entry",
+      "operator": "agentbrowser.app.start",
+      "operator_version": "1",
+      "inputs": ["user-intent"],
+      "output": {"id": "app-entry", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "attach-remote-browser-session",
+      "operator": "agentbrowser.transport.attach_session",
+      "operator_version": "1",
+      "inputs": ["app-entry"],
+      "output": {"id": "remote-session-ready", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "render-remote-page-frame",
+      "operator": "agentbrowser.media.render_remote_frame",
+      "operator_version": "1",
+      "inputs": ["remote-session-ready"],
+      "output": {"id": "visible-page", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "capture-browser-or-gesture-operation",
+      "operator": "agentbrowser.ui.capture_operation",
+      "operator_version": "2",
+      "inputs": ["visible-page"],
+      "output": {"id": "browser-ui-or-pointer-event", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "dispatch-browser-or-pointer-command",
+      "operator": "agentbrowser.ui.dispatch_command",
+      "operator_version": "2",
+      "inputs": ["browser-ui-or-pointer-event"],
+      "output": {"id": "typed-transport-command", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "deliver-over-client-transport",
+      "operator": "agentbrowser.transport.deliver",
+      "operator_version": "1",
+      "inputs": ["typed-transport-command"],
+      "output": {"id": "endpoint-request", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "accept-endpoint-operation",
+      "operator": "obscura.endpoint.accept_operation",
+      "operator_version": "1",
+      "inputs": ["endpoint-request"],
+      "output": {"id": "host-command", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "execute-host-page-operation",
+      "operator": "obscura.host.execute_page_operation",
+      "operator_version": "2",
+      "inputs": ["host-command"],
+      "output": {"id": "page-result", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "detect-remote-focus",
+      "operator": "obscura.host.remote_focus_snapshot",
+      "operator_version": "1",
+      "inputs": ["page-result"],
+      "output": {"id": "remote-focus-capability", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "open-local-ime-when-editable",
+      "operator": "agentbrowser.ui.local_ime_bridge",
+      "operator_version": "1",
+      "inputs": ["remote-focus-capability"],
+      "output": {"id": "local-text-or-key-event", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    },
+    {
+      "id": "record-visible-15t-evidence",
+      "operator": "agentbrowser.device.record_visible_evidence",
+      "operator_version": "2",
+      "inputs": ["local-text-or-key-event"],
+      "output": {"id": "verified-outcome", "schema": "Object"},
+      "input_selector": {"include": [], "exclude": [], "predicate": null},
+      "output_selector": {"include": [], "exclude": [], "predicate": null},
+      "iterator": "Whole"
+    }
+  ],
+  "edges": [
+    {"from": "start-mobile-browser-entry", "to": "attach-remote-browser-session", "arc_id": "app-entry"},
+    {"from": "attach-remote-browser-session", "to": "render-remote-page-frame", "arc_id": "remote-session-ready"},
+    {"from": "render-remote-page-frame", "to": "capture-browser-or-gesture-operation", "arc_id": "visible-page"},
+    {"from": "capture-browser-or-gesture-operation", "to": "dispatch-browser-or-pointer-command", "arc_id": "browser-ui-or-pointer-event"},
+    {"from": "dispatch-browser-or-pointer-command", "to": "deliver-over-client-transport", "arc_id": "typed-transport-command"},
+    {"from": "deliver-over-client-transport", "to": "accept-endpoint-operation", "arc_id": "endpoint-request"},
+    {"from": "accept-endpoint-operation", "to": "execute-host-page-operation", "arc_id": "host-command"},
+    {"from": "execute-host-page-operation", "to": "detect-remote-focus", "arc_id": "page-result"},
+    {"from": "detect-remote-focus", "to": "open-local-ime-when-editable", "arc_id": "remote-focus-capability"},
+    {"from": "open-local-ime-when-editable", "to": "record-visible-15t-evidence", "arc_id": "local-text-or-key-event"}
+  ],
+  "outputs": ["verified-outcome"]
+}

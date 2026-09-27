@@ -24,8 +24,6 @@ fn validate_access_unit(packet: &VideoPacket, payload: &[u8]) -> Result<(), Fail
     let VideoPacket::AccessUnit {
         source,
         encoder_id,
-        coded_width,
-        coded_height,
         codec,
         keyframe,
         byte_length,
@@ -50,6 +48,8 @@ fn validate_access_unit(packet: &VideoPacket, payload: &[u8]) -> Result<(), Fail
     )?;
     let width = source.width as u64;
     let height = source.height as u64;
+    let coded_width = source.source_dimensions.width;
+    let coded_height = source.source_dimensions.height;
     require(
         width > 0 && height > 0 && width * height <= 4 * 1024 * 1024,
         "Invalid visible dimensions",
@@ -59,7 +59,7 @@ fn validate_access_unit(packet: &VideoPacket, payload: &[u8]) -> Result<(), Fail
         "Invalid raw frame descriptor",
     )?;
     require(
-        *coded_width as u64 == (width + 1) & !1 && *coded_height as u64 == (height + 1) & !1,
+        coded_width as u64 == (width + 1) & !1 && coded_height as u64 == (height + 1) & !1,
         "Invalid padded dimensions",
     )?;
     require(
@@ -105,8 +105,6 @@ pub(crate) fn from_webrtc(
         source: descriptor.source,
         encoder_id: descriptor.encoder_id,
         pts_us: descriptor.pts_us,
-        coded_width: descriptor.coded_width,
-        coded_height: descriptor.coded_height,
         codec: VideoCodec::H264AnnexB,
         keyframe: descriptor.keyframe,
         byte_length: descriptor.access_unit_bytes,

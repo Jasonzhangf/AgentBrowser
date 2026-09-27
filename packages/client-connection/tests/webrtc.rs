@@ -10,8 +10,8 @@ use std::{
 
 use agentbrowser_connection::{
     protocol::{
-        Command, ControlPhase, Mode, Operation, Request, Response, ResultValue, SessionStatus,
-        VideoPacket,
+        Command, ControlPhase, Mode, Operation, OperationId, Request, Response, ResultValue,
+        SessionStatus, VideoPacket,
     },
     Connector, DisplayedFrame, Failure, Input, Pairing, Video, WebRtcConfig,
 };
@@ -330,15 +330,12 @@ fn displayed(connection: &agentbrowser_connection::Connection, video: &Video) ->
 }
 
 async fn decode_h264(video: &Video) {
-    let VideoPacket::AccessUnit {
-        coded_width,
-        coded_height,
-        ..
-    } = video.packet
-    else {
+    let VideoPacket::AccessUnit { ref source, .. } = video.packet else {
         panic!("Expected H.264 access unit");
     };
-    let expected = coded_width as usize * coded_height as usize * 4;
+    let expected = source.source_dimensions.width as usize
+        * source.source_dimensions.height as usize
+        * 4;
     let mut ffmpeg = ProcessCommand::new("ffmpeg")
         .args([
             "-hide_banner",
@@ -388,6 +385,7 @@ fn state(value: ResultValue) -> SessionStatus {
 
 fn identity(state: &SessionStatus) -> Operation {
     Operation {
+        operation_id: OperationId(format!("op-{}", state.next_sequence)),
         session_id: state.session_id.clone(),
         attachment_id: state.attachment_id.unwrap(),
         sequence: state.next_sequence,
