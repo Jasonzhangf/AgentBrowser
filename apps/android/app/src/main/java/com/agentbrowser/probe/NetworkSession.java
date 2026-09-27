@@ -25,7 +25,7 @@ final class NetworkSession {
     record Viewport(int width,int height,boolean landscape) { }
     record CommandRequest(int op,long epoch,double x,double y,double dx,double dy,String text) { }
     private Viewport requestedViewport,submittedViewport,rejectedViewport;
-    private boolean running,closed,framePending,commandPending;
+    private boolean running,closed,framePending,commandPending,shouldReconnect;
     private int commandPendingOp=-1;
     private CommandRequest queuedCommand;
     private NetworkFrame displayed;
@@ -151,7 +151,7 @@ final class NetworkSession {
     synchronized void connect(){
         if(closed)throw new IllegalStateException("HOST_INACTIVE");
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
-        token=next(token);generation=next(generation);long expected=token;
+        token=next(token);generation=next(generation);long expected=token;shouldReconnect=true;
         state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";selectedTransport="";
         submittedViewport=null;rejectedViewport=null;queuedCommand=null;commandPendingOp=-1;
         worker.execute(()->open(expected));
@@ -323,6 +323,7 @@ final class NetworkSession {
     }
     synchronized void disconnect(){
         if(!active()&&handle==0)return;
+        shouldReconnect=false;
         token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="stopping";
         long old=handle;handle=0;main.post(release);
         worker.execute(()->{
@@ -334,6 +335,7 @@ final class NetworkSession {
     private void terminate(long expected,Exception failure){
         long old;synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);failState(failure);}
         try{if(old!=0)NativeConnection.close(old);}catch(Exception close){failure.addSuppressed(close);synchronized(this){error=failure+"; close: "+close;}}
+        if(shouldReconnect&&!closed){main.postDelayed(()->{synchronized(NetworkSession.this){if(shouldReconnect&&!closed&&handle==0)worker.execute(()->open(next(token)));}},2000);}
         main.post(release);
     }
     private void failState(Exception failure){running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="error";error=failure.toString();}
