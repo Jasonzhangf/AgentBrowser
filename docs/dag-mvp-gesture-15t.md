@@ -89,10 +89,19 @@
 | Cookie persistence | 28 cookies, future expiry |
 | Auto-reconnect | endpoint log: new handshakes |
 
+### 多点触控与长按
+
+| Test | Result | Evidence |
+|------|--------|----------|
+| 双指同时触摸 | ✅ 无崩溃 | 两路 adb input swipe 并发, PID 不变 |
+| 长按 2s | ✅ 无崩溃 | adb input swipe 2000ms hold, PID 不变 |
+| Pinch zoom | CODE_SUPPORTED | networkTouch 遍历 getPointerCount(), 每指发独立 PointerDown; adb 无法模拟真双指, 未做视觉验证 |
+| 上下文菜单 | CODE_SUPPORTED | TouchEvent synthesis 在 pointerdown 时触发 touchstart; 长按后 web 页 contextmenu 依赖页面 handler |
+
 ### 未验证/未完成
 
-- Pinch zoom / 多点触控: UNVERIFIED
-- 长按 / 右键菜单: UNVERIFIED
-- 微博登录后搜索框聚焦: INCOMPLETE (cookies may be expired, page redirects to login)
+- Pinch zoom 视觉效果: UNVERIFIED (adb 无法模拟真双指 pinch; 代码支持多指透传)
+- 上下文菜单弹出: UNVERIFIED (依赖目标页面 contextmenu handler)
+- 微博登录后搜索框聚焦: INCOMPLETE (cookies 可能过期, 页面重定向到 passport.weibo.com 登录页; 但登录页的 input 已验证 focus)
 - Tailscale 重启后自动重连: UNVERIFIED
-- 独立 DAG review: NOT_STARTED
+- 独立外部 reviewer: INCOMPLETE (self-review PASS; 外部 AGY/Codex reviewer 在当前环境不可用)
