@@ -59,3 +59,20 @@ and the ignored `.appsdk/sdk.bin` witness.
 - `appsdk verify` -> exit 0, development_ready true
   (evidence/verify-after-migration.log).
 - `npm run verify:local` -> exit 0 (evidence/verify-local.log).
+
+## Formal candidate-bound admission
+
+Candidate `b48ebf8ad31a04b8c599894a2d2cd368f15ce9fc`, tree
+`b3299e756fb897ae57f303942d9d6da234e69e38`.
+
+`OBSCURA_HOST_BINARY=.../obscura-host OBSCURA_HOST_PROTOCOL_VERSION=10 node
+scripts/host-service/validate-admission.mjs` -> exit 0, `admission: pass`.
+Installed bundle ran launchd bootstrap, real observe attach, kickstart restart
+with a new PID/session, and stopped cleanup. `appsdk verify --review-admission
+--module host-service` -> exit 0. Full bindings:
+evidence/validate-admission-summary.md and evidence/validate-admission.stdout.log.
+
+Owned resources cleared: launchd label absent, recorded PIDs absent, private
+root/runtime removed. No reader dependency remains on the shared target lease.
+
+No review, merge, push, or global service action was performed.
