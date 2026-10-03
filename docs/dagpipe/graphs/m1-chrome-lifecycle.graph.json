@@ -1,0 +1,11 @@
+{
+ "id":"m1-chrome-lifecycle","version":"1","inputs":[{"id":"chrome-instance-lifecycle","schema":"Object"}],
+ "nodes":[
+  {"id":"创建浏览器界面实例","operator":"agentbrowser.ui.begin_chrome_lifecycle","operator_version":"1","inputs":["chrome-instance-lifecycle"],"output":{"id":"chrome-instance","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"绑定唯一端口与状态订阅","operator":"agentbrowser.ui.bind_chrome_resources","operator_version":"1","inputs":["chrome-instance"],"output":{"id":"chrome-resource-binding","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"运行界面直到卸载或取消","operator":"agentbrowser.ui.run_chrome_lifecycle","operator_version":"1","inputs":["chrome-resource-binding"],"output":{"id":"chrome-release-intent","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"释放订阅定时器并确认终态","operator":"agentbrowser.ui.release_chrome_resources","operator_version":"1","inputs":["chrome-release-intent"],"output":{"id":"chrome-lifecycle-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"}
+ ],
+ "edges":[{"from":"创建浏览器界面实例","to":"绑定唯一端口与状态订阅","arc_id":"chrome-instance"},{"from":"绑定唯一端口与状态订阅","to":"运行界面直到卸载或取消","arc_id":"chrome-resource-binding"},{"from":"运行界面直到卸载或取消","to":"释放订阅定时器并确认终态","arc_id":"chrome-release-intent"}],
+ "outputs":["chrome-lifecycle-result"]
+}

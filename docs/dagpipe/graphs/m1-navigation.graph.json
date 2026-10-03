@@ -1,0 +1,11 @@
+{
+ "id":"m1-navigation","version":"1","inputs":[{"id":"browser-chrome-intent","schema":"Object"}],
+ "nodes":[
+  {"id":"收集地址导航或标签页请求","operator":"agentbrowser.ui.capture_navigation","operator_version":"1","inputs":["browser-chrome-intent"],"output":{"id":"navigation-request","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"认证并仲裁浏览器操作","operator":"obscura.host.authorize_navigation","operator_version":"1","inputs":["navigation-request"],"output":{"id":"authorized-navigation","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"执行文档导航或标签生命周期","operator":"obscura.engine.execute_navigation","operator_version":"1","inputs":["authorized-navigation"],"output":{"id":"navigation-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"显示权威导航状态与关联页面","operator":"agentbrowser.ui.consume_navigation","operator_version":"1","inputs":["navigation-result"],"output":{"id":"navigation-outcome","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"}
+ ],
+ "edges":[{"from":"收集地址导航或标签页请求","to":"认证并仲裁浏览器操作","arc_id":"navigation-request"},{"from":"认证并仲裁浏览器操作","to":"执行文档导航或标签生命周期","arc_id":"authorized-navigation"},{"from":"执行文档导航或标签生命周期","to":"显示权威导航状态与关联页面","arc_id":"navigation-result"}],
+ "outputs":["navigation-outcome"]
+}
