@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 fn status(value:ResultValue)->SessionStatus { match value {ResultValue::Status(status)=>status,_=>panic!("Expected status")} }
 fn identity(state:&SessionStatus)->Operation {
-    Operation {session_id:state.session_id.clone(),attachment_id:state.attachment_id.unwrap(),sequence:state.next_sequence,
+    Operation {operation_id:String::new(),session_id:state.session_id.clone(),attachment_id:state.attachment_id.unwrap(),sequence:state.next_sequence,
         control_epoch:state.control.epoch,viewport_revision:state.viewport_revision,document_revision:state.document_revision}
 }
 async fn call(local:&mut BufReader<tokio::net::UnixStream>,id:&mut u64,command:Command,operation:Option<Operation>)->ResultValue {

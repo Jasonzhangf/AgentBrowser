@@ -1,7 +1,7 @@
 //! JNI owns native handle lifetime and displayed-frame acknowledgement only.
 //! TLS, browser ABI and control arbitration stay in their existing owners.
 use std::{collections::{HashMap,VecDeque}, net::IpAddr, sync::{Arc, Mutex, OnceLock}, time::Duration};
-use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Failure, Input, Pairing, WebRtcConfig, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
+use agentbrowser_connection::{Connection, Connector, DisplayedFrame, EditingInput, EditingOutcome, Failure, Input, Pairing, PresentedFrame, WebRtcConfig, protocol::{InputBinding, InputEvent, ResultValue, VideoPacket, ViewportDeclaration, Device, Orientation}};
 use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
 
 mod account;
@@ -249,6 +249,62 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_command(
         Ok(env.new_string(response?).map_err(error)?.into_raw())
     })();
     match result { Ok(value) => value, Err(failure) => { fail_command(&mut env, failure); std::ptr::null_mut() } }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_editing(
+    mut env: JNIEnv, _: JClass, handle: jlong, epoch: jlong, ticket: jlong, operation_id: JString,
+    event_sequence: jlong, binding_json: JString, event_json: JString,
+) -> jstring {
+    let result = (|| -> std::result::Result<jstring, CommandFailure> {
+        if epoch < 0 || event_sequence < 0 || ticket <= 0 {
+            return Err("Invalid typed input identity".into());
+        }
+        let operation_id: String = env.get_string(&operation_id).map_err(error)?.into();
+        let binding_json: String = env.get_string(&binding_json).map_err(error)?.into();
+        let event_json: String = env.get_string(&event_json).map_err(error)?.into();
+        let binding: InputBinding = serde_json::from_str(&binding_json)
+            .map_err(|failure| format!("Invalid input binding: {failure}"))?;
+        let event: InputEvent = serde_json::from_str(&event_json)
+            .map_err(|failure| format!("Invalid input event: {failure}"))?;
+        if operation_id.is_empty() {
+            return Err("Invalid input operation id".into());
+        }
+
+        let session = session(handle)?;
+        let session = session.lock().map_err(error)?;
+        let frame = session.displayed.iter().find(|(id, _)| *id == ticket as u64)
+            .map(|(sequence, displayed)| PresentedFrame {
+                generation: displayed.generation,
+                session_id: displayed.session_id.clone(),
+                frame_sequence: *sequence,
+                document_revision: displayed.document_revision,
+                viewport_revision: displayed.viewport_revision,
+            })
+            .ok_or("No retained acknowledged displayed frame")?;
+        let outcome: EditingOutcome = runtime()?.block_on(session.connection.editing(EditingInput {
+            operation_id,
+            event_sequence: event_sequence as u64,
+            binding,
+            event,
+            frame,
+            epoch: epoch as u64,
+        })).map_err(CommandFailure::from)?;
+        let response = match outcome {
+            EditingOutcome::Gesture(input) => serde_json::to_string(&ResultValue::Input { input })
+                .map_err(error)?,
+            EditingOutcome::Editor(editing) => serde_json::to_string(&ResultValue::Editing { editing })
+                .map_err(error)?,
+        };
+        Ok(env.new_string(response).map_err(error)?.into_raw())
+    })();
+    match result {
+        Ok(value) => value,
+        Err(failure) => {
+            fail_command(&mut env, failure);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]

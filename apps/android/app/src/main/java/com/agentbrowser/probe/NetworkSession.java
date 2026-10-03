@@ -20,6 +20,7 @@ final class NetworkSession {
     private final Runnable release;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
+    private Runnable imeSync;
     private long handle,token,generation,shownEpoch;
     record Viewport(int width,int height,boolean landscape) { }
     record CommandRequest(int op,long epoch,double x,double y,double dx,double dy,String text) { }
@@ -29,6 +30,9 @@ final class NetworkSession {
     private CommandRequest queuedCommand;
     private NetworkFrame displayed;
     private JSONObject host;
+    private String openOperationId;
+    private String gestureOperationId;
+    private String gestureSessionId;
     private String state="idle",error,shownMode="observe",selectedTransport="";
     NetworkSession(Context context,FrameSink sink,Runnable release){this.context=context.getApplicationContext();this.sink=sink;this.release=release;}
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
@@ -57,6 +61,111 @@ final class NetworkSession {
         requestedViewport=viewport;
         flushViewport();
     }
+    synchronized JSONObject editorContext(){
+        return host==null?null:host.optJSONObject("editor_context");
+    }
+    synchronized JSONObject selection(){
+        JSONObject context=editorContext();
+        return context==null?null:context.optJSONObject("selection");
+    }
+    synchronized JSONObject surrounding(){
+        JSONObject context=editorContext();
+        return context==null?null:context.optJSONObject("surrounding");
+    }
+    synchronized boolean remoteImeEligible(){
+        return editEligible();
+    }
+    synchronized boolean gestureEligible(String operationId){
+        return connectionEligible()&&host!=null&&!host.optBoolean("viewport_pending",false)
+            &&RemoteInput.gestureAllowed(host,operationId,gestureOperationId,gestureSessionId);
+    }
+    private synchronized boolean connectionEligible(){
+        return connected()&&!commandPending&&queuedCommand==null&&displayed!=null
+            &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null
+            &&!host.optBoolean("viewport_pending",false)
+            &&displayed.documentRevision==host.optLong("document_revision",-1)
+            &&displayed.viewportRevision==host.optLong("viewport_revision",-1)
+            &&humanShown();
+    }
+    private synchronized boolean editEligible(){
+        return connectionEligible()&&RemoteInput.editable(host);
+    }
+    /** One typed event at a time. Operation/event identities belong to the caller. */
+    synchronized String editing(long epoch,String operationId,long eventSequence,String binding,String event){
+        if(!remoteImeEligible())throw new IllegalStateException("REMOTE_IME_NOT_ELIGIBLE");
+        return submitNative(epoch,operationId,eventSequence,binding,event,false);
+    }
+    synchronized String gesture(long epoch,String operationId,String gestureSessionId,long eventSequence,String event){
+        if(operationId==null||operationId.isEmpty()||gestureSessionId==null||gestureSessionId.isEmpty())
+            throw new IllegalStateException("INVALID_REMOTE_GESTURE");
+        if(eventSequence>0&&!operationId.equals(gestureOperationId))
+            throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        if(!gestureEligible(operationId))throw new IllegalStateException("REMOTE_GESTURE_NOT_ELIGIBLE");
+        if(eventSequence==0){
+            gestureOperationId=operationId;
+            gestureSessionId=gestureSessionId;
+        }
+        return submitNative(epoch,operationId,eventSequence,RemoteInput.gestureBinding(gestureSessionId),event,false);
+    }
+    /** Cancel a gesture this attachment still owns, even if new input is fenced. */
+    synchronized String cancelGesture(long epoch,String operationId,long eventSequence){
+        if(operationId==null||operationId.isEmpty()||!operationId.equals(gestureOperationId))
+            throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        if(!connected()||displayed==null||epoch!=shownEpoch)throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        if(host==null||!RemoteInput.gestureCancelOwned(host,operationId))
+            throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        return submitNative(epoch,operationId,eventSequence,RemoteInput.gestureBinding(gestureSessionId),
+            RemoteInput.event("pointer_cancel","pointer_id",1),true);
+    }
+    /** Terminalize our own editor lease after its remote target is gone. */
+    synchronized String cancelEditing(long epoch,String operationId,long eventSequence,String binding,String event){
+        if(operationId==null||operationId.isEmpty()||binding==null||event==null)
+            throw new IllegalStateException("INVALID_REMOTE_EDIT");
+        if(!connected()||displayed==null||epoch!=shownEpoch)throw new IllegalStateException("STALE_CONTROL");
+        if(host==null||!RemoteInput.compositionCancelOwned(host,operationId))
+            throw new IllegalStateException("STALE_EDITING_OPERATION");
+        return submitNative(epoch,operationId,eventSequence,binding,event,true);
+    }
+    private synchronized String submitNative(long epoch,String operationId,long eventSequence,String binding,String event,boolean fencedCancel){
+        if(epoch!=shownEpoch)throw new IllegalStateException("STALE_CONTROL");
+        if(operationId==null||operationId.isEmpty()||eventSequence<0||binding==null||event==null)
+            throw new IllegalStateException("INVALID_REMOTE_EDIT");
+        boolean continuing=eventSequence>0&&operationId.equals(openOperationId);
+        if(commandPending||queuedCommand!=null
+                ||(host.optBoolean("operation_running",false)&&!continuing&&!fencedCancel))
+            throw new IllegalStateException("OPERATION_PENDING");
+        if(displayed==null)throw new IllegalStateException("DISPLAY_NOT_READY");
+        try{
+            String result=NativeConnection.editing(handle,epoch,displayed.ticket,operationId,eventSequence,binding,event);
+            try{
+                JSONObject value=new JSONObject(result);
+                if(value.optJSONObject("editing")==null){
+                    if(value.optJSONObject("input")==null)throw new IllegalStateException("INVALID_EDITING_RECEIPT");
+                    RemoteInput.requireGestureReceipt(result,event);
+                }
+                if(fencedCancel||RemoteInput.eventTerminal(event))openOperationId=null;
+                else openOperationId=operationId;
+                if(openOperationId==null){
+                    gestureOperationId=null;
+                    gestureSessionId=null;
+                }
+            }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_EDITING_RECEIPT",invalid);}
+            return result;
+        }catch(HostCommandException rejection){
+            error=rejection.toString();
+            throw rejection;
+        }catch(RuntimeException failure){
+            error=failure.toString();
+            throw failure;
+        }
+    }
+    synchronized void resetEditing(){
+        openOperationId=null;
+        gestureOperationId=null;
+        gestureSessionId=null;
+    }
+    synchronized void onImeSync(Runnable runnable){this.imeSync=runnable;}
+    private synchronized void notifyImeSync(){if(imeSync!=null)main.post(imeSync);}
     static boolean viewportNeedsSubmission(Viewport requested,Viewport submitted,Viewport rejected){
         return requested!=null&&!requested.equals(submitted)&&!requested.equals(rejected);
     }
@@ -197,6 +306,7 @@ final class NetworkSession {
             }
             JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
             synchronized(this){if(!current(expected))return;host=status;startQueuedIfReady();}
+            notifyImeSync();
             worker.schedule(()->poll(expected),30,TimeUnit.MILLISECONDS);
         }catch(Exception failure){terminate(expected,failure);}
     }
@@ -274,7 +384,9 @@ final class NetworkSession {
     synchronized void disconnect(){
         if(!active()&&handle==0)return;
         token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="stopping";
+        resetEditing();
         long old=handle;handle=0;main.post(release);
+        notifyImeSync();
         worker.execute(()->{
             try{if(old!=0)NativeConnection.close(old);synchronized(this){state="stopped";}}
             catch(Exception failure){synchronized(this){failState(failure);}}

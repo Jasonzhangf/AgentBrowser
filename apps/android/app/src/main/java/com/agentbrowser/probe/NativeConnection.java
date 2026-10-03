@@ -42,5 +42,8 @@ public final class NativeConnection {
     public static native void acknowledge(long handle, long ticket);
     public static native String command(long handle, int op, long epoch, long ticket, double x, double y,
                                         double dx, double dy, String text);
+    /** One typed Host10 editing or gesture event. Binding/event JSON is built by the OS adapter. */
+    public static native String editing(long handle, long epoch, long ticket, String operationId,
+                                        long eventSequence, String bindingJson, String eventJson);
     public static native void close(long handle);
 }

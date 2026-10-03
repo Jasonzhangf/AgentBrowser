@@ -19,6 +19,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class MainActivity extends Activity {
     static final String ORIGIN = "https://probe.agentbrowser.invalid/";
@@ -35,14 +36,17 @@ public final class MainActivity extends Activity {
     int codedWidth=360, codedHeight=640, visibleWidth=360, visibleHeight=640;
     WebView webView;
     SurfaceView video;
-    private NetworkSession.InputContext touchContext;
-    private float touchX,touchY;
-    private boolean touchMoved;
+    RemoteImeView remoteIme;
+    private String gestureOperationId;
+    private long gestureEventSequence;
+    private long gestureEpoch, gestureDocument, gestureViewport;
+    private static final AtomicLong NEXT_GESTURE = new AtomicLong(1);
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         probe = new MediaProbe(this);
         annex = new AnnexBDecoder();
         network = new NetworkSession(this, this::submitNetworkFrame, () -> annex.stop());
+        network.onImeSync(this::syncRemoteIme);
         account = new AccountSession(this);
         layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -61,6 +65,27 @@ public final class MainActivity extends Activity {
         videoClip.setClipChildren(true);
         videoClip.addView(video);
         stage.addView(videoClip);
+        remoteIme = new RemoteImeView(this, new RemoteImeView.Host() {
+            public RemoteInput.EditorContext context() {
+                return RemoteInput.EditorContext.parse(network.editorContext());
+            }
+            public org.json.JSONObject selection() {
+                return network.selection();
+            }
+            public org.json.JSONObject surrounding() {
+                return network.surrounding();
+            }
+            public boolean eligible() {
+                return network.remoteImeEligible();
+            }
+            public String submit(String operationId, long eventSequence, String binding, String event) {
+                return network.editing(network.epoch(), operationId, eventSequence, binding, event);
+            }
+            public String cancel(String operationId, long eventSequence, String binding, String event) {
+                return network.cancelEditing(network.epoch(), operationId, eventSequence, binding, event);
+            }
+        });
+        stage.addView(remoteIme, new FrameLayout.LayoutParams(1, 1, android.view.Gravity.TOP | android.view.Gravity.LEFT));
         video.setOnTouchListener((view, event) -> networkTouch(event));
         stage.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
             layoutVideo();
@@ -117,7 +142,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onConfigurationChanged(android.content.res.Configuration configuration) {
         super.onConfigurationChanged(configuration);
-        touchContext=null;
+        cancelGesture();
         layoutChrome();
         layout.requestApplyInsets();
         // Stage layout reports the measured area; preserve this Activity and Host.
@@ -134,6 +159,9 @@ public final class MainActivity extends Activity {
         video.getHolder().setFixedSize(cw,ch);
         layoutVideo();
     }
+    private void syncRemoteIme() {
+        if (remoteIme != null) remoteIme.sync();
+    }
     /** Local native ingress; call on main thread. No encoded bytes enter WebView. */
     public java.util.concurrent.CompletableFuture<AnnexBDecoder.Receipt> submitAccessUnit(AccessUnit unit) {
         if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper()) throw new IllegalStateException("MAIN_THREAD_REQUIRED");
@@ -149,38 +177,90 @@ public final class MainActivity extends Activity {
     }
     private boolean networkTouch(MotionEvent event) {
         synchronized(network) {
-            int action=event.getActionMasked();
-            NetworkSession.InputContext current=network.inputContext();
-            if (!networkSelected || current==null || event.getPointerCount()!=1
-                    || action==MotionEvent.ACTION_CANCEL || action==MotionEvent.ACTION_POINTER_UP) {
-                touchContext=null;
-                return networkSelected;
-            }
-            float sx=videoClip.getWidth()/(float)Math.max(1,visibleWidth);
-            float sy=videoClip.getHeight()/(float)Math.max(1,visibleHeight);
-            double x=event.getX()/sx,y=event.getY()/sy;
-            if(sx<=0||sy<=0||x<0||y<0||x>=visibleWidth||y>=visibleHeight) {
-                touchContext=null;
+            int action = event.getActionMasked();
+            if (!networkSelected) return false;
+            if (event.getPointerCount() != 1 || action == MotionEvent.ACTION_POINTER_DOWN
+                    || action == MotionEvent.ACTION_POINTER_UP) {
+                cancelGesture();
                 return true;
             }
-            if(action==MotionEvent.ACTION_DOWN) {
-                touchContext=current;touchX=event.getX();touchY=event.getY();touchMoved=false;
+            float sx = videoClip.getWidth() / (float) Math.max(1, visibleWidth);
+            float sy = videoClip.getHeight() / (float) Math.max(1, visibleHeight);
+            double x = event.getX() / sx;
+            double y = event.getY() / sy;
+            if (sx <= 0 || sy <= 0 || !Double.isFinite(x) || !Double.isFinite(y)
+                    || x < 0 || y < 0 || x >= visibleWidth || y >= visibleHeight) {
+                cancelGesture();
                 return true;
             }
-            if(touchContext==null||!touchContext.equals(current)) {
-                touchContext=null;
+            if (action == MotionEvent.ACTION_CANCEL) {
+                cancelGesture();
                 return true;
             }
-            int slop=android.view.ViewConfiguration.get(this).getScaledTouchSlop();
-            touchMoved|=Math.hypot(event.getX()-touchX,event.getY()-touchY)>slop;
-            if(action!=MotionEvent.ACTION_UP)return true;
-            touchContext=null;
-            if(touchMoved) {
-                double dx=(touchX-event.getX())/sx,dy=(touchY-event.getY())/sy;
-                // One completed swipe is one atomic scroll; cancellation never clicks.
-                if(dx!=0||dy!=0)network.command(5,current.epoch(),touchX/sx,touchY/sy,dx,dy,"");
-            } else network.command(3,current.epoch(),x,y,0,0,"");
+            if (action == MotionEvent.ACTION_DOWN) {
+                NetworkSession.InputContext context = network.inputContext();
+                if (context == null) return true;
+                gestureOperationId = "pointer-" + NEXT_GESTURE.getAndUpdate(current -> current == Long.MAX_VALUE ? 1 : current + 1);
+                gestureEventSequence = 0;
+                gestureEpoch = context.epoch();
+                gestureDocument = context.document();
+                gestureViewport = context.viewport();
+                try {
+                    network.gesture(gestureEpoch, gestureOperationId, gestureOperationId, gestureEventSequence,
+                        RemoteInput.event("pointer_down", "pointer_id", 1, "x", x, "y", y,
+                            "button", "left", "buttons", 1, "modifiers", 0));
+                } catch (RuntimeException rejected) {
+                    gestureOperationId = null;
+                    gestureEventSequence = 0;
+                    return true;
+                }
+                gestureEventSequence++;
+                return true;
+            }
+            if (gestureOperationId == null) return true;
+            NetworkSession.InputContext context = network.inputContext();
+            if (context == null || context.epoch() != gestureEpoch || context.document() != gestureDocument
+                    || context.viewport() != gestureViewport) {
+                cancelGesture();
+                return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE) {
+                try {
+                    network.gesture(gestureEpoch, gestureOperationId, gestureOperationId, gestureEventSequence,
+                        RemoteInput.event("pointer_move", "pointer_id", 1, "x", x, "y", y, "buttons", 1, "modifiers", 0));
+                } catch (RuntimeException rejected) {
+                    cancelGesture();
+                    return true;
+                }
+            } else if (action == MotionEvent.ACTION_UP) {
+                try {
+                    network.gesture(gestureEpoch, gestureOperationId, gestureOperationId, gestureEventSequence,
+                        RemoteInput.event("pointer_up", "pointer_id", 1, "x", x, "y", y, "button", "left", "buttons", 0, "modifiers", 0));
+                } catch (RuntimeException rejected) {
+                    cancelGesture();
+                    return true;
+                }
+            } else {
+                return true;
+            }
+            gestureEventSequence++;
+            if (action == MotionEvent.ACTION_UP) {
+                gestureOperationId = null;
+                gestureEventSequence = 0;
+            }
             return true;
+        }
+    }
+    private void cancelGesture() {
+        if (gestureOperationId == null) return;
+        try {
+            network.cancelGesture(gestureEpoch, gestureOperationId, gestureEventSequence);
+        } catch (RuntimeException alreadyGone) {
+            // The Host may have ended the lease (disconnect, follow-up event);
+            // local state is dropped below and no event is replayed.
+        } finally {
+            gestureOperationId = null;
+            gestureEventSequence = 0;
         }
     }
     private String dispatch(ProbeCommand command) throws org.json.JSONException {
