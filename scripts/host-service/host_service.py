@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 
 CONFIG_VERSION = 1
-HOST_PROTOCOL_VERSION = 4
+U32_MAX = (1 << 32) - 1
 DEFAULT_LABEL = "com.agentbrowser.obscura-host"
 DEFAULT_ROOT = Path.home() / "Library" / "Application Support" / "AgentBrowser" / "host-service"
 DEFAULT_RUNTIME_BASE = Path("/private/tmp") if Path("/private/tmp").is_dir() else Path("/tmp")
@@ -44,6 +44,23 @@ class ServiceError(Exception):
     def __init__(self, message: str, exit_code: int = 2):
         super().__init__(message)
         self.exit_code = exit_code
+
+
+class ReadyRejected(ServiceError):
+    """A parsed Host ready response that cannot become valid by retrying."""
+
+
+def protocol_version_from(value: object, field: str) -> int:
+    if type(value) is not int or not 1 <= value <= U32_MAX:
+        raise ServiceError(f"{field} must be a positive u32")
+    return value
+
+
+def protocol_version_argument(value: str) -> int:
+    try:
+        return protocol_version_from(int(value, 10), "protocol version")
+    except (ValueError, ServiceError) as error:
+        raise argparse.ArgumentTypeError("protocol version must be a positive u32") from error
 
 
 def emit(value: dict[str, object]) -> None:
@@ -258,8 +275,7 @@ def load_config(root: Path) -> tuple[dict[str, object], str]:
     binary_sha = config.get("binary_sha256")
     if not isinstance(binary_sha, str) or not SHA256_PATTERN.fullmatch(binary_sha):
         raise ServiceError("binary_sha256 is invalid")
-    if config.get("protocol_version") != HOST_PROTOCOL_VERSION:
-        raise ServiceError(f"host protocol version must be {HOST_PROTOCOL_VERSION}")
+    protocol_version_from(config.get("protocol_version"), "host protocol version")
     profile_id = config.get("profile_id")
     if not isinstance(profile_id, str):
         raise ServiceError("profile_id must be a string")
@@ -329,8 +345,7 @@ def validate_state(state: dict[str, object]) -> None:
     binary_sha = state["binary_sha256"]
     if not isinstance(binary_sha, str) or not SHA256_PATTERN.fullmatch(binary_sha):
         raise ServiceError("service state binary_sha256 is invalid")
-    if state["protocol_version"] != HOST_PROTOCOL_VERSION:
-        raise ServiceError(f"service state protocol version must be {HOST_PROTOCOL_VERSION}")
+    protocol_version_from(state["protocol_version"], "service state protocol version")
     profile_id = state["profile_id"]
     if not isinstance(profile_id, str):
         raise ServiceError("service state profile_id must be a string")
@@ -488,7 +503,13 @@ def remove_state(root: Path) -> None:
         pass
 
 
-def ready_message(socket_path: Path, timeout_seconds: float, pid: int | None = None) -> dict[str, object]:
+def ready_message(
+    socket_path: Path,
+    timeout_seconds: float,
+    expected_version: object,
+    pid: int | None = None,
+) -> dict[str, object]:
+    expected_version = protocol_version_from(expected_version, "expected host protocol version")
     deadline = time.monotonic() + timeout_seconds
     last_error = "not ready"
     while time.monotonic() < deadline:
@@ -506,17 +527,22 @@ def ready_message(socket_path: Path, timeout_seconds: float, pid: int | None = N
                     break
                 data += chunk
             if b"\n" not in data:
-                raise ServiceError("Host closed before ready response")
+                raise ReadyRejected("Host closed before ready response")
             value = json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
             if not isinstance(value, dict) or value.get("type") != "ready":
-                raise ServiceError("Host ready response has invalid type")
-            if value.get("version") != HOST_PROTOCOL_VERSION:
-                raise ServiceError(f"Host protocol version is not {HOST_PROTOCOL_VERSION}")
+                raise ReadyRejected("Host ready response has invalid type")
+            ready_version = protocol_version_from(value.get("version"), "Host ready protocol version")
+            if ready_version != expected_version:
+                raise ReadyRejected(
+                    f"Host protocol version is {ready_version}, expected {expected_version}"
+                )
             session_id = value.get("session_id")
             if not isinstance(session_id, str) or not session_id:
-                raise ServiceError("Host ready response has no session_id")
+                raise ReadyRejected("Host ready response has no session_id")
             return value
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ServiceError) as error:
+        except ReadyRejected:
+            raise
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
             last_error = str(error)
         finally:
             client.close()
@@ -730,6 +756,7 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
     binary = executable_path(args.binary)
     label = validate_label(args.service_label)
     profile_id = validate_profile_id(args.profile_id)
+    protocol_version = protocol_version_from(args.protocol_version, "protocol version")
     runtime_root = runtime_root_from(args.runtime_root)
     existing = load_state(root) if state_path(root).is_file() else None
     if existing is not None:
@@ -748,7 +775,7 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
         "service_label": label,
         "host_binary": str(binary),
         "binary_sha256": sha256_file(binary),
-        "protocol_version": HOST_PROTOCOL_VERSION,
+        "protocol_version": protocol_version,
         "profile_id": profile_id,
         "profile_mode": "in_memory",
         "allow_private_network": bool(args.allow_private_network),
@@ -767,7 +794,7 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
         "service_label": label,
         "host_binary": str(binary),
         "binary_sha256": config["binary_sha256"],
-        "protocol_version": HOST_PROTOCOL_VERSION,
+        "protocol_version": config["protocol_version"],
         "profile_id": profile_id,
         "profile_mode": "in_memory",
         "runtime_root": str(runtime_root),
@@ -824,7 +851,12 @@ def start_locked(args: argparse.Namespace, root: Path, config: dict[str, object]
             state_for(config, config_hash, process.pid, socket_dir, "subprocess_starting", None),
         )
         state_written = True
-        ready = ready_message(socket_dir / "host.sock", args.ready_timeout, process.pid)
+        ready = ready_message(
+            socket_dir / "host.sock",
+            args.ready_timeout,
+            config["protocol_version"],
+            process.pid,
+        )
         state = state_for(config, config_hash, process.pid, socket_dir, "subprocess", str(ready["session_id"]))
         write_json(state_path(root), state)
         emit({
@@ -832,7 +864,7 @@ def start_locked(args: argparse.Namespace, root: Path, config: dict[str, object]
             "service_label": config["service_label"],
             "pid": process.pid,
             "session_id": ready["session_id"],
-            "protocol_version": HOST_PROTOCOL_VERSION,
+            "protocol_version": config["protocol_version"],
             "profile_id": config["profile_id"],
             "profile_mode": config["profile_mode"],
             "socket_dir": str(socket_dir),
@@ -906,7 +938,11 @@ def command_status(args: argparse.Namespace) -> int:
         emit(payload)
         return 0
     try:
-        ready = ready_message(socket_dir / "host.sock", 1.0)
+        ready = ready_message(
+            socket_dir / "host.sock",
+            1.0,
+            config["protocol_version"],
+        )
     except ServiceError as error:
         payload["state"] = "starting"
         payload["ready_error"] = str(error)
@@ -1007,6 +1043,7 @@ def parser() -> argparse.ArgumentParser:
     install = commands.add_parser("install", help="bind binary/config and write an unloaded launchd plist")
     add_root_option(install)
     install.add_argument("--binary", required=True)
+    install.add_argument("--protocol-version", required=True, type=protocol_version_argument)
     install.add_argument("--runtime-root")
     install.add_argument("--launchd-root")
     install.add_argument("--service-label", default=DEFAULT_LABEL)

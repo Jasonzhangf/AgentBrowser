@@ -1,0 +1,5 @@
+root=/private/tmp/abhs-h10-observe-19088
+runtime=/private/tmp/abhs-h10-rt-19088
+launchd=/private/tmp/abhs-h10-launchd-19088
+label=com.agentbrowser.observe.h10.19088
+binary=/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-host

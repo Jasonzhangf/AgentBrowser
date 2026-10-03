@@ -1,0 +1,6 @@
+install_rc=0
+start_rc=0
+status_rc=0
+stop_rc=0
+cleanup_rc=0
+absence_rc=0

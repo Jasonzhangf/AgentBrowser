@@ -18,6 +18,17 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("host_service.py")
+U32_MAX = (1 << 32) - 1
+
+
+def protocol_version_argument(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("protocol version must be a positive u32") from error
+    if not 1 <= parsed <= U32_MAX:
+        raise argparse.ArgumentTypeError("protocol version must be a positive u32")
+    return parsed
 
 
 def run_manager(*arguments: str, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -48,13 +59,17 @@ def private_mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-def host_request(socket_path: Path, command: dict[str, object]) -> tuple[dict[str, object], str]:
+def host_request(
+    socket_path: Path,
+    command: dict[str, object],
+    expected_version: int,
+) -> tuple[dict[str, object], str]:
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.settimeout(10)
     client.connect(str(socket_path))
     try:
         ready = json.loads(client.makefile("rb").readline().decode("utf-8"))
-        if ready.get("type") != "ready" or ready.get("version") != 4:
+        if ready.get("type") != "ready" or ready.get("version") != expected_version:
             raise AssertionError(f"unexpected Host ready message: {ready!r}")
         client.sendall((json.dumps({"id": 1, "command": command}) + "\n").encode("utf-8"))
         response = json.loads(client.makefile("rb").readline().decode("utf-8"))
@@ -80,7 +95,7 @@ def register_service_cleanup(root: Path, runtime: Path, *extra_files: Path) -> N
     atexit.register(cleanup)
 
 
-def acceptance(binary: Path) -> None:
+def acceptance(binary: Path, protocol_version: int) -> None:
     with tempfile.TemporaryDirectory(prefix="agentbrowser-host-service-") as temporary:
         base = Path(temporary)
         runtime_base = Path("/private/tmp") if Path("/private/tmp").is_dir() else Path("/tmp")
@@ -91,9 +106,35 @@ def acceptance(binary: Path) -> None:
 
         missing = base / "missing"
         missing_result = run_manager(
-            "install", "--root", str(base / "missing-service"), "--binary", str(missing)
+            "install",
+            "--root",
+            str(base / "missing-service"),
+            "--binary",
+            str(missing),
+            "--protocol-version",
+            str(protocol_version),
         )
         assert_error(missing_result, "host binary is not executable")
+
+        missing_protocol = run_manager(
+            "install",
+            "--root",
+            str(base / "missing-protocol-service"),
+            "--binary",
+            str(binary),
+        )
+        assert_error(missing_protocol, "--protocol-version")
+        for bad_protocol in ("0", str(U32_MAX + 1), "true"):
+            bad_result = run_manager(
+                "install",
+                "--root",
+                str(base / f"bad-protocol-{bad_protocol}"),
+                "--binary",
+                str(binary),
+                "--protocol-version",
+                bad_protocol,
+            )
+            assert_error(bad_result, "protocol version must be a positive u32")
 
         shared_runtime = base / "shared-runtime"
         shared_runtime.mkdir()
@@ -106,6 +147,8 @@ def acceptance(binary: Path) -> None:
             str(binary),
             "--runtime-root",
             str(shared_runtime),
+            "--protocol-version",
+            str(protocol_version),
         )
         assert_error(shared_result, "directory must already be private")
         if private_mode(shared_runtime) != 0o755:
@@ -119,6 +162,8 @@ def acceptance(binary: Path) -> None:
             str(binary),
             "--runtime-root",
             str(base / "runtime with space"),
+            "--protocol-version",
+            str(protocol_version),
         )
         assert_error(spaced_result, "runtime root cannot contain whitespace")
 
@@ -136,11 +181,13 @@ def acceptance(binary: Path) -> None:
             "com.agentbrowser.test-host",
             "--profile-id",
             "test-profile",
+            "--protocol-version",
+            str(protocol_version),
         )
         assert installed["state"] == "installed"
         config_path = root / "config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
-        if config["profile_mode"] != "in_memory" or config["protocol_version"] != 4:
+        if config["profile_mode"] != "in_memory" or config["protocol_version"] != protocol_version:
             raise AssertionError(f"invalid installed identity: {config!r}")
         if private_mode(root) != 0o700 or private_mode(root / "run") != 0o700 or private_mode(runtime) != 0o700:
             raise AssertionError("service directories are not private")
@@ -169,6 +216,44 @@ def acceptance(binary: Path) -> None:
         config_path.write_text(json.dumps(config, sort_keys=True) + "\n", encoding="utf-8")
         os.chmod(config_path, 0o600)
 
+        config["protocol_version"] = True
+        config_path.write_text(json.dumps(config, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(config_path, 0o600)
+        assert_error(
+            run_manager("start", "--root", str(root)),
+            "host protocol version must be a positive u32",
+        )
+        config["protocol_version"] = protocol_version
+        config_path.write_text(json.dumps(config, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(config_path, 0o600)
+
+        mismatch_version = protocol_version - 1 if protocol_version > 1 else protocol_version + 1
+        mismatch_root = runtime_base / f"abhs-mismatch-service-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        mismatch_runtime = runtime_base / f"abhs-m-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        register_service_cleanup(mismatch_root, mismatch_runtime)
+        manager_json(
+            "install",
+            "--root",
+            str(mismatch_root),
+            "--binary",
+            str(binary),
+            "--runtime-root",
+            str(mismatch_runtime),
+            "--protocol-version",
+            str(mismatch_version),
+        )
+        mismatch_start = run_manager(
+            "start", "--root", str(mismatch_root), "--ready-timeout", "5"
+        )
+        assert_error(
+            mismatch_start,
+            f"Host protocol version is {protocol_version}, expected {mismatch_version}",
+        )
+        if (mismatch_root / "run" / "state.json").exists():
+            raise AssertionError("version mismatch left service state behind")
+        if list(mismatch_runtime.iterdir()):
+            raise AssertionError("version mismatch left an owned socket runtime behind")
+
         failing_binary = base / "failing-host"
         failing_binary.write_text(
             "#!/bin/sh\n"
@@ -196,6 +281,8 @@ def acceptance(binary: Path) -> None:
             str(failing_binary),
             "--runtime-root",
             str(failure_runtime),
+            "--protocol-version",
+            str(protocol_version),
         )
         failed_start = run_manager(
             "start", "--root", str(failure_root), "--ready-timeout", "1"
@@ -226,6 +313,8 @@ def acceptance(binary: Path) -> None:
             str(binary),
             "--runtime-root",
             str(concurrent_runtime),
+            "--protocol-version",
+            str(protocol_version),
         )
         start_command = [
             sys.executable,
@@ -268,6 +357,8 @@ def acceptance(binary: Path) -> None:
             str(restart_binary),
             "--runtime-root",
             str(restart_runtime),
+            "--protocol-version",
+            str(protocol_version),
         )
         restart_started = manager_json("start", "--root", str(restart_root), "--ready-timeout", "60")
         restart_pid = restart_started["pid"]
@@ -311,7 +402,11 @@ def acceptance(binary: Path) -> None:
         duplicate = run_manager("start", "--root", str(root))
         assert_error(duplicate, "Host already running")
 
-        response, client_session = host_request(socket_dir / "host.sock", {"type": "attach", "mode": "observe"})
+        response, client_session = host_request(
+            socket_dir / "host.sock",
+            {"type": "attach", "mode": "observe"},
+            protocol_version,
+        )
         if response.get("type") != "result" or client_session != first_session:
             raise AssertionError(f"client attach did not reach real Host: {response!r}")
         after_client_exit = manager_json("status", "--root", str(root))
@@ -334,10 +429,11 @@ def acceptance(binary: Path) -> None:
 def main() -> int:
     arguments = argparse.ArgumentParser()
     arguments.add_argument("--binary", required=True, type=Path)
+    arguments.add_argument("--protocol-version", required=True, type=protocol_version_argument)
     args = arguments.parse_args()
     if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
         raise SystemExit(f"real executable required: {args.binary}")
-    acceptance(args.binary.resolve())
+    acceptance(args.binary.resolve(), args.protocol_version)
     print("HOST_SERVICE_REAL_SUBPROCESS_PASS")
     return 0
 

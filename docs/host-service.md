@@ -24,10 +24,19 @@ only detaches that attachment. The Host process and its Page continue until the
 service is explicitly stopped or the Host exits. Reconnecting to the same
 daemon sees the same Session identity.
 
-The Host ready response is checked at startup. This slice requires protocol
-version `4` and records the actual `session_id`, binary path, binary SHA-256,
-service label, config ID, and config hash in service state. `status` reports
-that typed state; it never reconstructs ownership or health from log text.
+The Host ready response is checked against the expected protocol version bound
+at install time. The expected value is a positive `u32` supplied by the
+deployment owner as `--protocol-version`; it is stored in typed config and is
+the only source used by ready validation and status projection. A parsed ready
+response with another version fails immediately and the owned child/runtime are
+cleaned through the normal startup failure path. The service does not infer the
+expected version from the first ready response, logs, environment, or payloads,
+and it does not retry another version.
+
+Startup records the actual `session_id`, binary path, binary SHA-256, service
+label, config ID, config hash, and configured protocol version in service state.
+`status` reports the configured version as typed config projection; it never
+reconstructs ownership or health from log text.
 
 ## Profile boundary
 
@@ -57,7 +66,8 @@ Host's exact argv. The default is a private per-user directory under
 ```sh
 scripts/host-service/host-service install \
   --root "$HOME/Library/Application Support/AgentBrowser/host-service" \
-  --binary /absolute/path/to/obscura-host
+  --binary /absolute/path/to/obscura-host \
+  --protocol-version 10
 
 scripts/host-service/host-service start --root "$HOME/Library/Application Support/AgentBrowser/host-service"
 scripts/host-service/host-service status --root "$HOME/Library/Application Support/AgentBrowser/host-service"
@@ -65,14 +75,15 @@ scripts/host-service/host-service stop --root "$HOME/Library/Application Support
 scripts/host-service/host-service restart --root "$HOME/Library/Application Support/AgentBrowser/host-service"
 ```
 
-`install` validates the executable's actual `--help` entrypoint, records its
-SHA-256, and refuses to start a changed binary until reinstalled. Duplicate
-starts fail with the recorded PID. Lifecycle mutations share one lock, and
-`stop` revalidates the verified PID immediately before both termination
-signals. The command line must still contain the configured binary and exact
-socket directory; it never uses process-name or process-group killing. Stale
-service state is cleaned only after that PID is dead and the runtime directory
-matches the service-owned `host-*` path shape.
+`install` validates the executable's actual `--help` entrypoint, validates the
+expected protocol version as a positive `u32`, records the binary SHA-256, and
+refuses to start a changed binary until reinstalled. Duplicate starts fail with
+the recorded PID. Lifecycle mutations share one lock, and `stop` revalidates the
+verified PID immediately before both termination signals. The command line must
+still contain the configured binary and exact socket directory; it never uses
+process-name or process-group killing. Stale service state is cleaned only after
+that PID is dead and the runtime directory matches the service-owned `host-*`
+path shape.
 
 Before any ownership check, signal, or runtime cleanup, `state.json` must match
 the complete typed schema, including canonical binary/runtime/socket identities.
@@ -123,14 +134,16 @@ CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR="$OBSCURA_TARGET" \
   cargo build --release -p obscura-host --features render
 
 OBSCURA_HOST_BINARY="$OBSCURA_TARGET/release/obscura-host" \
+OBSCURA_HOST_PROTOCOL_VERSION=10 \
   scripts/host-service/verify-host-service
 ```
 
 The test uses the actual binary and checks: missing executable, invalid profile
-config, private file modes, protocol-v4 ready/session identity, duplicate
-start, client exit without Host exit, normal stop/status, and restart producing
-a new Session identity. It does not load launchd, install a real user service,
-touch Android/ADB resources, or claim full M1 product acceptance.
+config, missing/invalid protocol version, configured ready/session identity,
+version mismatch cleanup, duplicate start, client exit without Host exit,
+normal stop/status, and restart producing a new Session identity. It does not
+load launchd, install a real user service, touch Android/ADB resources, or claim
+full M1 product acceptance.
 
 The AppSDK build and regression bindings invoke the same resolver wrapper. It
 uses `OBSCURA_HOST_BINARY` first, then `active/bin/obscura-host`; if neither
@@ -146,6 +159,7 @@ on its owner branch, select the validated AppSDK executable on `PATH`, and run:
 
 ```sh
 OBSCURA_HOST_BINARY=/absolute/path/to/validated/obscura-host \
+OBSCURA_HOST_PROTOCOL_VERSION=10 \
   node scripts/host-service/validate-admission.mjs
 ```
 
