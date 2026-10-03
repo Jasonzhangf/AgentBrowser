@@ -1,0 +1,11 @@
+    Finished `release` profile [optimized] target(s) in 0.92s
+apps/macos/Sources/main.swift:1240:35: warning: 'javaScriptEnabled' was deprecated in macOS 11.0: Use WKWebpagePreferences.allowsContentJavaScript to disable content JavaScript on a per-navigation basis [#DeprecatedDeclaration]
+1238 | 
+1239 |         let configuration = WKWebViewConfiguration()
+1240 |         configuration.preferences.javaScriptEnabled = true
+     |                                   `- warning: 'javaScriptEnabled' was deprecated in macOS 11.0: Use WKWebpagePreferences.allowsContentJavaScript to disable content JavaScript on a per-navigation basis [#DeprecatedDeclaration]
+1241 |         let userScriptSource = "window.ProbeNative={request:function(raw){var value=window.prompt('AgentBrowser.Native',raw);return value===null?JSON.stringify({rejection:'NATIVE_PROMPT_CANCELLED'}):value;}};"
+1242 |         let userScript = WKUserScript(source: userScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+/Volumes/Intel/playground/agentbrowser/m1-mac-native-input-r2-20261003/apps/macos/build/AgentBrowserMac.app

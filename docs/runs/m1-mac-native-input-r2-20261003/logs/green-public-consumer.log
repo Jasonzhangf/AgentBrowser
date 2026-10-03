@@ -1,0 +1,15 @@
+    Blocking waiting for file lock on package cache
+   Compiling agentbrowser-macos-bridge v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-mac-native-input-r2-20261003/apps/macos/connection-bridge)
+    Finished `release` profile [optimized] target(s) in 0.66s
+     Running tests/public_consumer.rs (target/release/deps/public_consumer-427236c714f8d2e9)
+
+running 6 tests
+test unknown_editing_field_is_rejected ... ok
+test invalid_selection_direction_is_typed ... ok
+test typed_editing_command_without_session_is_explicit ... ok
+test invalid_editing_binding_is_typed ... ok
+test typed_select_without_session_is_explicit ... ok
+test status_without_session_reports_observe ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
