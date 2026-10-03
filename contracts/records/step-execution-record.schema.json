@@ -1,0 +1,72 @@
+{
+  "$id": "https://appsdk.local/contracts/records/step-execution-record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "event_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "input_hash": {
+      "pattern": "^sha256:",
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "plan_hash": {
+      "pattern": "^sha256:",
+      "type": "string"
+    },
+    "record_type": {
+      "const": "StepExecutionRecord"
+    },
+    "result": {
+      "enum": [
+        "pass",
+        "fail",
+        "blocked"
+      ]
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "step_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "task_id": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_type",
+    "event_id",
+    "task_id",
+    "step_id",
+    "result",
+    "observations",
+    "evidence",
+    "plan_hash",
+    "input_hash",
+    "created_at"
+  ],
+  "title": "AppSDK StepExecutionRecord",
+  "type": "object"
+}
