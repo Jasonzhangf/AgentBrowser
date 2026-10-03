@@ -38,6 +38,12 @@ label, config ID, config hash, and configured protocol version in service state.
 `status` reports the configured version as typed config projection; it never
 reconstructs ownership or health from log text.
 
+`status` validates a ready response through the same configured-version rule as
+startup and rejects it when the ready session does not match the state. A dead
+recorded PID is reported as `stale`; a mismatching ready response is reported
+as terminal `ready_rejected`, both with a non-zero status exit. Neither terminal
+state is interpreted as successful startup progress.
+
 ## Profile boundary
 
 `profile_id` identifies the service configuration. `profile_mode` is explicitly
@@ -110,13 +116,23 @@ file or old log exists.
 ## launchd boundary
 
 `install` writes `<launchd-root>/<service-label>.plist` with `RunAtLoad` and
-`KeepAlive`, but reports `launchd_loaded: false`. This worker does not load a
-plist into the user's real launchd domain. The plist's program is the same
-service manager in `launchd` mode; that mode allocates a fresh runtime socket
-directory and then `exec`s the configured Host binary. The main integration
-owner must perform real `LaunchAgents` installation and `launchctl bootstrap`
-serially during product acceptance, then collect separate install/restart and
-deployed-entrypoint evidence.
+`KeepAlive` with failed successful exits restarted by launchd. It reports
+`launchd_loaded: false`. This worker does not load a plist into the user's real
+launchd domain. The plist's program is the same service manager in `launchd`
+mode; that mode allocates a fresh runtime socket directory, validates the
+configured Host ready version against the real socket, and only then records
+the running launchd-owned Host identity. The manager waits for that child while
+it remains the service owner; SIGINT/SIGTERM terminate the owned child and
+remove its owned socket runtime and state.
+
+A launchd protocol rejection uses `terminate`/`wait` on the already spawned
+child, removes its owned socket runtime, and writes a terminal
+`ready_rejected` status with the configured error. The evidence state retains
+the launchd manager PID, but `stop` refuses cleanup if that PID is live. This
+state never causes a guessed process signal or runtime deletion. The main
+integration owner must perform real `LaunchAgents` installation and
+`launchctl bootstrap` serially during product acceptance, then collect separate
+install/restart and deployed-entrypoint evidence.
 
 While a live state is marked `launchd`, `stop` and `restart` refuse to send a
 subprocess signal or start an unmanaged replacement. The integration owner must
@@ -154,6 +170,13 @@ consumable runtime bundle under `generated/modules/host-service/lib/` containing
 `host-service` and `host_service.py`. The Obscura binary remains an external
 engine artifact owned by Obscura and is not copied into this bundle.
 
+The module build intentionally refuses to run without an explicit real Host
+binary and protocol version. A source-only candidate may execute the same
+build steps without the verifier: compile the manager sources, create
+`generated/modules/host-service/lib`, copy the launcher and `host_service.py`
+with preserved permissions, and record both source hashes. This proves only
+source syntax and bundle construction, not Host lifecycle behavior.
+
 For formal installed-bundle admission on macOS, commit the complete candidate
 on its owner branch, select the validated AppSDK executable on `PATH`, and run:
 
@@ -173,6 +196,15 @@ configuration and raw receipts remain under the recorded evidence paths.
 This private acceptance installation does not replace the user's default Host
 service or establish full M1 acceptance. Existing admission records are preserved:
 the adapter refuses to overwrite a candidate/validation graph.
+
+The later real launchd window must add the two missing negative/positive cases
+without using placeholders: install a compiled bundle whose explicit
+`--protocol-version` is legal but does not match the Host binary, bootstrap the
+unique label, assert non-zero `ready_rejected` plus owned process/socket/state
+cleanup, then repeat with the matching binary/version and assert ready,
+observe attach, restart, stop, and unique-label bootout. The controller must
+provide the validated binary path, its SHA-256, the positive protocol version,
+a mismatching legal version, the launchd root and private UID.
 
 ## Ownership and non-goals
 

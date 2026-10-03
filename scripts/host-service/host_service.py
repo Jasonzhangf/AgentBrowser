@@ -322,8 +322,9 @@ def validate_state(state: dict[str, object]) -> None:
         "config_sha256",
         "launch_mode",
         "started_at_unix",
+        "ready_error",
     }
-    missing = sorted(expected - set(state))
+    missing = sorted(expected - set(state) - {"ready_error"})
     unknown = sorted(set(state) - expected)
     if missing:
         raise ServiceError(f"service state is missing keys: {', '.join(missing)}")
@@ -371,15 +372,35 @@ def validate_state(state: dict[str, object]) -> None:
     if not isinstance(config_sha, str) or not SHA256_PATTERN.fullmatch(config_sha):
         raise ServiceError("service state config_sha256 is invalid")
     launch_mode = state["launch_mode"]
-    if not isinstance(launch_mode, str) or launch_mode not in {"subprocess", "subprocess_starting", "launchd"}:
+    if not isinstance(launch_mode, str) or launch_mode not in {
+        "subprocess",
+        "subprocess_starting",
+        "launchd_starting",
+        "launchd",
+        "launchd_rejected",
+    }:
         raise ServiceError("service state launch_mode is invalid")
     session_id = state["session_id"]
+    ready_error = state.get("ready_error")
+    if ready_error is not None and not isinstance(ready_error, str):
+        raise ServiceError("service state ready_error must be a string or null")
     if session_id is not None and (not isinstance(session_id, str) or not session_id):
         raise ServiceError("service state session_id is invalid")
     if launch_mode == "subprocess" and session_id is None:
         raise ServiceError("subprocess service state requires session_id")
     if launch_mode == "subprocess_starting" and session_id is not None:
         raise ServiceError("starting subprocess state cannot have session_id")
+    if launch_mode == "launchd_starting" and session_id is not None:
+        raise ServiceError("starting launchd state cannot have session_id")
+    if launch_mode == "launchd" and session_id is None:
+        raise ServiceError("launchd service state requires session_id")
+    if launch_mode == "launchd_rejected":
+        if session_id is not None:
+            raise ServiceError("rejected launchd state cannot have session_id")
+        if not isinstance(ready_error, str) or not ready_error:
+            raise ServiceError("rejected launchd state requires ready_error")
+    elif ready_error is not None:
+        raise ServiceError("ready_error is only valid in rejected launchd state")
     if type(state["started_at_unix"]) is not int or state["started_at_unix"] <= 0:
         raise ServiceError("service state started_at_unix is invalid")
 
@@ -608,7 +629,15 @@ def make_socket_dir(runtime_root: Path) -> Path:
     raise ServiceError("could not allocate a fresh Host socket directory")
 
 
-def state_for(config: dict[str, object], config_hash: str, pid: int, socket_dir: Path, mode_name: str, session_id: str | None) -> dict[str, object]:
+def state_for(
+    config: dict[str, object],
+    config_hash: str,
+    pid: int,
+    socket_dir: Path,
+    mode_name: str,
+    session_id: str | None,
+    ready_error: str | None = None,
+) -> dict[str, object]:
     return {
         "state_version": 1,
         "service_label": config["service_label"],
@@ -625,6 +654,7 @@ def state_for(config: dict[str, object], config_hash: str, pid: int, socket_dir:
         "config_sha256": config_hash,
         "launch_mode": mode_name,
         "started_at_unix": int(time.time()),
+        "ready_error": ready_error,
     }
 
 
@@ -707,6 +737,38 @@ def cleanup_stale(root: Path, state: dict[str, object]) -> None:
     remove_state(root)
 
 
+def supervise_launchd_process(
+    process: subprocess.Popen[object],
+    root: Path,
+    config: dict[str, object],
+    config_hash: str,
+    socket_dir: Path,
+) -> int:
+    stopping = False
+
+    def stop_owned_process(_signum: int, _frame: object) -> None:
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        try:
+            stop_child_process(process)
+            cleanup_runtime(state_for(config, config_hash, process.pid, socket_dir, "launchd", "closed"))
+            remove_state(root)
+        finally:
+            raise SystemExit(0)
+
+    previous_handlers = {signum: signal.signal(signum, stop_owned_process) for signum in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        return process.wait()
+    finally:
+        for signum, previous in previous_handlers.items():
+            signal.signal(signum, previous)
+        if not stopping:
+            cleanup_runtime(state_for(config, config_hash, process.pid, socket_dir, "launchd", "closed"))
+            remove_state(root)
+
+
 def write_plist(config: dict[str, object], root: Path, launchd_root: Path) -> Path:
     ensure_directory(launchd_root)
     label = str(config["service_label"])
@@ -726,7 +788,7 @@ def write_plist(config: dict[str, object], root: Path, launchd_root: Path) -> Pa
         f"<key>Label</key>{text_element(label)}\n"
         f"<key>ProgramArguments</key><array>\n{argument_xml}\n</array>\n"
         "<key>RunAtLoad</key><true/>\n"
-        "<key>KeepAlive</key><true/>\n"
+        "<key>KeepAlive</key><dict><key>SuccessfulExit</key><true/></dict>\n"
         "<key>ThrottleInterval</key><integer>5</integer>\n"
         f"<key>WorkingDirectory</key>{text_element(str(root))}\n"
         f"<key>StandardOutPath</key>{text_element(str(log_path(root)))}\n"
@@ -915,6 +977,18 @@ def command_status(args: argparse.Namespace) -> int:
         payload["state"] = "stopped"
         emit(payload)
         return 0
+    if state.get("launch_mode") == "launchd_rejected":
+        payload.update({
+            "pid": state.get("pid"),
+            "socket_dir": state.get("socket_dir"),
+            "state_config_id": state.get("config_id"),
+            "state_config_sha256": state.get("config_sha256"),
+            "config_identity_match": state.get("config_id") == config["config_id"] and state.get("config_sha256") == config_hash,
+        })
+        payload["state"] = "ready_rejected"
+        payload["ready_error"] = state.get("ready_error")
+        emit(payload)
+        return 1
     alive, detail = state_identity(state)
     payload.update({
         "pid": state.get("pid"),
@@ -934,15 +1008,21 @@ def command_status(args: argparse.Namespace) -> int:
         return 1
     socket_dir = Path(str(state.get("socket_dir", "")))
     if not socket_dir.is_dir():
-        payload["state"] = "starting"
+        payload["state"] = "starting" if state.get("launch_mode") in {"subprocess_starting", "launchd_starting"} else "stale"
+        payload["ready_error"] = "Host runtime directory is not present" if payload["state"] == "stale" else None
         emit(payload)
-        return 0
+        return 0 if payload["state"] == "starting" else 1
     try:
         ready = ready_message(
             socket_dir / "host.sock",
             1.0,
             config["protocol_version"],
         )
+    except ReadyRejected as error:
+        payload["state"] = "ready_rejected"
+        payload["ready_error"] = str(error)
+        emit(payload)
+        return 1
     except ServiceError as error:
         payload["state"] = "starting"
         payload["ready_error"] = str(error)
@@ -979,6 +1059,12 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
     alive, detail = state_identity(state)
     if detail == "foreign":
         raise ServiceError(f"recorded PID is owned by another process; refusing to stop: {state.get('pid')}")
+    if state.get("launch_mode") == "launchd_rejected":
+        if alive:
+            raise ServiceError("rejected launchd state still has a live PID; refusing cleanup")
+        cleanup_runtime(state)
+        remove_state(root)
+        return
     if alive and state.get("launch_mode") == "launchd":
         raise ServiceError("launchd-managed Host must be stopped through launchctl; refusing subprocess stop")
     if alive:
@@ -1018,17 +1104,68 @@ def command_launchd(args: argparse.Namespace) -> int:
         if state_status == "stale" and existing is not None:
             cleanup_stale(root, existing)
         socket_dir = make_socket_dir(runtime_root_from(str(config["runtime_root"])))
-        write_json(state_path(root), state_for(config, config_hash, os.getpid(), socket_dir, "launchd", None))
         command = [str(binary), "--socket-dir", str(socket_dir)]
         if config["allow_private_network"]:
             command.append("--allow-private-network")
-        release_start_lock(lock_fd)
-        lock_fd = -1
-        os.execv(str(binary), command)
+        write_json(
+            state_path(root),
+            state_for(config, config_hash, os.getpid(), socket_dir, "launchd_starting", None),
+        )
+        log_handle = log_path(root).open("ab")
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+            )
+            write_json(
+                state_path(root),
+                state_for(config, config_hash, process.pid, socket_dir, "launchd_starting", None),
+            )
+            ready = ready_message(
+                socket_dir / "host.sock",
+                10.0,
+                config["protocol_version"],
+                process.pid,
+            )
+            write_json(
+                state_path(root),
+                state_for(config, config_hash, process.pid, socket_dir, "launchd", str(ready["session_id"])),
+            )
+        except ReadyRejected as error:
+            if "process" in locals() and process is not None:
+                stop_child_process(process)
+            cleanup_runtime(state_for(config, config_hash, os.getpid(), socket_dir, "launchd_starting", None))
+            write_json(
+                state_path(root),
+                state_for(
+                    config,
+                    config_hash,
+                    os.getpid(),
+                    socket_dir,
+                    "launchd_rejected",
+                    None,
+                    str(error),
+                ),
+            )
+            if "process" in locals() and process is not None:
+                process.wait(timeout=5)
+            raise
+        except BaseException:
+            if "process" in locals() and process is not None:
+                stop_child_process(process)
+            cleanup_runtime(state_for(config, config_hash, os.getpid(), socket_dir, "launchd_starting", None))
+            remove_state(root)
+            raise
+        finally:
+            log_handle.close()
+        return supervise_launchd_process(process, root, config, config_hash, socket_dir)
     finally:
         if lock_fd != -1:
             release_start_lock(lock_fd)
-    raise ServiceError("launchd exec returned unexpectedly")
 
 
 def add_root_option(parser: argparse.ArgumentParser) -> None:

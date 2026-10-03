@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+project_dir=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+output_dir="$project_dir/generated/modules/host-service/lib"
+
+python3 -m py_compile \
+  "$script_dir/host_service.py" \
+  "$script_dir/test_host_service.py"
+
+rm -rf "$output_dir"
+mkdir -p "$output_dir"
+cp -p "$script_dir/host-service" "$output_dir/host-service"
+cp -p "$script_dir/host_service.py" "$output_dir/host_service.py"
+
+shasum -a 256 \
+  "$output_dir/host-service" \
+  "$output_dir/host_service.py"

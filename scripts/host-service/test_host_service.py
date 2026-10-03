@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -94,6 +95,126 @@ def register_service_cleanup(root: Path, runtime: Path, *extra_files: Path) -> N
 
     atexit.register(cleanup)
 
+
+def fixture_host(base: Path, *, actual_version: int, session_id: str = "fixture-session") -> Path:
+    host = base / "fixture-host"
+    host.write_text(
+        f"""#!/bin/sh
+if [ "${{1:-}}" = "--help" ]; then
+  printf '%s\\n' 'Local persistent browser Session'
+  exit 0
+fi
+exec python3 - "$@" <<'PY'
+import json
+import os
+import signal
+import socket
+import sys
+
+if len(sys.argv) != 3 or sys.argv[1] != "--socket-dir":
+    raise SystemExit(2)
+socket_dir = sys.argv[2]
+os.makedirs(socket_dir, mode=0o700, exist_ok=True)
+os.chmod(socket_dir, 0o700)
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+path = os.path.join(socket_dir, "host.sock")
+server.bind(path)
+os.chmod(path, 0o600)
+server.listen(1)
+signal.signal(signal.SIGTERM, signal.SIG_DFL)
+connection, _ = server.accept()
+with connection:
+    ready = {{"type": "ready", "version": {actual_version}, "session_id": {session_id!r}}}
+    connection.sendall((json.dumps(ready) + "\\n").encode())
+    connection.shutdown(socket.SHUT_WR)
+PY
+""",
+        encoding="utf-8",
+    )
+    os.chmod(host, 0o755)
+    return host
+
+
+def terminal_launchd_rejection_contract() -> None:
+    with tempfile.TemporaryDirectory(prefix="agentbrowser-host-service-dev-") as temporary:
+        base = Path(temporary)
+        runtime_base = Path("/private/tmp") if Path("/private/tmp").is_dir() else Path("/tmp")
+        token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        root = runtime_base / f"abhs-rj-{token}"
+        runtime = runtime_base / f"abhs-rj-rt-{token}"
+        label = f"com.agentbrowser.dev-reject.{token}"
+        fixture = fixture_host(base, actual_version=2)
+        manager_json(
+            "install",
+            "--root",
+            str(root),
+            "--binary",
+            str(fixture),
+            "--runtime-root",
+            str(runtime),
+            "--launchd-root",
+            str(base / "LaunchAgents"),
+            "--service-label",
+            label,
+            "--protocol-version",
+            "1",
+        )
+        process = subprocess.Popen(
+            [sys.executable, str(SCRIPT), "launchd", "--root", str(root)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        stdout, stderr = process.communicate(timeout=15)
+        if process.returncode == 0 or "Host protocol version is 2, expected 1" not in stderr:
+            raise AssertionError(
+                f"terminal launchd rejection was not explicit: rc={process.returncode}, stdout={stdout!r}, stderr={stderr!r}"
+            )
+        terminal = run_manager("status", "--root", str(root))
+        terminal_state = json.loads(terminal.stdout)
+        if terminal.returncode == 0 or terminal_state["state"] != "ready_rejected":
+            raise AssertionError(f"status did not expose terminal rejection: {terminal!r}")
+        if terminal_state["protocol_version"] != 1 or "Host protocol version is 2, expected 1" not in terminal_state["ready_error"]:
+            raise AssertionError(f"terminal rejection lost configured-version evidence: {terminal_state!r}")
+        state_path = root / "run" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("launch_mode") != "launchd_rejected" or state.get("service_label") != label:
+            raise AssertionError(f"terminal launchd state is not owned evidence: {state!r}")
+        if list(runtime.iterdir()):
+            raise AssertionError("terminal launchd rejection left an owned socket runtime behind")
+        stopped = manager_json("stop", "--root", str(root))
+        if stopped["state"] != "stopped" or state_path.exists():
+            raise AssertionError(f"terminal launchd evidence was not cleaned explicitly: {stopped!r}")
+        shutil.rmtree(root)
+        shutil.rmtree(runtime)
+
+        legacy_root = runtime_base / f"abhs-rj-legacy-{token}"
+        legacy_runtime = runtime_base / f"abhs-rj-legacy-rt-{token}"
+        legacy_state = {
+            "state_version": 1,
+            "service_label": f"com.agentbrowser.dev-legacy.{token}",
+            "pid": os.getpid(),
+            "host_binary": str(fixture),
+            "binary_sha256": "0" * 64,
+            "protocol_version": 1,
+            "profile_id": "default",
+            "profile_mode": "in_memory",
+            "runtime_root": str(legacy_runtime),
+            "socket_dir": str(legacy_runtime / "host-00000000000000000000000000000000"),
+            "session_id": "legacy-session",
+            "config_id": "legacy-config",
+            "config_sha256": "0" * 64,
+            "launch_mode": "subprocess",
+            "started_at_unix": 1,
+        }
+        legacy_run = legacy_root / "run"
+        legacy_run.mkdir(parents=True, mode=0o700)
+        legacy_state_path = legacy_run / "state.json"
+        legacy_state_path.write_text(json.dumps(legacy_state, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(legacy_state_path, 0o600)
+        if run_manager("status", "--root", str(legacy_root)).returncode != 1:
+            raise AssertionError("legacy state without ready_error was not loadable")
+        shutil.rmtree(legacy_root)
 
 def acceptance(binary: Path, protocol_version: int) -> None:
     with tempfile.TemporaryDirectory(prefix="agentbrowser-host-service-") as temporary:
@@ -428,9 +549,15 @@ def acceptance(binary: Path, protocol_version: int) -> None:
 
 def main() -> int:
     arguments = argparse.ArgumentParser()
-    arguments.add_argument("--binary", required=True, type=Path)
-    arguments.add_argument("--protocol-version", required=True, type=protocol_version_argument)
+    arguments.add_argument("--binary", type=Path)
+    arguments.add_argument("--protocol-version", type=protocol_version_argument)
     args = arguments.parse_args()
+    if args.binary is None and args.protocol_version is None:
+        terminal_launchd_rejection_contract()
+        print("HOST_SERVICE_DEV_FIXTURE_PASS")
+        return 0
+    if args.binary is None or args.protocol_version is None:
+        raise SystemExit("--binary and --protocol-version must be supplied together")
     if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
         raise SystemExit(f"real executable required: {args.binary}")
     acceptance(args.binary.resolve(), args.protocol_version)
