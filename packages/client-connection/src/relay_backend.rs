@@ -1,6 +1,9 @@
 use crate::{
     decode_video,
-    protocol::{Command, Mode, Request, Response, SessionStatus, ViewportDeclaration},
+    protocol::{
+        Command, Mode, Request, Response, SessionStatus, ViewportDeclaration,
+        HOST_PROTOCOL_VERSION,
+    },
     relay::{
         RegisteredDevice, RelayClient, RelayConnection, RelayFailure, RelayPeerBinding,
         RelayTlsClientIdentity, SecureRelayTunnel,
@@ -55,12 +58,12 @@ impl RelayBackend {
         let ready = backend.receive_control().await?;
         let ready_session = match ready {
             Response::Ready {
-                version: 4,
+                version: HOST_PROTOCOL_VERSION,
                 session_id,
             } => session_id,
             Response::Ready { version, .. } => {
                 return Err(Failure::Protocol(format!(
-                    "Expected Host protocol version 4, got {version}"
+                    "Expected Host protocol version {HOST_PROTOCOL_VERSION}, got {version}"
                 )))
             }
             other => {

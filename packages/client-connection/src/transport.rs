@@ -1,8 +1,9 @@
 use crate::{
     decode_video,
     protocol::{
-        Command, Mode, Operation, Request, Response, ResultValue, SessionStatus,
-        ViewportDeclaration,
+        Command, EditingReceipt, HOST_PROTOCOL_VERSION, InputBinding, InputEnvelope, InputEvent,
+        InputReceipt, Mode, Operation, PresentedFrameIdentity, Request, Response, ResultValue,
+        SessionStatus, ViewportDeclaration,
     },
     relay_backend::RelayBackend,
     webrtc::{WebRtcBackend, WebRtcConfig},
@@ -73,6 +74,50 @@ pub enum Input {
     },
 }
 
+/// Frame the client actually presented when it produced a typed input event.
+///
+/// `frame_sequence` is the real decoded media sequence; the Host validates
+/// session/document/viewport only and never treats a new frame sequence as an
+/// input fence, but the client still reports the frame it saw rather than
+/// inventing one. `generation` is the local connection generation and is
+/// checked before the event leaves the client.
+#[derive(Clone, Debug)]
+pub struct PresentedFrame {
+    pub generation: u64,
+    pub session_id: String,
+    pub frame_sequence: u64,
+    pub document_revision: u64,
+    pub viewport_revision: u64,
+}
+
+/// One typed Host10 remote-input operation.
+///
+/// A whole pointer gesture or one text composition keeps a single
+/// `operation_id`; `event_sequence` orders the events inside it. The connection
+/// pins the Host operation sequence for the life of the lease, so the caller
+/// never reuses a stale `next_sequence` for continuation events. The caller
+/// owns the identity and must not reuse an `operation_id` for a new operation.
+#[derive(Clone, Debug)]
+pub struct EditingInput {
+    pub operation_id: String,
+    pub event_sequence: u64,
+    pub binding: InputBinding,
+    pub event: InputEvent,
+    pub frame: PresentedFrame,
+    pub epoch: u64,
+}
+
+/// Typed result of one accepted typed input event.
+///
+/// A gesture reports the Host transport-level input state; an editor event
+/// reports the target-bound editing receipt. Neither variant is a bare
+/// transport ACK, and no other `ResultValue` variant is coerced into success.
+#[derive(Clone, Debug)]
+pub enum EditingOutcome {
+    Gesture(InputReceipt),
+    Editor(EditingReceipt),
+}
+
 enum Action {
     Status,
     DeclareViewport(ViewportDeclaration),
@@ -80,6 +125,7 @@ enum Action {
     Release(u64),
     Navigate(String, u64),
     Input(Input, DisplayedFrame, u64),
+    Editing(EditingInput),
 }
 
 pub struct Connector {
@@ -152,6 +198,19 @@ impl Connection {
         match self.call(Action::Input(input, displayed, epoch)).await? {
             ResultValue::Input { .. } => Ok(()),
             _ => Err(Failure::Protocol("Expected input receipt".into())),
+        }
+    }
+    /// Submit one typed Host10 input event (gesture or target-bound edit).
+    ///
+    /// The returned [`EditingOutcome`] is the Host's real result for this
+    /// event: a gesture input state or a target-bound editing receipt. Host
+    /// refusals surface as `Failure::Host { code, .. }`; a lost mutation reply
+    /// surfaces as `Failure::OutcomeUnknown` and is never replayed.
+    pub async fn editing(&self, input: EditingInput) -> Result<EditingOutcome, Failure> {
+        match self.call(Action::Editing(input)).await? {
+            ResultValue::Input { input } => Ok(EditingOutcome::Gesture(input)),
+            ResultValue::Editing { editing } => Ok(EditingOutcome::Editor(editing)),
+            _ => Err(Failure::Protocol("Expected typed input receipt".into())),
         }
     }
     /// Closing the native connection releases sockets; it does not close Host.
@@ -286,6 +345,9 @@ fn spawn_connection<B: Backend + 'static>(
     tokio::spawn(async move {
         let mut backend = backend;
         let mut sequence = MediaSequence::new(session.clone());
+        // Pinned Host operation sequence for the one open gesture/composition
+        // lease, keyed by the caller-owned operation id.
+        let mut lease: Option<(String, u64)> = None;
         let result: Result<(), Failure> = loop {
             tokio::select! {
                 biased;
@@ -294,7 +356,7 @@ fn spawn_connection<B: Backend + 'static>(
                 Some((action, answer)) = requests.recv() => {
                     // A cancelled request that never started cannot mutate Host.
                     if answer.is_closed() { continue; }
-                    let result = execute(&mut backend, &mut id, action, generation, &session, attachment).await;
+                    let result = execute(&mut backend, &mut id, action, generation, &session, attachment, &mut lease).await;
                     let fatal = matches!(&result, Err(Failure::Transport(_) | Failure::Protocol(_) | Failure::OutcomeUnknown | Failure::Closed));
                     let error = result.as_ref().err().cloned();
                     let _ = answer.send(result);
@@ -437,10 +499,14 @@ async fn establish_control(
     let (mut control, token) = open(&base, "/control", &tls, None).await?;
     let session = match response(&mut control).await? {
         Response::Ready {
-            version: 4,
+            version: HOST_PROTOCOL_VERSION,
             session_id,
         } if !session_id.is_empty() => session_id,
-        _ => return Err(Failure::Protocol("Expected Host protocol version 4".into())),
+        _ => {
+            return Err(Failure::Protocol(format!(
+                "Expected Host protocol version {HOST_PROTOCOL_VERSION}"
+            )))
+        }
     };
     let mut id = 0;
     let attached = status(
@@ -627,6 +693,7 @@ async fn execute<B: Backend>(
     generation: u64,
     session: &str,
     attachment: Option<u64>,
+    lease: &mut Option<(String, u64)>,
 ) -> Result<ResultValue, Failure> {
     let (command, operation) = match action {
         Action::Status => (Command::Status {}, None),
@@ -647,6 +714,7 @@ async fn execute<B: Backend>(
             (
                 Command::Navigate { url },
                 Some(Operation {
+                    operation_id: format!("legacy-{}", current.next_sequence),
                     session_id: session.into(),
                     attachment_id: attachment.unwrap(),
                     sequence: current.next_sequence,
@@ -690,6 +758,7 @@ async fn execute<B: Backend>(
             (
                 command,
                 Some(Operation {
+                    operation_id: format!("legacy-{}", current.next_sequence),
                     session_id: session.into(),
                     attachment_id: attachment.unwrap(),
                     sequence: current.next_sequence,
@@ -698,6 +767,62 @@ async fn execute<B: Backend>(
                     document_revision: frame.document_revision,
                 }),
             )
+        }
+        Action::Editing(input) => {
+            if input.frame.generation != generation || input.frame.session_id != session {
+                return Err(Failure::Protocol(
+                    "Input belongs to another displayed connection".into(),
+                ));
+            }
+            // A continuation event of an open gesture/composition keeps the
+            // sequence that opened the lease; only a fresh operation takes the
+            // Host's next sequence. The Host remains the fence authority.
+            let sequence = match lease.as_ref() {
+                Some((operation_id, sequence)) if operation_id == &input.operation_id => *sequence,
+                _ => {
+                    let current =
+                        status(exchange_backend(backend, id, Command::Status {}, None).await?)?;
+                    if current.session_id != session || current.attachment_id != attachment {
+                        return Err(Failure::Protocol("Control attachment changed".into()));
+                    }
+                    current.next_sequence
+                }
+            };
+            let operation_id = input.operation_id;
+            let frame = PresentedFrameIdentity {
+                session_id: input.frame.session_id,
+                frame_sequence: input.frame.frame_sequence,
+                document_revision: input.frame.document_revision,
+                viewport_revision: input.frame.viewport_revision,
+            };
+            let operation = Operation {
+                operation_id: operation_id.clone(),
+                session_id: session.into(),
+                attachment_id: attachment.unwrap(),
+                sequence,
+                control_epoch: input.epoch,
+                viewport_revision: frame.viewport_revision,
+                document_revision: frame.document_revision,
+            };
+            let envelope = InputEnvelope {
+                event_sequence: input.event_sequence,
+                frame,
+                binding: input.binding,
+                event: input.event,
+            };
+            let result =
+                exchange_backend(backend, id, Command::Input { envelope }, Some(operation)).await;
+            // Remember the accepted operation identity so continuation events
+            // and an identical replay reuse the exact Host sequence. A fresh
+            // operation takes `next_sequence`; a Host refusal leaves the
+            // previous identity untouched.
+            if matches!(
+                &result,
+                Ok(ResultValue::Editing { .. }) | Ok(ResultValue::Input { .. })
+            ) {
+                *lease = Some((operation_id, sequence));
+            }
+            return result;
         }
     };
     let value = exchange_backend(backend, id, command, operation).await?;
@@ -795,6 +920,8 @@ mod tests {
             viewport: None,
             viewport_owner: None,
             viewport_pending: false,
+            editor_context: None,
+            input_lease: None,
         }
     }
 

@@ -388,6 +388,7 @@ fn state(value: ResultValue) -> SessionStatus {
 
 fn identity(state: &SessionStatus) -> Operation {
     Operation {
+        operation_id: format!("legacy-{}", state.next_sequence),
         session_id: state.session_id.clone(),
         attachment_id: state.attachment_id.unwrap(),
         sequence: state.next_sequence,
