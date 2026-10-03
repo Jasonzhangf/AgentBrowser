@@ -33,7 +33,7 @@ const state = {
   capabilityMode: 'true' as CapabilityMode,
   commandRejected: false,
   statusFailuresRemaining: 0,
-  revokeTabsOnNextStatus: false,
+  dropEpochOnNextStatus: false,
   revokeControlOnNextStatus: false,
   revokeCapabilityOnNextStatus: false,
   statusErrorsRemaining: 0,
@@ -284,9 +284,10 @@ function request(command: ProbeCommand) {
     state.statusFailuresRemaining -= 1;
     return {rejection: 'STATUS_FAILED'};
   }
-  if (command.op === 'status' && state.scenario === 'tabs-context-revoke-on-send' && state.revokeTabsOnNextStatus) {
-    state.revokeTabsOnNextStatus = false;
-    return {...snapshot(), controlMode: 'observe'};
+  if (command.op === 'status' && state.scenario === 'tabs-context-revoke-on-send' && state.dropEpochOnNextStatus) {
+    state.dropEpochOnNextStatus = false;
+    const {epoch: _epoch, ...withoutEpoch} = connectedBase();
+    return {...withoutEpoch, controlMode: 'control'};
   }
   if (command.op === 'status' && state.scenario === 'tabs-control-revoke-on-send' && state.revokeControlOnNextStatus) {
     state.revokeControlOnNextStatus = false;
@@ -316,7 +317,7 @@ window.ProbeNative = {
 
 document.addEventListener('click', event => {
   if (state.scenario !== 'tabs-context-revoke-on-send') return;
-  if (event.target instanceof Element && event.target.closest('#new-tab')) state.revokeTabsOnNextStatus = true;
+  if (event.target instanceof Element && event.target.closest('#new-tab')) state.dropEpochOnNextStatus = true;
 }, true);
 
 document.addEventListener('click', event => {
@@ -338,7 +339,7 @@ window.addEventListener('message', event => {
     state.capabilityMode = 'true';
     state.commandRejected = false;
     state.statusFailuresRemaining = state.scenario === 'status-recover' ? 1 : 0;
-    state.revokeTabsOnNextStatus = false;
+    state.dropEpochOnNextStatus = false;
     state.revokeControlOnNextStatus = false;
     state.revokeCapabilityOnNextStatus = false;
     state.statusErrorsRemaining = 0;

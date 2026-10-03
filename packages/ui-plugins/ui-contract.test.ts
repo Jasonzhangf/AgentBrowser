@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 const main = await readFile(new URL('./main.tsx', import.meta.url), 'utf8');
 const css = await readFile(new URL('./probe.css', import.meta.url), 'utf8');
 const probe = await readFile(new URL('../client-domain/probe.ts', import.meta.url), 'utf8');
+const consumerFrame = await readFile(new URL('./consumer-frame.ts', import.meta.url), 'utf8');
 
 test('no duplicate in-UI page editing entry survives', () => {
   for (const token of ['input-text', 'send-text', 'TextWatcher', 'onBeforeInput', 'contentEditable', '<textarea']) {
@@ -50,6 +51,19 @@ test('tab mutations require a current epoch and re-read control context before s
   assert.match(main, /requestTabCommand\(epoch => \(\{op: 'new_tab', epoch\}\)\)/);
   assert.match(main, /requestTabCommand\(epoch => \(\{op: 'select_tab', epoch, tabId: tab\.id\}\)\)/);
   assert.match(main, /requestTabCommand\(epoch => \(\{op: 'close_tab', epoch, tabId: tab\.id\}\)\)/);
+});
+
+test('send-time epoch removal keeps control and capability context valid', () => {
+  const start = consumerFrame.indexOf("state.scenario === 'tabs-context-revoke-on-send'");
+  const end = consumerFrame.indexOf("state.scenario === 'tabs-control-revoke-on-send'", start);
+  assert.notEqual(start, -1, 'epoch-removal status branch must exist');
+  assert.notEqual(end, -1, 'control-revocation status branch must follow it');
+  const branch = consumerFrame.slice(start, end);
+  assert.match(branch, /dropEpochOnNextStatus/);
+  assert.match(branch, /const \{epoch: _epoch, \.\.\.withoutEpoch\} = connectedBase\(\)/);
+  assert.match(branch, /return \{\.\.\.withoutEpoch, controlMode: 'control'\}/);
+  assert.doesNotMatch(branch, /controlMode: 'observe'/);
+  assert.match(consumerFrame, /event\.target\.closest\('#new-tab'\)\) state\.dropEpochOnNextStatus = true/);
 });
 
 test('address IME confirmation Enter does not submit and explicit Enter submits once', () => {
