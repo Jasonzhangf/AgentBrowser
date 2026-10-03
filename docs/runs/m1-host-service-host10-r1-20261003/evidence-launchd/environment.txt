@@ -1,0 +1,6 @@
+root=/private/tmp/abhs-h10-launchd-e2e-39323
+runtime=/private/tmp/abhs-h10-launchd-rt-39323
+launchd_root=/private/tmp/abhs-h10-launchd-plists-39323
+label=com.agentbrowser.launchd.h10.39323
+service=gui/501/com.agentbrowser.launchd.h10.39323
+binary=/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-host

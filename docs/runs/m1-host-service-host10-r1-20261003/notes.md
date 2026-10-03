@@ -107,3 +107,79 @@
   child was left behind. Evidence: `evidence/failure-probes-result.txt` and
   `evidence/fail-*`.
 - Next: commit the exact candidate and run compiled installed admission.
+
+## 2026-10-03 / candidate-commit
+
+- Status: committed.
+- Candidate: `aed8e98ce377b8ec7fedacd69b472aa7aa634c42`, tree
+  `62279d86701e17488514e03efa721bc98e54aa6b`, parent/base
+  `bc9d67ad037be2c7119bee692f9ad362417ffd05`.
+- First commit attempt was blocked by the project hook because `node_modules`
+  was absent in the fresh worktree; `npm ci` restored lockfile dependencies.
+  The retry passed the normal hook's `verify:local`: typecheck, 8 tests, and UI
+  build all passed. No hook bypass was used.
+- Next: run installed admission/E2E on exact candidate.
+
+## 2026-10-03 / admission-gate
+
+- Status: blocked before compiled bundle install.
+- Command:
+  `OBSCURA_HOST_BINARY=... OBSCURA_HOST_PROTOCOL_VERSION=10 node scripts/host-service/validate-admission.mjs`
+  failed at `appsdk compile-module --module host-service`, which returned
+  `NON_CANONICAL_RECORD_CONTRACT_SET`.
+- Evidence: `evidence/host-service-admission-aed8e98ce377-1791045027403/compile.log`.
+- Isolation: the untouched fresh base worktree
+  `/Volumes/Intel/playground/agentbrowser/m1-browser-chrome-r4-20261003` at
+  `bc9d67ad...` (tree `4ee512388...`) returns the same gate with the same
+  command. This is a base governance blocker, not introduced by this candidate.
+- Contract cause: the project's `.appsdk/project.json` record-contract list is
+  stale relative to the pinned/current compiler's canonical set. The canonical
+  list inserts `contracts/records/collab-live-closure-record.schema.json` before
+  `contracts/records/merge-record.schema.json`, whereas the project list omits
+  that file. The matching upgrade commit
+  `09222706bb1035190e795c7715322fd7b95cc78a` changed `.appsdk` only; applying it
+  is outside this host-service contract's allowed paths.
+- Consequence: admission stopped before the compiled-bundle launchd install, so
+  it did not create the task-owned fix-candidate/validation records. No shared
+  record was deleted, overwritten, mocked, or bypassed.
+- Next: complete the independent compiled installed lifecycle and do not claim
+  AppSDK admission PASS.
+
+## 2026-10-03 / compiled-installed-lifecycle
+
+- Status: pass.
+- Candidate identity: `aed8e98ce377b8ec7fedacd69b472aa7aa634c42`, tree
+  `62279d86701e17488514e03efa721bc98e54aa6b`.
+- Installed fixture: `docs/runs/m1-host-service-host10-r1-20261003/installed/`,
+  copied from `generated/modules/host-service/lib/`. Hash comparison matched the
+  build output: `host-service`
+  `03fca07b71d92d027089218132250f3e8b54386a1522cbd3a141c3cc07b5f671`;
+  `host_service.py`
+  `8f83c424201e79251729fd531871ee605214061244096788d06df0f15604a6a3`.
+- Real commands with the fixed Host10 binary: install 0, start 0, status 0,
+  actual Unix-socket observe attach 0, status-after-detach 0, restart 0,
+  status 0, stop 0, status-stopped 0.
+- Behavior: first PID 29275/session
+  `d3a88243-41a4-4aa3-a7fa-d997db632e33`; readiness and attach both reported
+  Host wire version 10; observe attach returned typed `result` with
+  `attachment_id` 3; detach kept the same running PID/session; restart created
+  PID 30172/session `73db6635-11b6-47f0-80ec-aea1e62eafaa`; stop reported
+  stopped and status stayed stopped.
+- Evidence: `evidence-installed/`.
+
+## 2026-10-03 / launchd-installed-lifecycle
+
+- Status: pass.
+- Candidate compiled manager was installed with unique label
+  `com.agentbrowser.launchd.h10.<pid>` under a task-owned plist root.
+- Real commands: install 0, `launchctl bootstrap` 0, first `launchctl print` 0,
+  status running, `launchctl kickstart -k` 0, second `launchctl print` 0,
+  status running with a new PID/session, `launchctl bootout` 0, status stale 1,
+  manager stop 0 to clean owned state/runtime, final `launchctl print` exit 113
+  with "Could not find service".
+- Behavior: Host10 wire version 10; first PID 39591/session
+  `e05527e9-e09e-4d0c-8770-8f74105cee77`; kickstart created PID 40240/session
+  `407884ae-161d-40e3-861d-3ff29c3696fa`.
+- Evidence: `evidence-launchd/`.
+- Next: finalize delivery report; do not start independent review, merge, push,
+  global installation, or product integration.
