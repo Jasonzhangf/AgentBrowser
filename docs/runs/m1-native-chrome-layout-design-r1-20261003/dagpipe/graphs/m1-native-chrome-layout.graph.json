@@ -1,0 +1,152 @@
+{
+  "id": "m1-native-chrome-layout",
+  "version": "1",
+  "inputs": [
+    {
+      "id": "native-chrome-layout-request",
+      "schema": "Object"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "绑定布局能力与应用窗口边界",
+      "operator": "agentbrowser.ui.bind_layout_boundary",
+      "operator_version": "1",
+      "inputs": [
+        "native-chrome-layout-request"
+      ],
+      "output": {
+        "id": "layout-boundary-binding",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "测量内容整流矩形并声明远端视口",
+      "operator": "agentbrowser.native.measure_content_rect",
+      "operator_version": "1",
+      "inputs": [
+        "layout-boundary-binding"
+      ],
+      "output": {
+        "id": "presented-content-frame",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "切换浏览与抽屉覆盖几何",
+      "operator": "agentbrowser.native.apply_presentation_geometry",
+      "operator_version": "1",
+      "inputs": [
+        "presented-content-frame"
+      ],
+      "output": {
+        "id": "presentation-input-boundary",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "路由本地与远端输入焦点",
+      "operator": "agentbrowser.native.route_input_by_presentation",
+      "operator_version": "1",
+      "inputs": [
+        "presentation-input-boundary"
+      ],
+      "output": {
+        "id": "layout-lifecycle-release",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "释放布局监听并确认恢复终态",
+      "operator": "agentbrowser.native.release_layout_resources",
+      "operator_version": "1",
+      "inputs": [
+        "layout-lifecycle-release"
+      ],
+      "output": {
+        "id": "native-chrome-layout-result",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    }
+  ],
+  "edges": [
+    {
+      "from": "绑定布局能力与应用窗口边界",
+      "to": "测量内容整流矩形并声明远端视口",
+      "arc_id": "layout-boundary-binding"
+    },
+    {
+      "from": "测量内容整流矩形并声明远端视口",
+      "to": "切换浏览与抽屉覆盖几何",
+      "arc_id": "presented-content-frame"
+    },
+    {
+      "from": "切换浏览与抽屉覆盖几何",
+      "to": "路由本地与远端输入焦点",
+      "arc_id": "presentation-input-boundary"
+    },
+    {
+      "from": "路由本地与远端输入焦点",
+      "to": "释放布局监听并确认恢复终态",
+      "arc_id": "layout-lifecycle-release"
+    }
+  ],
+  "outputs": [
+    "native-chrome-layout-result"
+  ]
+}
