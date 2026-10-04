@@ -51,6 +51,7 @@ public final class MainActivity extends Activity {
     private android.view.View.OnApplyWindowInsetsListener insetsListener;
     private android.view.View.OnLayoutChangeListener stageLayoutListener;
     private android.view.View.OnLayoutChangeListener rootLayoutListener;
+    private android.window.OnBackInvokedCallback backCallback;
     private Rect lastReportedViewport;
     private boolean forceViewportReport;
     private LayoutSnapshot lastLayoutState;
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity {
         annex = new AnnexBDecoder();
         network = new NetworkSession(this, this::submitNetworkFrame, () -> annex.stop());
         network.onImeSync(this::syncRemoteIme);
+        network.onStatusSync(this::onHostStatusChanged);
         account = new AccountSession(this);
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(13,20,16));
@@ -142,6 +144,11 @@ public final class MainActivity extends Activity {
         rootLayoutListener = (v,l,t,r,b,ol,ot,or,ob) -> recomputeLayout();
         root.addOnLayoutChangeListener(rootLayoutListener);
         setContentView(root);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            backCallback = () -> handleBack();
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
         getWindow().getInsetsController().setSystemBarsAppearance(
             android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
             android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
@@ -177,8 +184,12 @@ public final class MainActivity extends Activity {
         final Rect webRect;
         final boolean nativeVideoVisible;
         final boolean geometryMatches;
-        LayoutSnapshot(LayoutRects rects, Rect webRect, boolean nativeVideoVisible, boolean geometryMatches) {
+        final FrameIdentity displayedIdentity;
+        final String currentTabId;
+        LayoutSnapshot(LayoutRects rects, Rect webRect, boolean nativeVideoVisible, boolean geometryMatches,
+                       FrameIdentity displayedIdentity, String currentTabId) {
             this.rects=rects; this.webRect=webRect; this.nativeVideoVisible=nativeVideoVisible; this.geometryMatches=geometryMatches;
+            this.displayedIdentity=displayedIdentity; this.currentTabId=currentTabId;
         }
     }
 
@@ -245,15 +256,37 @@ public final class MainActivity extends Activity {
     private static int px(int dp, float density) { return Math.round(dp * density); }
 
     private LayoutSnapshot buildLayoutSnapshot(LayoutRects rects) {
+        String currentTabId = networkSelected ? network.activeTabId() : null;
         FrameIdentity identity = displayedFrame;
-        boolean identityValid = networkSelected && identity != null && identity.generation == currentGeneration()
-            && identity.sessionId != null && identity.tabId != null
-            && identity.documentRevision == currentDocumentRevision()
-            && identity.viewportRevision == currentViewportRevision();
-        boolean geometryMatches = identityValid && !viewportPending() && stageBoundsMatch(rects.presentedContentRect);
+        boolean identityValid = networkSelected && identity != null
+            && identityMatches(identity.generation, network.generation(), identity.sessionId, identity.tabId,
+                identity.presentationRevision, identity.documentRevision, identity.viewportRevision,
+                network.hostSessionId(), currentTabId, network.hostPresentationRevision(),
+                network.hostDocumentRevision(), network.hostViewportRevision());
+        boolean geometryMatches = identityValid && !network.hostViewportPending() && stageBoundsMatch(rects.presentedContentRect);
         boolean nativeVideoVisible = identityValid && geometryMatches;
         Rect web = "overlay".equals(presentation) || !nativeVideoVisible ? rects.drawableWindowRect : rects.chromeRect;
-        return new LayoutSnapshot(rects, web, nativeVideoVisible, geometryMatches);
+        return new LayoutSnapshot(rects, web, nativeVideoVisible, geometryMatches, identityValid ? identity : null, currentTabId);
+    }
+
+    /**
+     * The displayed frame is valid only for the current Host identity: the
+     * connection generation, session, active tab, presentation/document/viewport
+     * revisions must all come from the same Host owner. A stale cross-tab frame
+     * never validates, and no identity is guessed from session id, URL or DOM.
+     */
+    static boolean identityMatches(long generation, long currentGeneration, String frameSessionId, String frameTabId,
+            long framePresentationRevision, long frameDocumentRevision, long frameViewportRevision,
+            String hostSessionId, String hostTabId, long hostPresentationRevision,
+            long hostDocumentRevision, long hostViewportRevision) {
+        return generation == currentGeneration
+            && frameSessionId != null && !frameSessionId.isEmpty()
+            && hostSessionId != null && frameSessionId.equals(hostSessionId)
+            && frameTabId != null && !frameTabId.isEmpty()
+            && hostTabId != null && frameTabId.equals(hostTabId)
+            && framePresentationRevision == hostPresentationRevision
+            && frameDocumentRevision == hostDocumentRevision
+            && frameViewportRevision == hostViewportRevision;
     }
 
     private boolean stageBoundsMatch(Rect presentedDp) {
@@ -262,28 +295,6 @@ public final class MainActivity extends Activity {
         Rect actual = new Rect(Math.round(stage.getLeft()/density), Math.round(stage.getTop()/density),
             Math.round(stage.getWidth()/density), Math.round(stage.getHeight()/density));
         return actual.equalsRect(presentedDp);
-    }
-
-    private long currentDocumentRevision() {
-        if (!networkSelected) return -1;
-        String raw = network.snapshot(annex.snapshot()).optString("documentRevision", "");
-        try { return raw.isEmpty() ? -1 : Long.parseLong(raw); } catch (NumberFormatException invalid) { return -1; }
-    }
-
-    private long currentGeneration() {
-        if (!networkSelected) return -1;
-        return network.snapshot(annex.snapshot()).optLong("generation", -1);
-    }
-
-    private long currentViewportRevision() {
-        if (!networkSelected) return -1;
-        String raw = network.snapshot(annex.snapshot()).optString("viewportRevision", "");
-        try { return raw.isEmpty() ? -1 : Long.parseLong(raw); } catch (NumberFormatException invalid) { return -1; }
-    }
-
-    private boolean viewportPending() {
-        if (!networkSelected) return true;
-        return network.snapshot(annex.snapshot()).optBoolean("viewportPending", false);
     }
 
     private static boolean sameLayout(LayoutSnapshot a, LayoutSnapshot b) {
@@ -295,7 +306,17 @@ public final class MainActivity extends Activity {
             && a.rects.advertisedViewportRect.equalsRect(b.rects.advertisedViewportRect)
             && a.rects.presentedContentRect.equalsRect(b.rects.presentedContentRect)
             && a.nativeVideoVisible == b.nativeVideoVisible
-            && a.geometryMatches == b.geometryMatches;
+            && a.geometryMatches == b.geometryMatches
+            && java.util.Objects.equals(a.currentTabId, b.currentTabId)
+            && sameIdentity(a.displayedIdentity, b.displayedIdentity);
+    }
+
+    private static boolean sameIdentity(FrameIdentity a, FrameIdentity b) {
+        if (a == null || b == null) return a == b;
+        return a.token == b.token && a.generation == b.generation
+            && a.presentationRevision == b.presentationRevision
+            && a.documentRevision == b.documentRevision && a.viewportRevision == b.viewportRevision
+            && java.util.Objects.equals(a.sessionId, b.sessionId) && java.util.Objects.equals(a.tabId, b.tabId);
     }
 
     private void layoutVideo() {
@@ -346,15 +367,30 @@ public final class MainActivity extends Activity {
         var rendered = submitAccessUnit(frame.accessUnit(generation));
         rendered.whenComplete((receipt, failure) -> {
             if (failure != null) return;
-            displayedFrame = new FrameIdentity(token, generation, sessionId(), null,
-                frame.documentRevision, frame.viewportRevision);
-            recomputeLayout();
+            runOnUiThread(() -> publishDisplayedFrame(frame, token, generation));
         });
         return rendered;
     }
-    private String sessionId() {
-        try { return network.snapshot(annex.snapshot()).optString("sessionId", null); }
-        catch (RuntimeException invalid) { return null; }
+
+    /**
+     * Publish the displayed identity only after a real decoder receipt and only
+     * when it still matches the current Host identity. Runs on the main looper;
+     * an old render completion from another session/tab is dropped, never
+     * published as the new identity.
+     */
+    private void publishDisplayedFrame(NetworkFrame frame, long token, long generation) {
+        if (!networkSelected || !network.current(token)) return;
+        if (!identityMatches(generation, network.generation(), frame.sessionId, frame.tabId,
+                frame.presentationRevision, frame.documentRevision, frame.viewportRevision,
+                network.hostSessionId(), network.activeTabId(), network.hostPresentationRevision(),
+                network.hostDocumentRevision(), network.hostViewportRevision())) return;
+        displayedFrame = new FrameIdentity(token, generation, frame.sessionId, frame.tabId,
+            frame.presentationRevision, frame.documentRevision, frame.viewportRevision);
+        recomputeLayout();
+    }
+
+    private void onHostStatusChanged() {
+        if (networkSelected) recomputeLayout();
     }
     private boolean networkTouch(MotionEvent event) {
         synchronized(network) {
@@ -558,10 +594,7 @@ public final class MainActivity extends Activity {
     }
 
     private JSONObject layoutJson(LayoutSnapshot snapshot) throws org.json.JSONException {
-        // displayedFrame stays absent and currentTabId null until the read-only
-        // Android status surface exposes a real native tab identity. It must not
-        // be fabricated from session id, URL or DOM.
-        return new JSONObject()
+        JSONObject value = new JSONObject()
             .put("drawableWindowRect", rectJson(snapshot.rects.drawableWindowRect))
             .put("safeContentRect", rectJson(snapshot.rects.safeContentRect))
             .put("advertisedViewportRect", rectJson(snapshot.rects.advertisedViewportRect))
@@ -569,11 +602,20 @@ public final class MainActivity extends Activity {
             .put("chromeRect", rectJson(snapshot.rects.chromeRect))
             .put("webRect", rectJson(snapshot.webRect))
             .put("visibleContent", snapshot.nativeVideoVisible ? "native-video" : "webview")
-            .put("currentTabId", JSONObject.NULL)
+            .put("currentTabId", snapshot.currentTabId == null ? JSONObject.NULL : snapshot.currentTabId)
             .put("presentationViewport", rectJson(snapshot.rects.presentedContentRect))
             .put("geometryMatches", snapshot.geometryMatches)
             .put("presentation", presentation)
             .put("revision", layoutRevision);
+        if (snapshot.displayedIdentity != null) {
+            value.put("displayedFrame", new JSONObject()
+                .put("generation", snapshot.displayedIdentity.generation)
+                .put("sessionId", snapshot.displayedIdentity.sessionId)
+                .put("tabId", snapshot.displayedIdentity.tabId)
+                .put("documentRevision", snapshot.displayedIdentity.documentRevision)
+                .put("viewportRevision", snapshot.displayedIdentity.viewportRevision));
+        }
+        return value;
     }
 
     private static JSONObject rectJson(Rect rect) throws org.json.JSONException {
@@ -581,11 +623,11 @@ public final class MainActivity extends Activity {
     }
 
     private static final class FrameIdentity {
-        final long token, generation, documentRevision, viewportRevision;
+        final long token, generation, presentationRevision, documentRevision, viewportRevision;
         final String sessionId, tabId;
-        FrameIdentity(long token, long generation, String sessionId, String tabId, long documentRevision, long viewportRevision) {
+        FrameIdentity(long token, long generation, String sessionId, String tabId, long presentationRevision, long documentRevision, long viewportRevision) {
             this.token=token; this.generation=generation; this.sessionId=sessionId; this.tabId=tabId;
-            this.documentRevision=documentRevision; this.viewportRevision=viewportRevision;
+            this.presentationRevision=presentationRevision; this.documentRevision=documentRevision; this.viewportRevision=viewportRevision;
         }
     }
 
@@ -623,14 +665,21 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onStart() { super.onStart(); probe.foreground(true); annex.foreground(true); }
     @Override protected void onStop() { network.disconnect(); displayedFrame = null; if (remoteIme != null) remoteIme.deactivate(); probe.foreground(false); annex.foreground(false); super.onStop(); }
-    @Override public void onBackPressed() {
+    private void handleBack() {
         if ("overlay".equals(presentation) && lastLayoutState != null) {
             applyPresentation("browsing", lastLayoutState.rects);
             return;
         }
         super.onBackPressed();
     }
+    @Override public void onBackPressed() {
+        handleBack();
+    }
     @Override protected void onDestroy() {
+        if (backCallback != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            backCallback = null;
+        }
         if (root != null && insetsListener != null) root.setOnApplyWindowInsetsListener(null);
         if (stage != null && stageLayoutListener != null) stage.removeOnLayoutChangeListener(stageLayoutListener);
         if (root != null && rootLayoutListener != null) root.removeOnLayoutChangeListener(rootLayoutListener);

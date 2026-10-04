@@ -170,12 +170,16 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_frame(mut en
             VideoPacket::Closed { .. } => Err("Host media closed".into()),
             VideoPacket::AccessUnit { source, pts_us, coded_width, coded_height, .. } => {
                 if video.bytes.len() > 1024 * 1024 { return Err("Access unit exceeds Android decoder 1MiB limit".into()); }
-                if [source.sequence, *pts_us, source.document_revision, source.viewport_revision].iter().any(|value| *value > i64::MAX as u64) { return Err("Native frame identity overflow".into()); }
+                if [source.sequence, *pts_us, source.presentation_revision, source.document_revision, source.viewport_revision].iter().any(|value| *value > i64::MAX as u64) { return Err("Native frame identity overflow".into()); }
                 let bytes = env.byte_array_from_slice(&video.bytes).map_err(error)?;
-                let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJJJ)V", &[
+                let session_id = env.new_string(&source.session_id).map_err(error)?;
+                let tab_id = env.new_string(&source.tab_id).map_err(error)?;
+                let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJJJLjava/lang/String;Ljava/lang/String;J)V", &[
                     JValue::Object(&JObject::from(bytes)), JValue::Int(*coded_width as i32), JValue::Int(*coded_height as i32),
                     JValue::Int(source.width as i32), JValue::Int(source.height as i32), JValue::Long(*pts_us as i64), JValue::Long(source.sequence as i64),
                     JValue::Long(source.document_revision as i64), JValue::Long(source.viewport_revision as i64),
+                    JValue::Object(&JObject::from(session_id)), JValue::Object(&JObject::from(tab_id)),
+                    JValue::Long(source.presentation_revision as i64),
                 ]).map_err(error)?;
                 session.pending = Some((source.sequence, DisplayedFrame { generation: session.connection.generation,
                     session_id: source.session_id.clone(), tab_id: source.tab_id.clone(),
@@ -279,6 +283,8 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_editing(
             .map(|(sequence, displayed)| PresentedFrame {
                 generation: displayed.generation,
                 session_id: displayed.session_id.clone(),
+                tab_id: displayed.tab_id.clone(),
+                presentation_revision: displayed.presentation_revision,
                 frame_sequence: *sequence,
                 document_revision: displayed.document_revision,
                 viewport_revision: displayed.viewport_revision,

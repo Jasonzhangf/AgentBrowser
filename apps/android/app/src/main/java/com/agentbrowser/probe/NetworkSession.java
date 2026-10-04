@@ -21,6 +21,7 @@ final class NetworkSession {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private Runnable imeSync;
+    private Runnable statusSync;
     private long handle,token,generation,shownEpoch;
     record Viewport(int width,int height,boolean landscape) { }
     record CommandRequest(int op,long epoch,double x,double y,double dx,double dy,String text) { }
@@ -38,6 +39,13 @@ final class NetworkSession {
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized String transport(){return selectedTransport;}
+    synchronized long generation(){return generation;}
+    synchronized String hostSessionId(){return host==null?null:host.optString("session_id",null);}
+    synchronized String activeTabId(){return host==null?null:host.optString("active_tab_id",null);}
+    synchronized long hostDocumentRevision(){return host==null?-1:host.optLong("document_revision",-1);}
+    synchronized long hostViewportRevision(){return host==null?-1:host.optLong("viewport_revision",-1);}
+    synchronized long hostPresentationRevision(){return host==null?-1:host.optLong("presentation_revision",-1);}
+    synchronized boolean hostViewportPending(){return host!=null&&host.optBoolean("viewport_pending",false);}
     synchronized boolean current(long value){return connected()&&token==value;}
     synchronized boolean inputReady(){return connected()&&!commandPending&&queuedCommand==null&&displayed!=null
         &&java.util.Objects.equals(requestedViewport,submittedViewport)&&hostReady(host)
@@ -166,6 +174,18 @@ final class NetworkSession {
     }
     synchronized void onImeSync(Runnable runnable){this.imeSync=runnable;}
     private synchronized void notifyImeSync(){if(imeSync!=null)main.post(imeSync);}
+    synchronized void onStatusSync(Runnable runnable){this.statusSync=runnable;}
+    private synchronized void notifyStatusSync(){if(statusSync!=null)main.post(statusSync);}
+    /** Only identity-bearing status changes need a native layout reconciliation. */
+    static boolean identityStatusChanged(JSONObject previous,JSONObject current){
+        if(previous==null||current==null)return previous!=current;
+        return !java.util.Objects.equals(previous.optString("session_id",null),current.optString("session_id",null))
+            ||!java.util.Objects.equals(previous.optString("active_tab_id",null),current.optString("active_tab_id",null))
+            ||previous.optLong("presentation_revision",-1)!=current.optLong("presentation_revision",-1)
+            ||previous.optLong("document_revision",-1)!=current.optLong("document_revision",-1)
+            ||previous.optLong("viewport_revision",-1)!=current.optLong("viewport_revision",-1)
+            ||previous.optBoolean("viewport_pending",false)!=current.optBoolean("viewport_pending",false);
+    }
     static boolean viewportNeedsSubmission(Viewport requested,Viewport submitted,Viewport rejected){
         return requested!=null&&!requested.equals(submitted)&&!requested.equals(rejected);
     }
@@ -305,8 +325,10 @@ final class NetworkSession {
                 synchronized(this){if(!current(expected))return;displayed=frame;framePending=false;}
             }
             JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
-            synchronized(this){if(!current(expected))return;host=status;startQueuedIfReady();}
+            boolean identityChanged;
+            synchronized(this){if(!current(expected))return;identityChanged=identityStatusChanged(host,status);host=status;startQueuedIfReady();}
             notifyImeSync();
+            if(identityChanged)notifyStatusSync();
             worker.schedule(()->poll(expected),30,TimeUnit.MILLISECONDS);
         }catch(Exception failure){terminate(expected,failure);}
     }

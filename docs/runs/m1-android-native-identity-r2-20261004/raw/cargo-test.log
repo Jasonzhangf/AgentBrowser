@@ -1,0 +1,15 @@
+    Finished `release` profile [optimized] target(s) in 0.29s
+     Running unittests src/lib.rs (/Volumes/Intel/playground/agentbrowser/m1-android-native-input-r1-20261003/target/release/deps/agentbrowser_android-8c2fd645ac5d7f76)
+
+running 3 tests
+test tests::bind_ip_accepts_literal_unicast_address ... ok
+test tests::encoder_unavailable_media_marker_preserves_typed_terminal_error ... ok
+test tests::bind_ip_rejects_invalid_unspecified_and_multicast_values ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests agentbrowser_android
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
