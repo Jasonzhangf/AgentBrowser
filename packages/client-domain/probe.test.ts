@@ -57,6 +57,62 @@ test('remote-owned chrome projections parse without inventing local state', () =
   assert.equal(snapshot.videoQuality?.effective.generation, 1);
 });
 
+test('connectionSetup admits unresolved and unavailable typed projections', () => {
+  const unresolved = parseSnapshot(JSON.stringify({
+    ...base,
+    source: 'network',
+    connectionState: 'stopped',
+    networkConfigured: true,
+    connectionSetup: {state: 'unresolved', error: 'CONFIG_ACTIVE_COMMIT_UNRESOLVED', label: null, repair_import_allowed: false},
+    capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
+  }));
+  assert.equal(unresolved.connectionSetup?.state, 'unresolved');
+  assert.equal(unresolved.connectionSetup?.repair_import_allowed, false);
+
+  const unavailable = parseSnapshot(JSON.stringify({
+    ...base,
+    source: 'network',
+    connectionState: 'stopped',
+    networkConfigured: true,
+    connectionSetup: {state: 'unavailable', error: 'CONFIG_ACTIVE_REFERENCE_INVALID', label: 'Phone', repair_import_allowed: true, active_revision: 2},
+    capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
+  }));
+  assert.equal(unavailable.connectionSetup?.label, 'Phone');
+  assert.equal(unavailable.connectionSetup?.repair_import_allowed, true);
+  assert.equal(unavailable.connectionSetup?.active_revision, 2);
+});
+
+test('connectionSetup rejects sensitive, overlength, control, and malformed fields', () => {
+  for (const projection of [
+    {state: 'configured', error: null, endpoint: 'wss://host'},
+    {state: 'configured', error: null, transfer_code: 'SECRET'},
+    {state: 'configured', error: null, path: '/private/active.json'},
+    {state: 'configured', error: null, label: 'x'.repeat(65)},
+    {state: 'configured', error: null, label: 'bad\nlabel'},
+    {state: 'configured', error: null, label: '\u202Eevil'},
+    {state: 'configured', error: null, repair_import_allowed: 'yes'},
+    {state: 'configured', error: null, active_revision: -1},
+  ]) {
+    assert.throws(() => parseSnapshot(JSON.stringify({...base, connectionSetup: projection})), /INVALID/);
+  }
+});
+
+test('retry and repair commands are the frozen native reconciliation names', () => {
+  const commands: unknown[] = [];
+  const port = androidPort({
+    request(raw) {
+      commands.push(JSON.parse(raw));
+      return JSON.stringify(base);
+    },
+  });
+  port.request({op: 'retry_connection_setup'});
+  port.request({op: 'repair_connection_import'});
+  assert.deepEqual(commands, [
+    {op: 'retry_connection_setup'},
+    {op: 'repair_connection_import'},
+  ]);
+});
+
 test('native rejection is preserved and unknown capability remains unavailable', () => {
   assert.throws(() => parseSnapshot('{"rejection":"HOST_REJECTED"}'), /HOST_REJECTED/);
   const snapshot = parseSnapshot(JSON.stringify({...base, source: 'network', connectionState: 'connected'}));

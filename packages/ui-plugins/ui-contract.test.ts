@@ -160,10 +160,36 @@ test('quality keeps requested and effective as separate algebra', () => {
 });
 
 test('only typed chrome commands cross the native port', () => {
-  for (const op of ['go_back', 'go_forward', 'reload', 'new_tab', 'select_tab', 'close_tab', 'open_connection_setup', 'import_connection', 'select_profile', 'navigate', 'set_presentation']) {
+  for (const op of ['go_back', 'go_forward', 'reload', 'new_tab', 'select_tab', 'close_tab', 'open_connection_setup', 'import_connection', 'retry_connection_setup', 'repair_connection_import', 'select_profile', 'navigate', 'set_presentation']) {
     assert.match(probe, new RegExp(`op: '${op}'`), `expected typed command ${op}`);
   }
   for (const op of ['input_text', 'send_text', 'click', 'scroll', 'play', 'stop', 'remote_ime', 'chrome_inset']) {
     assert.equal(probe.includes(`op: '${op}'`), false, `legacy command must be gone: ${op}`);
   }
+});
+
+test('connection admission comes from the typed native setup projection only', () => {
+  assert.match(main, /const hasConnectionSetupProjection = snapshot\.connectionSetup !== undefined/);
+  assert.match(main, /const connectionSetupAvailable = snapshot\.capabilities\?\.connectionSetup === true && hasConnectionSetupProjection/);
+  assert.match(main, /const ordinarySetupAvailable = connectionSetupAvailable/);
+  assert.match(main, /const connectionConfigured = hasConnectionSetupProjection/);
+  assert.match(main, /const canConnect = connectionSetupAvailable/);
+  assert.doesNotMatch(main, /connectionConfigured\s*=.*networkConfigured/);
+  assert.doesNotMatch(main, /connectionSetupAvailable\s*=.*networkConfigured/);
+});
+
+test('unresolved and unavailable recovery actions are explicit and bounded', () => {
+  assert.match(main, /id="connection-retry"/);
+  assert.match(main, /op: 'retry_connection_setup'/);
+  assert.match(main, /setup\.state === 'unavailable' && setup\.repair_import_allowed === true/);
+  assert.match(main, /op: 'repair_connection_import'/);
+  assert.match(main, /需要显式重试校准；不会自动重试或重放导入/);
+  assert.match(main, /当前原生版本未提供连接设置能力或投影/);
+  assert.doesNotMatch(main, /setInterval\([^)]*retry_connection_setup/);
+  assert.doesNotMatch(main, /setTimeout\([^)]*retry_connection_setup/);
+});
+
+test('connection setup UI has no private credential or transport inputs', () => {
+  assert.doesNotMatch(main, /type="password"|type='password'|<textarea|contentEditable/);
+  assert.doesNotMatch(main, /transfer_code|client_key|client_cert|endpoint/);
 });

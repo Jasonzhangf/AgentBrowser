@@ -26,7 +26,20 @@ type HarnessScenario =
   | 'tabs-status-error-on-send'
   | 'capability-missing'
   | 'capability-missing-setup'
-  | 'capability-false';
+  | 'capability-false'
+  | 'unresolved-legacy-true'
+  | 'unresolved-still'
+  | 'configured-retry'
+  | 'unavailable-repair'
+  | 'unavailable-no-repair'
+  | 'unavailable-repair-cancel'
+  | 'configured-repair'
+  | 'connected-unresolved'
+  | 'connected-unavailable'
+  | 'configured-long-label'
+  | 'opening'
+  | 'importing'
+  | 'error-legacy';
 
 interface ConsumerMessage {
   type: 'command' | 'ready' | 'state';
@@ -104,6 +117,19 @@ function Consumer() {
       <button id="scenario-capability-missing" onClick={() => setScenarioAndReload('capability-missing')}>能力字段缺失</button>
       <button id="scenario-capability-missing-setup" onClick={() => setScenarioAndReload('capability-missing-setup')}>配置能力字段缺失</button>
       <button id="scenario-capability-false" onClick={() => setScenarioAndReload('capability-false')}>能力字段 false</button>
+      <button id="scenario-unresolved-legacy-true" onClick={() => setScenarioAndReload('unresolved-legacy-true')}>未决+旧配置</button>
+      <button id="scenario-unresolved-still" onClick={() => setScenarioAndReload('unresolved-still')}>未决保持</button>
+      <button id="scenario-configured-retry" onClick={() => setScenarioAndReload('configured-retry')}>重试已恢复</button>
+      <button id="scenario-unavailable-repair" onClick={() => setScenarioAndReload('unavailable-repair')}>不可用可修复</button>
+      <button id="scenario-unavailable-no-repair" onClick={() => setScenarioAndReload('unavailable-no-repair')}>不可用禁修复</button>
+      <button id="scenario-unavailable-repair-cancel" onClick={() => setScenarioAndReload('unavailable-repair-cancel')}>修复取消</button>
+      <button id="scenario-configured-repair" onClick={() => setScenarioAndReload('configured-repair')}>已配置禁修复</button>
+      <button id="scenario-connected-unresolved" onClick={() => setScenarioAndReload('connected-unresolved')}>连接中未决</button>
+      <button id="scenario-connected-unavailable" onClick={() => setScenarioAndReload('connected-unavailable')}>连接中不可用</button>
+      <button id="scenario-configured-long-label" onClick={() => setScenarioAndReload('configured-long-label')}>长标签</button>
+      <button id="scenario-opening" onClick={() => setScenarioAndReload('opening')}>正在打开</button>
+      <button id="scenario-importing" onClick={() => setScenarioAndReload('importing')}>正在导入</button>
+      <button id="scenario-error-legacy" onClick={() => setScenarioAndReload('error-legacy')}>兼容错误</button>
       <button id="revoke-capabilities" onClick={revokeCapabilities}>撤销能力</button>
       <button id="presentation-status-recover" onClick={recoverPresentationStatus}>恢复状态刷新</button>
     </header>

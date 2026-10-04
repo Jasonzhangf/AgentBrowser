@@ -1,0 +1,8 @@
+time=2026-10-04 06:18:17 PDT
+### owned server
+pid=94457 stopped
+### loopback probe
+http=000
+connection_refused
+### owned taskspace
+{"spaceId": 139, "closedSpace": true, "keptManagedLabels": [], "closedManagedLabels": ["p1"], "preservedUnmanagedCount": 0}
