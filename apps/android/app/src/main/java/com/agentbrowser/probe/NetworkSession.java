@@ -4,9 +4,6 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import org.json.JSONObject;
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -15,9 +12,9 @@ import java.util.concurrent.TimeUnit;
 /** Platform lifetime only. Host status remains an authoritative projection. */
 final class NetworkSession {
     interface FrameSink { CompletableFuture<AnnexBDecoder.Receipt> submit(NetworkFrame frame,long token,long generation); }
-    private final Context context;
     private final FrameSink sink;
     private final Runnable release;
+    private final ConnectionSetupSession connectionSetup;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private Runnable imeSync;
@@ -35,7 +32,10 @@ final class NetworkSession {
     private String gestureOperationId;
     private String gestureSessionId;
     private String state="idle",error,shownMode="observe",selectedTransport="";
-    NetworkSession(Context context,FrameSink sink,Runnable release){this.context=context.getApplicationContext();this.sink=sink;this.release=release;}
+    private ActiveConfiguration binding;
+    NetworkSession(Context context,FrameSink sink,Runnable release,ConnectionSetupSession connectionSetup){
+        this.sink=sink;this.release=release;this.connectionSetup=connectionSetup;
+    }
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized String transport(){return selectedTransport;}
@@ -231,7 +231,10 @@ final class NetworkSession {
                 .put("source","network").put("connectionState",state).put("controlMode",mode).put("epoch",epoch)
                 .put("transport",selectedTransport)
                 .put("inputReady",inputReady()).put("pending",commandPending||queuedCommand!=null||framePending?"busy":JSONObject.NULL)
-                .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
+                .put("connectionSetup",connectionSetup.projection())
+                .put("capabilities",new JSONObject()
+                    .put("navigation",false).put("tabs",false).put("profiles",false)
+                    .put("connectionSetup",true).put("quality",false));
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
             if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
                 .put("displayedDocumentRevision",displayed.documentRevision).put("displayedViewportRevision",displayed.viewportRevision)
@@ -241,54 +244,25 @@ final class NetworkSession {
         }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_HOST_STATUS",invalid);}
     }
 
-    static NativeConnection.TransportConfig parseTransportConfig(String raw) {
-        if (raw == null || raw.isBlank()) throw new IllegalArgumentException("TRANSPORT_CONFIG_EMPTY");
-        try {
-            JSONObject value = new JSONObject(raw);
-            java.util.Iterator<String> keys = value.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                if (!key.equals("transport") && !key.equals("bind_ip"))
-                    throw new IllegalArgumentException("UNKNOWN_TRANSPORT_CONFIG_FIELD");
-            }
-            String transport = value.optString("transport", "");
-            return switch (transport) {
-                case "wss" -> {
-                    if (value.has("bind_ip")) throw new IllegalArgumentException("WSS_BIND_IP_FORBIDDEN");
-                    yield NativeConnection.TransportConfig.wss();
-                }
-                case "webrtc" -> {
-                    if (!value.has("bind_ip")) throw new IllegalArgumentException("WEBRTC_BIND_IP_REQUIRED");
-                    yield NativeConnection.TransportConfig.webRtc(value.getString("bind_ip"));
-                }
-                default -> throw new IllegalArgumentException("UNKNOWN_TRANSPORT");
-            };
-        } catch (org.json.JSONException invalid) {
-            throw new IllegalArgumentException("INVALID_TRANSPORT_CONFIG", invalid);
-        }
-    }
-
-    private NativeConnection.TransportConfig transportConfig() throws Exception {
-        File file = new File(context.getFilesDir(), "pairing/transport.json");
-        if (!file.exists()) return NativeConnection.TransportConfig.wss();
-        if (!file.isFile() || file.length() > 4096) throw new IllegalStateException("TRANSPORT_CONFIG_MISSING_OR_OVERSIZED");
-        return parseTransportConfig(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-    }
-
     synchronized void connect(){
         if(closed)throw new IllegalStateException("HOST_INACTIVE");
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
+        ActiveConfiguration admitted=connectionSetup.admitNewBinding();
         token=next(token);generation=next(generation);long expected=token;
         state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";selectedTransport="";
         submittedViewport=null;rejectedViewport=null;queuedCommand=null;commandPendingOp=-1;
+        binding=admitted;
         worker.execute(()->open(expected));
     }
     private void open(long expected){
         long opened=0;
+        ActiveConfiguration activeBinding;
+        synchronized(this){activeBinding=binding;}
+        if(activeBinding==null){synchronized(this){if(token==expected){handle=0;failState(new IllegalStateException("CONNECTION_NOT_CONFIGURED"));}}main.post(release);return;}
         try{
             NativeConnection.load();
-            NativeConnection.TransportConfig config=transportConfig();
-            opened=NativeConnection.open(new String(read("endpoint.txt"),StandardCharsets.UTF_8).trim(),read("ca.der"),read("client.der"),read("key.der"),config);
+            NativeConnection.TransportConfig config=NativeConnection.TransportConfig.wss();
+            opened=NativeConnection.open(activeBinding.endpoint(),activeBinding.ca(),activeBinding.clientCert(),activeBinding.clientKey(),config);
             JSONObject status=new JSONObject(NativeConnection.command(opened,0,0,0,0,0,0,0,""));
             synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";selectedTransport=config.transport().name().toLowerCase(java.util.Locale.ROOT);flushViewport();}
             poll(expected);
@@ -408,6 +382,8 @@ final class NetworkSession {
         token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="stopping";
         resetEditing();
         long old=handle;handle=0;main.post(release);
+        ActiveConfiguration released=binding;binding=null;
+        if(released!=null)connectionSetup.release(released);
         notifyImeSync();
         worker.execute(()->{
             try{if(old!=0)NativeConnection.close(old);synchronized(this){state="stopped";}}
@@ -416,14 +392,11 @@ final class NetworkSession {
     }
     synchronized void close(){if(closed)return;disconnect();closed=true;worker.shutdown();}
     private void terminate(long expected,Exception failure){
-        long old;synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);failState(failure);}
+        long old;ActiveConfiguration released;
+        synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);released=binding;binding=null;failState(failure);}
+        if(released!=null)connectionSetup.release(released);
         try{if(old!=0)NativeConnection.close(old);}catch(Exception close){failure.addSuppressed(close);synchronized(this){error=failure+"; close: "+close;}}
         main.post(release);
     }
     private void failState(Exception failure){running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="error";error=failure.toString();}
-    private byte[] read(String name)throws Exception{
-        File file=new File(context.getFilesDir(),"pairing/"+name);
-        if(!file.isFile()||file.length()>65536)throw new IllegalStateException("PAIRING_FILE_MISSING_OR_OVERSIZED:"+name);
-        return Files.readAllBytes(file.toPath());
-    }
 }

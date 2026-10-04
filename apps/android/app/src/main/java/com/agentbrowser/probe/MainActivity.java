@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
     AnnexBDecoder annex;
     NetworkSession network;
     AccountSession account;
+    ConnectionSetupSession connectionSetup;
     private boolean annexSelected;
     private boolean networkSelected;
     private FrameLayout stage;
@@ -68,7 +69,8 @@ public final class MainActivity extends Activity {
         super.onCreate(saved);
         probe = new MediaProbe(this);
         annex = new AnnexBDecoder();
-        network = new NetworkSession(this, this::submitNetworkFrame, () -> annex.stop());
+        connectionSetup = new ConnectionSetupSession(this);
+        network = new NetworkSession(this, this::submitNetworkFrame, () -> annex.stop(), connectionSetup);
         network.onImeSync(this::syncRemoteIme);
         network.onStatusSync(this::onHostStatusChanged);
         account = new AccountSession(this);
@@ -503,7 +505,7 @@ public final class MainActivity extends Activity {
             annexSelected=false; networkSelected=false; displayedFrame=null; geometry(360,640,360,640);
         }
         if(command.op==ProbeCommand.Op.STOP) { network.disconnect(); annex.stop(); }
-        if(command.op==ProbeCommand.Op.STATUS && networkSelected) return networkSnapshot();
+        if(command.op==ProbeCommand.Op.STATUS) return currentSnapshot().toString();
         if(annexSelected) return annex.snapshot().toString();
         probe.request(command);
         return withLayout(probe.snapshot().put("source","mp4")).toString();
@@ -600,8 +602,26 @@ public final class MainActivity extends Activity {
         return number;
     }
 
+    private JSONObject currentSnapshot() throws org.json.JSONException {
+        if (networkSelected) return networkSnapshotObject();
+        if (annexSelected) return withConnectionSetup(withLayout(annex.snapshot()));
+        return withConnectionSetup(withLayout(probe.snapshot().put("source","mp4")));
+    }
+
+    private JSONObject networkSnapshotObject() throws org.json.JSONException {
+        return withLayout(network.snapshot(annex.snapshot()));
+    }
+
     private String networkSnapshot() throws org.json.JSONException {
-        return withLayout(network.snapshot(annex.snapshot())).toString();
+        return networkSnapshotObject().toString();
+    }
+
+    private JSONObject withConnectionSetup(JSONObject value) throws org.json.JSONException {
+        if (!value.has("connectionSetup")) value.put("connectionSetup", connectionSetup.projection());
+        if (!value.has("capabilities")) value.put("capabilities", new JSONObject()
+            .put("navigation", false).put("tabs", false).put("profiles", false)
+            .put("connectionSetup", true).put("quality", false));
+        return value;
     }
 
     private JSONObject withLayout(JSONObject value) throws org.json.JSONException {
@@ -652,6 +672,12 @@ public final class MainActivity extends Activity {
             try {
                 org.json.JSONObject json = new org.json.JSONObject(raw);
                 String op = json.optString("op", "");
+                if (java.util.Set.of("open_connection_setup", "import_connection",
+                        "repair_connection_import", "retry_connection_setup").contains(op)) {
+                    var task = new java.util.concurrent.FutureTask<String>(() -> dispatchConnectionSetup(json));
+                    runOnUiThread(task);
+                    return task.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                }
                 if ("set_presentation".equals(op)) {
                     var task = new java.util.concurrent.FutureTask<String>(() -> dispatchPresentation(json));
                     runOnUiThread(task);
@@ -679,9 +705,30 @@ public final class MainActivity extends Activity {
             }
         }
     }
+    String dispatchConnectionSetup(org.json.JSONObject value) throws org.json.JSONException {
+        String op = value.optString("op", "");
+        switch (op) {
+            case "open_connection_setup" -> { requireFields(value, "op"); connectionSetup.onOpenRequested(); }
+            case "import_connection" -> { requireFields(value, "op"); connectionSetup.onImportRequested(); }
+            case "repair_connection_import" -> { requireFields(value, "op"); connectionSetup.onRepairImportRequested(); }
+            case "retry_connection_setup" -> { requireFields(value, "op"); connectionSetup.onRetryReconcileRequested(); }
+            default -> throw new IllegalArgumentException("UNKNOWN_CONNECTION_SETUP_COMMAND");
+        }
+        return currentSnapshot().toString();
+    }
+    @Override protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != ConnectionSetupSession.REQUEST_OPEN_CONNECTION) return;
+        Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+        connectionSetup.onActivityResult(uri);
+    }
     @Override protected void onStart() { super.onStart(); probe.foreground(true); annex.foreground(true); }
     @Override protected void onStop() { network.disconnect(); displayedFrame = null; if (remoteIme != null) remoteIme.deactivate(); probe.foreground(false); annex.foreground(false); super.onStop(); }
     private void handleBack() {
+        if (connectionSetup != null && connectionSetup.importing()) {
+            connectionSetup.onActivityBack();
+            return;
+        }
         if ("overlay".equals(presentation) && lastLayoutState != null) {
             applyPresentation("browsing", lastLayoutState.rects);
             return;
@@ -702,6 +749,7 @@ public final class MainActivity extends Activity {
         if (remoteIme != null) remoteIme.deactivate();
         probe.close();
         annex.close();
+        if (connectionSetup != null) connectionSetup.close();
         network.close();
         account.close();
         webView.removeJavascriptInterface("ProbeNative");
