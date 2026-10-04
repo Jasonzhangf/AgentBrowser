@@ -10,6 +10,8 @@ type HarnessScenario =
   | 'connected-no-frame'
   | 'connected-video'
   | 'presentation-rejected'
+  | 'presentation-open-status-error'
+  | 'presentation-close-status-error'
   | 'waiting'
   | 'operation-pending'
   | 'control'
@@ -45,6 +47,7 @@ const state = {
   commandRejected: false,
   presentationRejected: false,
   presentationRevision: 7,
+  presentationStatusBlocked: false,
   statusFailuresRemaining: 0,
   dropEpochOnNextStatus: false,
   revokeControlOnNextStatus: false,
@@ -52,9 +55,18 @@ const state = {
   statusErrorsRemaining: 0,
 };
 
-// Request counter for the dispose/reload subscription check.
-const stats = {total: 0};
-(window as unknown as {__w4Stats: {total: number}}).__w4Stats = stats;
+// Request counter and public-boundary trace for black-box evidence.
+type TraceEntry = {
+  op: string;
+  id?: string;
+  state?: PresentationState;
+  status?: string;
+  revision?: number;
+  reason?: string;
+  error?: string;
+};
+const stats: {total: number; events: TraceEntry[]} = {total: 0, events: []};
+(window as unknown as {__w4Stats: typeof stats}).__w4Stats = stats;
 
 function qualityEntry(profile: QualityProfile, lowLatency: boolean, generation: number | null) {
   return {profile, lowLatency, generation};
@@ -188,6 +200,8 @@ function snapshot() {
     case 'connected-video':
       return connectedBase();
     case 'presentation-rejected':
+    case 'presentation-open-status-error':
+    case 'presentation-close-status-error':
       return connectedBase();
     case 'waiting':
       return {...connectedBase(), controlMode: 'waiting', pending: 'navigate'};
@@ -284,6 +298,10 @@ function applyCommand(command: ProbeCommand) {
       }
       state.presentation = next;
       state.presentationRevision += 1;
+      if (state.scenario === 'presentation-open-status-error'
+          || state.scenario === 'presentation-close-status-error') {
+        state.presentationStatusBlocked = true;
+      }
       const current = snapshot() as {layout?: {webRect: typeof rect}};
       return {
         id: command.id,
@@ -349,6 +367,10 @@ function request(command: ProbeCommand) {
   if (command.op !== 'status') {
     window.parent.postMessage({type: 'command', command}, window.location.origin);
   }
+  if (command.op === 'status' && state.presentationStatusBlocked) {
+    stats.events.push({op: 'status', status: 'error', error: 'STATUS_FAILED'});
+    throw new Error('STATUS_FAILED');
+  }
   if (command.op === 'status' && state.scenario === 'status-recover' && state.statusFailuresRemaining > 0) {
     state.statusFailuresRemaining -= 1;
     return {rejection: 'STATUS_FAILED'};
@@ -377,6 +399,22 @@ function request(command: ProbeCommand) {
   const result = command.op === 'set_presentation'
     ? applied
     : withCapabilityMode(applied, state.capabilityMode);
+  if (command.op === 'set_presentation') {
+    const receipt = result as {
+      id: string;
+      status: string;
+      geometry?: {revision: number};
+      reason?: string;
+    };
+    stats.events.push({
+      op: 'set_presentation',
+      id: receipt.id,
+      state: command.state as PresentationState,
+      status: receipt.status,
+      revision: receipt.geometry?.revision,
+      reason: receipt.reason,
+    });
+  }
   window.parent.postMessage({type: 'state', scenario: state.scenario}, window.location.origin);
   return result;
 }
@@ -408,17 +446,23 @@ window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
   if (event.data?.type === 'scenario') {
     state.scenario = event.data.scenario as HarnessScenario;
-    state.presentation = 'browsing';
+    state.presentation = state.scenario === 'presentation-close-status-error' ? 'overlay' : 'browsing';
     state.capabilityMode = 'true';
     state.commandRejected = false;
     state.presentationRejected = false;
-    state.presentationRevision = 7;
+    state.presentationRevision = state.scenario === 'presentation-close-status-error' ? 8 : 7;
+    state.presentationStatusBlocked = false;
     state.statusFailuresRemaining = state.scenario === 'status-recover' ? 1 : 0;
     state.dropEpochOnNextStatus = false;
     state.revokeControlOnNextStatus = false;
     state.revokeCapabilityOnNextStatus = false;
     state.statusErrorsRemaining = 0;
     state.commands.length = 0;
+    stats.events.length = 0;
+    return;
+  }
+  if (event.data?.type === 'presentation-status-recover') {
+    state.presentationStatusBlocked = false;
     return;
   }
   if (event.data?.type === 'capabilities' && (event.data.mode === 'true' || event.data.mode === 'missing' || event.data.mode === 'false')) {

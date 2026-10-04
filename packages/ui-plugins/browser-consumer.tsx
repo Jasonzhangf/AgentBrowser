@@ -9,6 +9,8 @@ type HarnessScenario =
   | 'connected-no-frame'
   | 'connected-video'
   | 'presentation-rejected'
+  | 'presentation-open-status-error'
+  | 'presentation-close-status-error'
   | 'waiting'
   | 'operation-pending'
   | 'control'
@@ -50,6 +52,10 @@ function Consumer() {
     frame.current?.contentWindow?.postMessage({type: 'capabilities', mode: 'false'}, window.location.origin);
   }
 
+  function recoverPresentationStatus() {
+    frame.current?.contentWindow?.postMessage({type: 'presentation-status-recover'}, window.location.origin);
+  }
+
   useEffect(() => {
     function receive(event: MessageEvent<ConsumerMessage>) {
       if (event.origin !== window.location.origin) return;
@@ -80,6 +86,8 @@ function Consumer() {
       <button id="scenario-connected-no-frame" onClick={() => setScenarioAndReload('connected-no-frame')}>连接无画面</button>
       <button id="scenario-connected-video" onClick={() => setScenarioAndReload('connected-video')}>有效画面</button>
       <button id="scenario-presentation-rejected" onClick={() => setScenarioAndReload('presentation-rejected')}>呈现拒绝</button>
+      <button id="scenario-presentation-open-status-error" onClick={() => setScenarioAndReload('presentation-open-status-error')}>打开后状态错误</button>
+      <button id="scenario-presentation-close-status-error" onClick={() => setScenarioAndReload('presentation-close-status-error')}>关闭后状态错误</button>
       <button id="scenario-waiting" onClick={() => setScenarioAndReload('waiting')}>等待接管</button>
       <button id="scenario-operation-pending" onClick={() => setScenarioAndReload('operation-pending')}>操作等待</button>
       <button id="scenario-control" onClick={() => setScenarioAndReload('control')}>已接管</button>
@@ -97,6 +105,7 @@ function Consumer() {
       <button id="scenario-capability-missing-setup" onClick={() => setScenarioAndReload('capability-missing-setup')}>配置能力字段缺失</button>
       <button id="scenario-capability-false" onClick={() => setScenarioAndReload('capability-false')}>能力字段 false</button>
       <button id="revoke-capabilities" onClick={revokeCapabilities}>撤销能力</button>
+      <button id="presentation-status-recover" onClick={recoverPresentationStatus}>恢复状态刷新</button>
     </header>
     <iframe ref={frame} id="consumer-frame" title="实际构建 UI" src="/ui-frame.html"/>
     <pre id="commands" aria-live="polite">{JSON.stringify(commands, null, 2)}</pre>

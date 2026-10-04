@@ -96,6 +96,13 @@ test('drawer transitions wait for typed presentation receipts and stay explicit 
   assert.doesNotMatch(main, /set_viewport|declare_viewport/);
 });
 
+test('applied presentation receipt revisions guard stale native projections', () => {
+  assert.match(main, /appliedPresentationRevisionRef/);
+  assert.match(main, /revision < appliedRevision/);
+  assert.match(main, /appliedPresentationRevisionRef\.current = result\.geometry\.revision/);
+  assert.match(main, /if \(revision !== undefined\) appliedPresentationRevisionRef\.current = null;/);
+});
+
 test('drawer content consumes native safe insets instead of root padding', () => {
   assert.match(main, /--safe-top/);
   assert.match(main, /--safe-right/);

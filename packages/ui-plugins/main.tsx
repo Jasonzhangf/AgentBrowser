@@ -151,6 +151,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const drawerFocusBeforeCloseRef = useRef(false);
   const presentationSequenceRef = useRef(0);
   const presentationPendingRef = useRef(false);
+  const appliedPresentationRevisionRef = useRef<number | null>(null);
   const addressComposingRef = useRef(false);
   const addressCompositionJustEndedRef = useRef(false);
   const addressCompositionTimerRef = useRef<number | null>(null);
@@ -343,6 +344,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
         setPresentationProblem(`打开抽屉被拒绝：${result.reason}`);
         return;
       }
+      appliedPresentationRevisionRef.current = result.geometry.revision;
       setDrawerOpen(true);
       try {
         setSnapshot(ctx.probe.request({op: 'status'}));
@@ -368,6 +370,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
         setPresentationProblem(`关闭抽屉被拒绝：${result.reason}`);
         return;
       }
+      appliedPresentationRevisionRef.current = result.geometry.revision;
       if (focusWasInside && document.activeElement instanceof HTMLElement) document.activeElement.blur();
       drawerFocusBeforeCloseRef.current = focusWasInside;
       drawerCloseSourceRef.current = source;
@@ -432,9 +435,13 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
 
   useEffect(() => {
     const presentation = snapshot.layout?.presentation;
+    const revision = snapshot.layout?.revision;
+    const appliedRevision = appliedPresentationRevisionRef.current;
+    if (appliedRevision !== null && revision !== undefined && revision < appliedRevision) return;
+    if (revision !== undefined) appliedPresentationRevisionRef.current = null;
     if (presentation === 'browsing' && drawerOpen) setDrawerOpen(false);
     if (presentation === 'overlay' && !drawerOpen) setDrawerOpen(true);
-  }, [snapshot.layout?.presentation, drawerOpen]);
+  }, [snapshot.layout?.presentation, snapshot.layout?.revision, drawerOpen]);
 
   useLayoutEffect(() => {
     document.documentElement.dataset.remote = String(network);
