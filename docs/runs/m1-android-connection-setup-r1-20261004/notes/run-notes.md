@@ -85,6 +85,9 @@
   secure dialog and produces the bounded typed error
   `BUNDLE_DEVICE_ID_INVALID`; after Cancel and a process restart the owner
   returns to `required` with no active reference.
+- The installed `导入` button (resource `connection-import`) also opens the real
+  DocumentsUI picker through the same owner. Back from that picker returns to
+  the prior drawer state with no pairing writes.
 - Evidence (all in this task run directory):
   - `evidence/ui/04-system-picker.png` SHA-256
     `056062ffbca75d47261bcf793035b237b3b9e5961210f4946f5366f7824a5220`:
