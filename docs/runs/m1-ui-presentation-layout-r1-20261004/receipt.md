@@ -7,8 +7,8 @@ complete).
 
 - Base source SHA: `65f1b90531719c3854a169e58b58c0f9675d9d1e`
 - Base source tree: `5a75141c5b7c5535ef3dad95e0e8696f2909a599`
-- Final commit SHA: `SELF_COMMIT_SHA_PENDING`
-- Final commit tree: `SELF_COMMIT_TREE_PENDING`
+- Product commit SHA: `08b8a63dc452f8dded3e5309f0ce85aa8b72293e`
+- Product commit tree: `694a10bb75b4b0271b938c9fc15992ba3c2e3d94`
 - Branch: `codex/m1-ui-presentation-layout-r1-20261004`
 - Worktree: `/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004`
 

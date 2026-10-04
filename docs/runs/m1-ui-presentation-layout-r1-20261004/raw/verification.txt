@@ -1,6 +1,7 @@
 == source ==
 base: 65f1b90531719c3854a169e58b58c0f9675d9d1e
-tree: 5a75141c5b7c5535ef3dad95e0e8696f2909a599
+base tree: 5a75141c5b7c5535ef3dad95e0e8696f2909a599
+verified tree: uncommitted working tree over base (product commit 08b8a63dc452f8dded3e5309f0ce85aa8b72293e)
 branch: codex/m1-ui-presentation-layout-r1-20261004
 
 == npm run typecheck ==
