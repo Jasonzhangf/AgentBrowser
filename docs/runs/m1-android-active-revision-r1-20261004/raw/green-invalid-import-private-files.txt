@@ -1,0 +1,3 @@
+/data/user/0/com.agentbrowser.probe
+pairing:
+exit=1

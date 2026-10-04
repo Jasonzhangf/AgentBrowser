@@ -1,0 +1,9 @@
+[ {
+   "description": "{\"attached\":true,\"empty\":false,\"height\":2400,\"never_attached\":false,\"screenX\":0,\"screenY\":0,\"visible\":true,\"width\":1080}",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@ce0f328d1efe65e6be766d7219387fff567ffdf5/inspector.html?ws=127.0.0.1:9332/devtools/page/E21AF4E546ECE629C691FFB87C2EE580",
+   "id": "E21AF4E546ECE629C691FFB87C2EE580",
+   "title": "AgentBrowser",
+   "type": "page",
+   "url": "https://probe.agentbrowser.invalid/index.html",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9332/devtools/page/E21AF4E546ECE629C691FFB87C2EE580"
+} ]

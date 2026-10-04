@@ -1,0 +1,1 @@
+6:    topResumedActivity=ActivityRecord{238438754 u0 com.agentbrowser.probe/.MainActivity t144}

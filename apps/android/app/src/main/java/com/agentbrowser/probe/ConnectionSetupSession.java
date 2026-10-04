@@ -107,12 +107,13 @@ final class ConnectionSetupSession {
     JSONObject projection() {
         synchronized (lock) {
             try {
-                return new JSONObject()
+                JSONObject projection = new JSONObject()
                     .put("state", state)
                     .put("error", error == null ? JSONObject.NULL : error)
                     .put("label", label == null ? JSONObject.NULL : label)
-                    .put("repair_import_allowed", "unavailable".equals(state))
-                    .put("active_revision", activeRevision < 0 ? JSONObject.NULL : activeRevision);
+                    .put("repair_import_allowed", "unavailable".equals(state));
+                if (activeRevision >= 0) projection.put("active_revision", activeRevision);
+                return projection;
             } catch (org.json.JSONException failure) {
                 throw new IllegalStateException("CONNECTION_PROJECTION_INVALID", failure);
             }

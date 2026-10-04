@@ -1,0 +1,8 @@
+app_textures
+app_webview
+cache
+code_cache
+files
+shared_prefs
+pairing:
+pairing_exit=1
