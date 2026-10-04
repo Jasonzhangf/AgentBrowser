@@ -258,3 +258,30 @@ Input: green run complete.
 Environment: owned server stopped; no owned listener or process remains.
 
 Next: commit the r3 evidence and run the range/readback checks.
+
+## Node 9 - evidence commit and final readback
+
+Time: 2026-10-04 00:42 PDT
+
+Node: delivery receipt readback.
+
+Conclusion: The r3 evidence was committed as
+`7620796c3d2d6dcc9343612df52b391a4dd717f2` / tree
+`33f3347625fad977aa88a8826ac755e796ecd901`. `ba44721..HEAD` contains only the
+two commits `86d1a7f` (product) and `7620796` (evidence), with 0
+out-of-allowlist paths; allowed product paths are `main.tsx`,
+`consumer-frame.ts`, `ui-contract.test.ts`, and allowed evidence paths are
+`docs/runs/m1-ui-receipt-geometry-r3-20261004/**`. `git diff --check
+ba44721..HEAD` exits `0`. Source, bundle, and evidence hashes at readback match
+the green capture. This is a docs-only readback commit on top of the evidence
+commit; the final commit SHA/tree is reported in the author handoff.
+
+Evidence: `raw/final-readback.txt`; `git log --oneline ba44721..HEAD`.
+
+Input: product `86d1a7f`; evidence `7620796`.
+
+Environment: worktree clean before the readback commit; no new resource
+created; owned server already stopped and owned TaskSpace already closed.
+
+Next: hand off `MODULE_UI_GEOMETRY_VERIFIED / REVIEW_WAIT` for independent
+architecture review. No self-pass, native install, or M1 claim.
