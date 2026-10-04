@@ -1,0 +1,48 @@
+{
+  "spaceId": 112,
+  "url": "http://127.0.0.1:60202/consumer.html",
+  "finishReceipt": {
+    "spaceId": 112,
+    "closedSpace": true,
+    "keptManagedLabels": [],
+    "closedManagedLabels": [
+      "p1"
+    ],
+    "preservedUnmanagedCount": 0
+  },
+  "screenshots": {
+    "noFrame": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004/docs/runs/m1-ui-presentation-layout-r1-20261004/screenshots/desktop-connected-no-frame.png",
+    "video": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004/docs/runs/m1-ui-presentation-layout-r1-20261004/screenshots/desktop-connected-video.png",
+    "drawerOpen": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004/docs/runs/m1-ui-presentation-layout-r1-20261004/screenshots/desktop-drawer-open.png",
+    "rejected": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004/docs/runs/m1-ui-presentation-layout-r1-20261004/screenshots/desktop-presentation-rejected.png",
+    "dispose": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004/docs/runs/m1-ui-presentation-layout-r1-20261004/screenshots/desktop-dispose.png",
+    "phone": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-layout-r1-20261004/docs/runs/m1-ui-presentation-layout-r1-20261004/screenshots/phone-drawer-open.png"
+  },
+  "evidence": [
+    "connected-no-frame keeps ready=false",
+    "connected-no-frame is webview visible content",
+    "connected-no-frame keeps empty surface visible",
+    "connected-no-frame shows waiting copy",
+    "valid displayed frame sets native-video ready",
+    "valid frame projects native-video",
+    "native-video hides empty surface",
+    "scenario-waiting keeps video visible",
+    "scenario-operation-pending keeps video visible",
+    "scenario-control keeps video visible",
+    "drawer open reflects applied overlay",
+    "drawer consumes native safe insets",
+    "open emits one set_presentation overlay",
+    "no viewport commands are emitted",
+    "escape close emits one set_presentation browsing",
+    "rejected overlay does not fake open drawer",
+    "rejection reason is visible",
+    "retry opens drawer after applied receipt",
+    "retry records rejected then applied overlay commands",
+    "dispose emits no new public commands",
+    "dispose stops the status-poll resource (native request count frozen)",
+    "dispose unmounts the UI plugin",
+    "dispose releases once and returns to reload state",
+    "phone drawer reflects applied overlay",
+    "phone drawer consumes native safe insets"
+  ]
+}

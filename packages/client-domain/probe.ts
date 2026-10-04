@@ -1,6 +1,53 @@
 // Browser chrome/native port ABI. This is not the Obscura wire protocol.
 export type ProbeState = 'idle' | 'starting' | 'playing' | 'stopping' | 'stopped' | 'completed' | 'error';
 export type VideoQualityProfile = 'low' | 'balanced' | 'high';
+export type PresentationState = 'browsing' | 'overlay';
+export type PresentationRejectionReason = 'NO_AUTHORITY' | 'ACTIVITY_NOT_RESUMED' | 'GEOMETRY_UNAVAILABLE';
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface NativeDisplayedFrameIdentity {
+  generation: number;
+  sessionId: string;
+  tabId: string;
+  documentRevision: number;
+  viewportRevision: number;
+}
+
+export interface NativeLayoutProjection {
+  drawableWindowRect: Rect;
+  safeContentRect: Rect;
+  advertisedViewportRect: Rect;
+  presentedContentRect: Rect;
+  chromeRect: Rect;
+  webRect: Rect;
+  visibleContent: 'webview' | 'native-video';
+  displayedFrame?: NativeDisplayedFrameIdentity;
+  currentTabId: string | null;
+  presentationViewport: Rect;
+  geometryMatches: boolean;
+  presentation: PresentationState;
+  revision: number;
+}
+
+export type PresentationResult =
+  | {
+    id: string;
+    op: 'set_presentation';
+    status: 'applied';
+    geometry: {webRect: Rect; revision: number};
+  }
+  | {
+    id: string;
+    op: 'set_presentation';
+    status: 'rejected';
+    reason: PresentationRejectionReason;
+  };
 
 export interface VideoQualityMetrics {
   rttMs: number | null;
@@ -65,6 +112,7 @@ export interface BrowserCapabilities {
 
 export type ProbeCommand =
   | { op: 'status' }
+  | { id: string; op: 'set_presentation'; state: PresentationState }
   | { op: 'connect' }
   | { op: 'disconnect' }
   | { op: 'takeover'; epoch: number }
@@ -80,6 +128,11 @@ export type ProbeCommand =
   | { op: 'import_connection' }
   | { op: 'select_profile'; profileId: string }
   | { op: 'set_video_quality'; sessionId: string; generation: number; profile: VideoQualityProfile; lowLatency: boolean };
+
+export type SnapshotCommand = {
+  [Command in ProbeCommand as Command extends {op: 'set_presentation'} ? never : Command['op']]: Command;
+}[Exclude<ProbeCommand['op'], 'set_presentation'>];
+export type PresentationCommand = Extract<ProbeCommand, {op: 'set_presentation'}>;
 
 export interface ProbeSnapshot {
   state: ProbeState;
@@ -110,15 +163,18 @@ export interface ProbeSnapshot {
   connectionSetup?: ConnectionSetupProjection;
   capabilities?: BrowserCapabilities;
   videoQuality?: VideoQualityProjection;
+  layout?: NativeLayoutProjection;
 }
 
 export interface NativePort {
-  request(command: ProbeCommand): ProbeSnapshot;
+  request(command: SnapshotCommand): ProbeSnapshot;
+  request(command: PresentationCommand): ProbeSnapshot | PresentationResult;
 }
 
 const probeStates: ProbeState[] = ['idle', 'starting', 'playing', 'stopping', 'stopped', 'completed', 'error'];
 const qualityProfiles: VideoQualityProfile[] = ['low', 'balanced', 'high'];
 const connectionSetupStates: ConnectionSetupState[] = ['required', 'configured', 'opening', 'importing', 'error'];
+const presentationRejectionReasons: PresentationRejectionReason[] = ['NO_AUTHORITY', 'ACTIVITY_NOT_RESUMED', 'GEOMETRY_UNAVAILABLE'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -126,6 +182,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function validRect(value: unknown): value is Rect {
+  return isRecord(value)
+    && isNonNegativeNumber(value.x)
+    && isNonNegativeNumber(value.y)
+    && isNonNegativeNumber(value.width)
+    && isNonNegativeNumber(value.height);
+}
+
+function validDisplayedFrame(value: unknown): value is NativeDisplayedFrameIdentity {
+  return isRecord(value)
+    && isNonNegativeInteger(value.generation)
+    && typeof value.sessionId === 'string'
+    && typeof value.tabId === 'string'
+    && isNonNegativeInteger(value.documentRevision)
+    && isNonNegativeInteger(value.viewportRevision);
+}
+
+function validLayout(value: unknown): value is NativeLayoutProjection {
+  return isRecord(value)
+    && validRect(value.drawableWindowRect)
+    && validRect(value.safeContentRect)
+    && validRect(value.advertisedViewportRect)
+    && validRect(value.presentedContentRect)
+    && validRect(value.chromeRect)
+    && validRect(value.webRect)
+    && (value.visibleContent === 'webview' || value.visibleContent === 'native-video')
+    && (value.displayedFrame === undefined || validDisplayedFrame(value.displayedFrame))
+    && (value.currentTabId === null || typeof value.currentTabId === 'string')
+    && validRect(value.presentationViewport)
+    && typeof value.geometryMatches === 'boolean'
+    && (value.presentation === 'browsing' || value.presentation === 'overlay')
+    && isNonNegativeInteger(value.revision);
 }
 
 function isNullableNonNegativeNumber(value: unknown): value is number | null {
@@ -242,13 +336,51 @@ export function parseSnapshot(raw: string): ProbeSnapshot {
       || !(value.connectionSetup === undefined || validConnectionSetup(value.connectionSetup))
       || !(value.capabilities === undefined || validCapabilities(value.capabilities))
       || !(value.videoQuality === undefined || validQuality(value.videoQuality))
+      || !(value.layout === undefined || validLayout(value.layout))
       || !(value.error === null || typeof value.error === 'string')) {
     throw new Error('INVALID_NATIVE_RESPONSE');
   }
   return value as unknown as ProbeSnapshot;
 }
 
+export function parsePresentationResult(raw: string): PresentationResult {
+  const value: unknown = JSON.parse(raw);
+  if (isRecord(value) && typeof value.rejection === 'string') throw new Error(value.rejection);
+  if (!isRecord(value)
+      || typeof value.id !== 'string'
+      || value.op !== 'set_presentation') {
+    throw new Error('INVALID_NATIVE_RESPONSE');
+  }
+  if (value.status === 'applied') {
+    if (!isRecord(value.geometry)
+        || !validRect(value.geometry.webRect)
+        || !isNonNegativeInteger(value.geometry.revision)) {
+      throw new Error('INVALID_NATIVE_RESPONSE');
+    }
+    return value as unknown as PresentationResult;
+  }
+  if (value.status === 'rejected'
+      && presentationRejectionReasons.includes(value.reason as PresentationRejectionReason)) {
+    return value as unknown as PresentationResult;
+  }
+  throw new Error('INVALID_NATIVE_RESPONSE');
+}
+
+export function isPresentationResult(value: ProbeSnapshot | PresentationResult): value is PresentationResult {
+  return 'op' in value && value.op === 'set_presentation';
+}
+
 export function androidPort(bridge: { request(raw: string): string } | undefined): NativePort {
   if (!bridge) throw new Error('NATIVE_BRIDGE_UNAVAILABLE');
-  return { request(command) { return parseSnapshot(bridge.request(JSON.stringify(command))); } };
+  return {
+    request(command: ProbeCommand): ProbeSnapshot | PresentationResult {
+      const raw = bridge.request(JSON.stringify(command));
+      if (command.op === 'set_presentation') {
+        const result = parsePresentationResult(raw);
+        if (result.id !== command.id) throw new Error('INVALID_NATIVE_RESPONSE');
+        return result;
+      }
+      return parseSnapshot(raw);
+    },
+  } as NativePort;
 }

@@ -6,7 +6,11 @@ type HarnessScenario =
   | 'rejected'
   | 'configured'
   | 'connected'
+  | 'connected-no-frame'
+  | 'connected-video'
+  | 'presentation-rejected'
   | 'waiting'
+  | 'operation-pending'
   | 'control'
   | 'quality'
   | 'quality-fail'
@@ -73,7 +77,11 @@ function Consumer() {
       <button id="scenario-rejected" onClick={() => setScenarioAndReload('rejected')}>连接拒绝</button>
       <button id="scenario-configured" onClick={() => setScenarioAndReload('configured')}>已配置未连接</button>
       <button id="scenario-connected" onClick={() => setScenarioAndReload('connected')}>已连接</button>
+      <button id="scenario-connected-no-frame" onClick={() => setScenarioAndReload('connected-no-frame')}>连接无画面</button>
+      <button id="scenario-connected-video" onClick={() => setScenarioAndReload('connected-video')}>有效画面</button>
+      <button id="scenario-presentation-rejected" onClick={() => setScenarioAndReload('presentation-rejected')}>呈现拒绝</button>
       <button id="scenario-waiting" onClick={() => setScenarioAndReload('waiting')}>等待接管</button>
+      <button id="scenario-operation-pending" onClick={() => setScenarioAndReload('operation-pending')}>操作等待</button>
       <button id="scenario-control" onClick={() => setScenarioAndReload('control')}>已接管</button>
       <button id="scenario-quality" onClick={() => setScenarioAndReload('quality')}>画质请求</button>
       <button id="scenario-quality-fail" onClick={() => setScenarioAndReload('quality-fail')}>画质失败</button>

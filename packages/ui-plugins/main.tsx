@@ -1,7 +1,16 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Context } from '@cordisjs/core';
-import { androidPort, type ProbeCommand, type ProbeSnapshot, type VideoQualityProfile } from '../client-domain/probe';
+import {
+  androidPort,
+  isPresentationResult,
+  type PresentationResult,
+  type PresentationState,
+  type ProbeCommand,
+  type ProbeSnapshot,
+  type SnapshotCommand,
+  type VideoQualityProfile,
+} from '../client-domain/probe';
 import { createKernel } from '../ui-kernel/kernel';
 import './probe.css';
 
@@ -130,6 +139,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const [commandProblem, setCommandProblem] = useState('');
   const [statusProblem, setStatusProblem] = useState('');
   const [qualityProblem, setQualityProblem] = useState('');
+  const [presentationProblem, setPresentationProblem] = useState('');
   const [qualityBusy, setQualityBusy] = useState(false);
   const [url, setUrl] = useState(() => snapshot.navigation?.url ?? '');
   const [addressDirty, setAddressDirty] = useState(false);
@@ -139,6 +149,8 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const drawerRef = useRef<HTMLElement>(null);
   const drawerCloseSourceRef = useRef<'none' | 'escape' | 'drawer' | 'outside'>('none');
   const drawerFocusBeforeCloseRef = useRef(false);
+  const presentationSequenceRef = useRef(0);
+  const presentationPendingRef = useRef(false);
   const addressComposingRef = useRef(false);
   const addressCompositionJustEndedRef = useRef(false);
   const addressCompositionTimerRef = useRef<number | null>(null);
@@ -173,6 +185,8 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const tabs = snapshot.tabs ?? {available: false, activeTabId: null, items: []};
   const profiles = snapshot.profiles ?? {available: false, selectedProfileId: null, items: []};
   const quality = snapshot.videoQuality;
+  const layout = snapshot.layout;
+  const nativeVideoVisible = layout?.visibleContent === 'native-video';
   const navigationAvailable = snapshot.capabilities?.navigation === true;
   const tabsAvailable = snapshot.capabilities?.tabs === true;
   const profilesAvailable = snapshot.capabilities?.profiles === true;
@@ -188,11 +202,25 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const canTakeover = connected && snapshot.epoch !== undefined && snapshot.controlMode !== 'control' && snapshot.controlMode !== 'waiting';
   const canRelease = connected && snapshot.controlMode === 'control';
   const canSetQuality = qualityAvailable && Boolean(snapshot.sessionId) && !qualityBusy;
-  const hasError = Boolean(snapshot.error || commandProblem || statusProblem || setup.error);
-  const errorText = snapshot.error || commandProblem || statusProblem || setup.error;
+  const hasError = Boolean(snapshot.error || commandProblem || statusProblem || presentationProblem || setup.error);
+  const errorText = snapshot.error || commandProblem || statusProblem || presentationProblem || setup.error;
   const selectedProfileId = profiles.selectedProfileId ?? profiles.items.find(profile => profile.active)?.id ?? profiles.items[0]?.id ?? '';
+  const safeInsets = layout
+    ? {
+      top: Math.max(0, layout.safeContentRect.y - layout.webRect.y),
+      right: Math.max(0, layout.webRect.x + layout.webRect.width - layout.safeContentRect.x - layout.safeContentRect.width),
+      bottom: Math.max(0, layout.webRect.y + layout.webRect.height - layout.safeContentRect.y - layout.safeContentRect.height),
+      left: Math.max(0, layout.safeContentRect.x - layout.webRect.x),
+    }
+    : {top: 0, right: 0, bottom: 0, left: 0};
+  const shellStyle = {
+    '--safe-top': `${safeInsets.top}px`,
+    '--safe-right': `${safeInsets.right}px`,
+    '--safe-bottom': `${safeInsets.bottom}px`,
+    '--safe-left': `${safeInsets.left}px`,
+  } as React.CSSProperties;
 
-  function request(command: ProbeCommand) {
+  function request(command: SnapshotCommand) {
     try {
       setCommandProblem('');
       setSnapshot(ctx.probe.request(command));
@@ -201,7 +229,14 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
     }
   }
 
-  function requestTabCommand(build: (epoch: number) => ProbeCommand) {
+  function requestPresentation(state: PresentationState): PresentationResult {
+    const id = `presentation-${++presentationSequenceRef.current}`;
+    const result = ctx.probe.request({id, op: 'set_presentation', state});
+    if (!isPresentationResult(result)) throw new Error('INVALID_PRESENTATION_RESULT');
+    return result;
+  }
+
+  function requestTabCommand(build: (epoch: number) => Exclude<ProbeCommand, {op: 'set_presentation'} | {op: 'set_video_quality'}>) {
     try {
       const current = ctx.probe.request({op: 'status'});
       if (!canManageTabsSnapshot(current) || current.epoch === undefined) {
@@ -298,12 +333,56 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
     return Boolean(drawerRef.current?.contains(document.activeElement));
   }
 
+  function openDrawer() {
+    if (drawerOpen || presentationPendingRef.current) return;
+    presentationPendingRef.current = true;
+    setPresentationProblem('');
+    try {
+      const result = requestPresentation('overlay');
+      if (result.status === 'rejected') {
+        setPresentationProblem(`打开抽屉被拒绝：${result.reason}`);
+        return;
+      }
+      setDrawerOpen(true);
+      try {
+        setSnapshot(ctx.probe.request({op: 'status'}));
+        setStatusProblem('');
+      } catch (error) {
+        setStatusProblem(String(error));
+      }
+    } catch (error) {
+      setPresentationProblem(`打开抽屉失败：${String(error)}`);
+    } finally {
+      presentationPendingRef.current = false;
+    }
+  }
+
   function closeDrawer(source: 'escape' | 'drawer' | 'outside') {
+    if (!drawerOpen || presentationPendingRef.current) return;
     const focusWasInside = drawerContainsFocus();
-    if (focusWasInside && document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    drawerFocusBeforeCloseRef.current = focusWasInside;
-    drawerCloseSourceRef.current = source;
-    setDrawerOpen(false);
+    presentationPendingRef.current = true;
+    setPresentationProblem('');
+    try {
+      const result = requestPresentation('browsing');
+      if (result.status === 'rejected') {
+        setPresentationProblem(`关闭抽屉被拒绝：${result.reason}`);
+        return;
+      }
+      if (focusWasInside && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      drawerFocusBeforeCloseRef.current = focusWasInside;
+      drawerCloseSourceRef.current = source;
+      setDrawerOpen(false);
+      try {
+        setSnapshot(ctx.probe.request({op: 'status'}));
+        setStatusProblem('');
+      } catch (error) {
+        setStatusProblem(String(error));
+      }
+    } catch (error) {
+      setPresentationProblem(`关闭抽屉失败：${String(error)}`);
+    } finally {
+      presentationPendingRef.current = false;
+    }
   }
 
   function handleDrawerBackdropClick(event: React.MouseEvent<HTMLButtonElement>) {
@@ -342,12 +421,20 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
     document.addEventListener('keydown', handleEscape);
     return () => {
       document.removeEventListener('keydown', handleEscape);
-      const restore = drawerFocusBeforeCloseRef.current && (drawerCloseSourceRef.current === 'escape' || drawerCloseSourceRef.current === 'drawer');
+      const restore = drawerFocusBeforeCloseRef.current
+        && (drawerCloseSourceRef.current === 'escape'
+          || drawerCloseSourceRef.current === 'drawer');
       if (restore) drawerToggleRef.current?.focus();
       drawerCloseSourceRef.current = 'none';
       drawerFocusBeforeCloseRef.current = false;
     };
   }, [drawerOpen]);
+
+  useEffect(() => {
+    const presentation = snapshot.layout?.presentation;
+    if (presentation === 'browsing' && drawerOpen) setDrawerOpen(false);
+    if (presentation === 'overlay' && !drawerOpen) setDrawerOpen(true);
+  }, [snapshot.layout?.presentation, drawerOpen]);
 
   useLayoutEffect(() => {
     document.documentElement.dataset.remote = String(network);
@@ -359,7 +446,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   }, [network]);
 
   return <>
-    <main className={network ? 'remote-shell' : 'local-shell'} data-remote={String(network)} data-connection={mode} data-error={String(hasError)} data-drawer-open={String(drawerOpen)}>
+    <main className={network ? 'remote-shell' : 'local-shell'} style={shellStyle} data-remote={String(network)} data-connection={mode} data-error={String(hasError)} data-drawer-open={String(drawerOpen)} data-presentation={layout?.presentation ?? 'unknown'} data-visible-content={layout?.visibleContent ?? 'unknown'}>
       <header className="browser-chrome" aria-label="浏览器工具栏">
         <div className="chrome-nav" role="group" aria-label="页面导航">
           <button id="back" type="button" aria-label="后退" title="后退" disabled={!canNavigate || !navigation.canGoBack} onClick={() => request({op: 'go_back', epoch: snapshot.epoch!})}>‹</button>
@@ -384,20 +471,20 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
           />
           <span className={`chrome-mode mode-${mode}`} role="status" aria-live="polite">{chromeModeLabel(snapshot)}</span>
         </form>
-        <button id="tabs-toggle" className="icon-button" type="button" aria-label="标签页" title="标签页" disabled={!tabsAvailable} onClick={() => setDrawerOpen(true)}>
+        <button id="tabs-toggle" className="icon-button" type="button" aria-label="标签页" title="标签页" disabled={!tabsAvailable} onClick={openDrawer}>
           <span aria-hidden="true">▤</span>
           {tabsAvailable && tabs.items.length > 0 && <span className="tab-count">{tabs.items.length}</span>}
         </button>
-        <button ref={drawerToggleRef} id="drawer-toggle" className="icon-button" type="button" aria-controls="browser-drawer" aria-expanded={drawerOpen} aria-label={drawerOpen ? '关闭菜单' : '打开菜单'} title="菜单" onClick={() => { if (drawerOpen) closeDrawer('outside'); else setDrawerOpen(true); }}>
+        <button ref={drawerToggleRef} id="drawer-toggle" className="icon-button" type="button" aria-controls="browser-drawer" aria-expanded={drawerOpen} aria-label={drawerOpen ? '关闭菜单' : '打开菜单'} title="菜单" onClick={() => { if (drawerOpen) closeDrawer('outside'); else openDrawer(); }}>
           <span aria-hidden="true">☰</span>
         </button>
       </header>
       {hasError && <div className="chrome-error" role="alert" aria-live="assertive">{errorText}</div>}
-      <section className="viewer" aria-label="原生视频区域" data-ready={String(connected)} data-input-path="native-video-surface">
+      <section className="viewer" aria-label="原生视频区域" data-ready={String(nativeVideoVisible)} data-visible-content={layout?.visibleContent ?? 'unknown'} data-input-path="native-video-surface">
         <div className="viewer-surface">
           <div className="viewer-empty">
-            <strong>{connected ? (navigation.loading ? '正在加载页面' : '已连接') : '未连接 Host'}</strong>
-            <small>{connected ? '远端页面由 Host 持有' : '打开菜单配置连接'}</small>
+            <strong>{nativeVideoVisible ? '原生画面已呈现' : connected ? (navigation.loading ? '正在加载页面' : '等待原生画面') : '未连接 Host'}</strong>
+            <small>{nativeVideoVisible ? '输入由原生视频区域承载' : connected ? '远端页面由 Host 持有' : '打开菜单配置连接'}</small>
           </div>
         </div>
       </section>

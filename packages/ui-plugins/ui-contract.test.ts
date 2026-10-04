@@ -38,7 +38,7 @@ test('command rejection and status polling keep separate result owners', () => {
   assert.match(main, /const \[statusProblem, setStatusProblem\]/);
   assert.match(main, /setStatusProblem\(''\)/);
   assert.match(main, /setCommandProblem\(''\)/);
-  assert.match(main, /snapshot\.error \|\| commandProblem \|\| statusProblem \|\| setup\.error/);
+  assert.match(main, /snapshot\.error \|\| commandProblem \|\| statusProblem \|\| presentationProblem \|\| setup\.error/);
 });
 
 test('tab mutations require a current epoch and re-read control context before sending', () => {
@@ -78,6 +78,34 @@ test('the viewer is declared as the native video/IME input surface', () => {
   assert.match(main, /aria-label="原生视频区域"/);
 });
 
+test('viewer readiness is native presentation projection, never connection or control', () => {
+  assert.match(main, /visibleContent === 'native-video'/);
+  assert.match(main, /data-ready=\{String\(nativeVideoVisible\)\}/);
+  assert.doesNotMatch(main, /data-ready=\{String\(connected\)\}/);
+  assert.doesNotMatch(main, /data-ready=\{String\(Boolean\(snapshot\.inputReady\)\)\}/);
+});
+
+test('drawer transitions wait for typed presentation receipts and stay explicit on rejection', () => {
+  assert.match(probe, /op: 'set_presentation'/);
+  assert.match(probe, /PresentationState = 'browsing' \| 'overlay'/);
+  assert.match(main, /function requestPresentation/);
+  assert.match(main, /requestPresentation\('overlay'\)/);
+  assert.match(main, /requestPresentation\('browsing'\)/);
+  assert.match(main, /result\.status === 'rejected'/);
+  assert.match(main, /setPresentationProblem/);
+  assert.doesNotMatch(main, /set_viewport|declare_viewport/);
+});
+
+test('drawer content consumes native safe insets instead of root padding', () => {
+  assert.match(main, /--safe-top/);
+  assert.match(main, /--safe-right/);
+  assert.match(main, /--safe-bottom/);
+  assert.match(main, /--safe-left/);
+  assert.match(css, /top: var\(--safe-top/);
+  assert.match(css, /bottom: var\(--safe-bottom/);
+  assert.match(css, /right: var\(--safe-right/);
+});
+
 test('drawer is layered over the page but not persistent when closed', () => {
   assert.match(css, /\.drawer \{[\s\S]*?position: fixed;/);
   assert.match(css, /\.drawer-backdrop \{[\s\S]*?position: fixed;/);
@@ -115,7 +143,7 @@ test('quality keeps requested and effective as separate algebra', () => {
 });
 
 test('only typed chrome commands cross the native port', () => {
-  for (const op of ['go_back', 'go_forward', 'reload', 'new_tab', 'select_tab', 'close_tab', 'open_connection_setup', 'import_connection', 'select_profile', 'navigate']) {
+  for (const op of ['go_back', 'go_forward', 'reload', 'new_tab', 'select_tab', 'close_tab', 'open_connection_setup', 'import_connection', 'select_profile', 'navigate', 'set_presentation']) {
     assert.match(probe, new RegExp(`op: '${op}'`), `expected typed command ${op}`);
   }
   for (const op of ['input_text', 'send_text', 'click', 'scroll', 'play', 'stop', 'remote_ime', 'chrome_inset']) {

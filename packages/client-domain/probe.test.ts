@@ -64,3 +64,99 @@ test('native rejection is preserved and unknown capability remains unavailable',
   assert.equal(snapshot.tabs, undefined);
   assert.equal(snapshot.capabilities, undefined);
 });
+
+const layout = {
+  drawableWindowRect: {x: 0, y: 0, width: 390, height: 844},
+  safeContentRect: {x: 0, y: 24, width: 390, height: 796},
+  advertisedViewportRect: {x: 0, y: 80, width: 390, height: 740},
+  presentedContentRect: {x: 0, y: 80, width: 390, height: 740},
+  chromeRect: {x: 0, y: 24, width: 390, height: 56},
+  webRect: {x: 0, y: 0, width: 390, height: 844},
+  visibleContent: 'native-video' as const,
+  displayedFrame: {
+    generation: 1,
+    sessionId: 'session-1',
+    tabId: 'tab-1',
+    documentRevision: 3,
+    viewportRevision: 2,
+  },
+  currentTabId: 'tab-1',
+  presentationViewport: {x: 0, y: 80, width: 390, height: 740},
+  geometryMatches: true,
+  presentation: 'browsing' as const,
+  revision: 7,
+};
+
+test('layout projection parses only the accepted native-owned shape', () => {
+  const snapshot = parseSnapshot(JSON.stringify({...base, layout}));
+  assert.deepEqual(snapshot.layout, layout);
+  assert.throws(() => parseSnapshot(JSON.stringify({
+    ...base,
+    layout: {...layout, drawableWindowRect: {x: -1, y: 0, width: 390, height: 844}},
+  })), /INVALID/);
+  assert.throws(() => parseSnapshot(JSON.stringify({
+    ...base,
+    layout: {...layout, visibleContent: 'video'},
+  })), /INVALID/);
+  assert.throws(() => parseSnapshot(JSON.stringify({
+    ...base,
+    layout: {...layout, displayedFrame: {...layout.displayedFrame, viewportRevision: -1}},
+  })), /INVALID/);
+});
+
+test('set_presentation forwards the caller id and state and preserves applied/rejected receipts', () => {
+  const commands: unknown[] = [];
+  const applied = {
+    id: 'presentation-1',
+    op: 'set_presentation',
+    status: 'applied',
+    geometry: {webRect: {x: 0, y: 0, width: 390, height: 844}, revision: 8},
+  };
+  const port = androidPort({
+    request(raw) {
+      commands.push(JSON.parse(raw));
+      return JSON.stringify(applied);
+    },
+  });
+  assert.deepEqual(port.request({id: 'presentation-1', op: 'set_presentation', state: 'overlay'}), applied);
+  assert.deepEqual(commands, [{id: 'presentation-1', op: 'set_presentation', state: 'overlay'}]);
+
+  const rejected = {
+    id: 'presentation-2',
+    op: 'set_presentation',
+    status: 'rejected',
+    reason: 'NO_AUTHORITY',
+  };
+  const rejectedPort = androidPort({
+    request() {
+      return JSON.stringify(rejected);
+    },
+  });
+  assert.deepEqual(rejectedPort.request({id: 'presentation-2', op: 'set_presentation', state: 'overlay'}), rejected);
+});
+
+test('presentation receipts reject mismatched ids and unknown rejection reasons', () => {
+  const port = androidPort({
+    request() {
+      return JSON.stringify({
+        id: 'other-id',
+        op: 'set_presentation',
+        status: 'applied',
+        geometry: {webRect: {x: 0, y: 0, width: 1, height: 1}, revision: 1},
+      });
+    },
+  });
+  assert.throws(() => port.request({id: 'presentation-1', op: 'set_presentation', state: 'overlay'}), /INVALID/);
+
+  const invalidReason = androidPort({
+    request() {
+      return JSON.stringify({
+        id: 'presentation-1',
+        op: 'set_presentation',
+        status: 'rejected',
+        reason: 'REMOTE_CONTROL_REQUIRED',
+      });
+    },
+  });
+  assert.throws(() => invalidReason.request({id: 'presentation-1', op: 'set_presentation', state: 'overlay'}), /INVALID/);
+});

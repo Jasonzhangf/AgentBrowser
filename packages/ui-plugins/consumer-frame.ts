@@ -7,7 +7,11 @@ type HarnessScenario =
   | 'rejected'
   | 'configured'
   | 'connected'
+  | 'connected-no-frame'
+  | 'connected-video'
+  | 'presentation-rejected'
   | 'waiting'
+  | 'operation-pending'
   | 'control'
   | 'quality'
   | 'quality-fail'
@@ -25,13 +29,22 @@ type HarnessScenario =
 type QualityProfile = 'low' | 'balanced' | 'high';
 type ProbeCommand = Record<string, unknown> & {op: string};
 type CapabilityMode = 'true' | 'missing' | 'false';
+type PresentationState = 'browsing' | 'overlay';
+
+const rect = {x: 0, y: 0, width: 390, height: 844};
+const safeRect = {x: 0, y: 24, width: 390, height: 796};
+const contentRect = {x: 0, y: 80, width: 390, height: 740};
+const chromeRect = {x: 0, y: 24, width: 390, height: 56};
 
 const state = {
   scenario: 'setup' as HarnessScenario,
   generation: 0,
   commands: [] as ProbeCommand[],
+  presentation: 'browsing' as PresentationState,
   capabilityMode: 'true' as CapabilityMode,
   commandRejected: false,
+  presentationRejected: false,
+  presentationRevision: 7,
   statusFailuresRemaining: 0,
   dropEpochOnNextStatus: false,
   revokeControlOnNextStatus: false,
@@ -47,7 +60,34 @@ function qualityEntry(profile: QualityProfile, lowLatency: boolean, generation: 
   return {profile, lowLatency, generation};
 }
 
-function connectedBase() {
+function layout(visibleContent: 'webview' | 'native-video' = 'webview') {
+  const nativeVideo = visibleContent === 'native-video';
+  return {
+    drawableWindowRect: rect,
+    safeContentRect: safeRect,
+    advertisedViewportRect: contentRect,
+    presentedContentRect: contentRect,
+    chromeRect,
+    webRect: state.presentation === 'overlay' || !nativeVideo ? rect : chromeRect,
+    visibleContent,
+    displayedFrame: nativeVideo
+      ? {
+        generation: state.generation,
+        sessionId: 'session-1',
+        tabId: 'tab-1',
+        documentRevision: 3,
+        viewportRevision: 2,
+      }
+      : undefined,
+    currentTabId: nativeVideo ? 'tab-1' : null,
+    presentationViewport: contentRect,
+    geometryMatches: nativeVideo,
+    presentation: state.presentation,
+    revision: state.presentationRevision,
+  };
+}
+
+function connectedBase(visibleContent: 'webview' | 'native-video' = 'native-video') {
   return {
     state: 'playing',
     generation: state.generation,
@@ -79,6 +119,7 @@ function connectedBase() {
       effective: qualityEntry('low', false, 1),
       metrics: {rttMs: 18, jitterMs: 2, lossPercent: 0, queueMs: 0},
     },
+    layout: layout(visibleContent),
   };
 }
 
@@ -112,6 +153,7 @@ function snapshot() {
         networkConfigured: false,
         connectionSetup: {state: 'required', error: null},
         capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
+        layout: layout(),
       };
     case 'rejected':
       return {
@@ -122,6 +164,7 @@ function snapshot() {
         connectionState: 'error',
         controlMode: 'observe',
         connectionSetup: {state: 'error', error: 'Host 拒绝连接'},
+        layout: layout(),
       };
     case 'configured':
       return {
@@ -138,9 +181,18 @@ function snapshot() {
         networkConfigured: true,
         connectionSetup: {state: 'configured', error: null},
         capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
+        layout: layout(),
       };
+    case 'connected-no-frame':
+      return connectedBase('webview');
+    case 'connected-video':
+      return connectedBase();
+    case 'presentation-rejected':
+      return connectedBase();
     case 'waiting':
       return {...connectedBase(), controlMode: 'waiting', pending: 'navigate'};
+    case 'operation-pending':
+      return {...connectedBase(), pending: 'navigate'};
     case 'control':
       return {...connectedBase(), controlMode: 'control'};
     case 'quality':
@@ -208,6 +260,7 @@ function snapshot() {
         networkConfigured: false,
         connectionSetup: {state: 'required', error: null},
         profiles: {available: true, selectedProfileId: 'profile-1', items: [{id: 'profile-1', name: '默认 Profile', active: true}]},
+        layout: layout(),
       };
     case 'capability-false':
       return {
@@ -223,6 +276,22 @@ function snapshot() {
 
 function applyCommand(command: ProbeCommand) {
   switch (command.op) {
+    case 'set_presentation': {
+      const next = command.state as PresentationState;
+      if (state.scenario === 'presentation-rejected' && !state.presentationRejected) {
+        state.presentationRejected = true;
+        return {id: command.id, op: 'set_presentation', status: 'rejected', reason: 'NO_AUTHORITY'};
+      }
+      state.presentation = next;
+      state.presentationRevision += 1;
+      const current = snapshot() as {layout?: {webRect: typeof rect}};
+      return {
+        id: command.id,
+        op: 'set_presentation',
+        status: 'applied',
+        geometry: {webRect: next === 'overlay' ? rect : current.layout?.webRect ?? rect, revision: state.presentationRevision},
+      };
+    }
     case 'connect':
       if (state.scenario === 'rejected') return snapshot();
       state.scenario = 'connected';
@@ -304,7 +373,10 @@ function request(command: ProbeCommand) {
     state.statusErrorsRemaining -= 1;
     throw new Error('STATUS_FAILED');
   }
-  const result = withCapabilityMode(applyCommand(command) as Record<string, unknown>, state.capabilityMode);
+  const applied = applyCommand(command) as Record<string, unknown>;
+  const result = command.op === 'set_presentation'
+    ? applied
+    : withCapabilityMode(applied, state.capabilityMode);
   window.parent.postMessage({type: 'state', scenario: state.scenario}, window.location.origin);
   return result;
 }
@@ -336,8 +408,11 @@ window.addEventListener('message', event => {
   if (event.origin !== window.location.origin) return;
   if (event.data?.type === 'scenario') {
     state.scenario = event.data.scenario as HarnessScenario;
+    state.presentation = 'browsing';
     state.capabilityMode = 'true';
     state.commandRejected = false;
+    state.presentationRejected = false;
+    state.presentationRevision = 7;
     state.statusFailuresRemaining = state.scenario === 'status-recover' ? 1 : 0;
     state.dropEpochOnNextStatus = false;
     state.revokeControlOnNextStatus = false;
