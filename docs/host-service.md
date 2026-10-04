@@ -177,7 +177,8 @@ trust/
 explicit `initial_profile_grant` with `selection` and `authorization_revision`,
 `scope_revision`, `status`, lifetime, and creation/revocation timestamps. The
 four legal scopes are `observe_human_control`, `profile_read`, `profile_create`,
-and `profile_select`; an empty set is not accepted as an explicit request.
+and `profile_select`; an explicit empty set is legal and omitting the scope
+argument is refused.
 `initial_profile_grant.selection` is either `default_profile` or
 `{"profile_id": "..."}`. No other shape is legal.
 
@@ -227,9 +228,11 @@ or the registry.
 `trust export` refuses with `PROFILE_CATALOG_UNAVAILABLE`,
 `ENDPOINT_REFRESH_REQUIRED`, `PROJECTION_MATERIAL_CONFLICT`, or
 `BUNDLE_NOT_READY` until a real Host catalog membership receipt and a real
-current endpoint applied receipt exist. It does not create substitute receipts
-to make the export succeed. The CLI export path emits only non-sensitive
-fields; the transfer code stays in process. The typed errors are
+current endpoint applied receipt exist. It also verifies that the published
+projection is the exact current registry projection and that the receipts name
+the enrolled device, profile, revision, and material. It does not create
+substitute receipts to make the export succeed. The CLI export path emits only
+non-sensitive fields; the transfer code stays in process. The typed errors are
 `REGISTRY_SCOPE_REQUIRED`, `MISSING_INITIAL_PROFILE_GRANT`,
 `AUTHORIZATION_REVISION_CONFLICT`, `REGISTRY_WRITE_FAILED`,
 `PROJECTION_WRITE_FAILED`, and the `PARTIAL_REGISTRY_COMMIT` receipt, which

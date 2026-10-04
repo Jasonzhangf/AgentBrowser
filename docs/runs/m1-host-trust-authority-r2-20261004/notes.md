@@ -41,8 +41,10 @@ Author: this run's Host trust authority author. Scope:
 | 时间 / 节点 | 结论 / 状态 | 证据路径 | 输入版本 | 下一步 |
 | --- | --- | --- | --- | --- |
 | 2026-10-04 / design | filled contract from r9 final design and OB terminal | parent read-only docs | AB `dacbb84` tree `b29cd8d` | implement |
-| 2026-10-04 / implement | trust CLI added; compile ok | `raw/py-compile.txt` | candidate source | validate |
+| 2026-10-04 / implement | trust CLI added; compile ok | `raw/checks.txt` | candidate source | validate |
 | 2026-10-04 / public consumer | `HOST_TRUST_PUBLIC_CONSUMER_OK` exit 0 | `raw/public-consumer.{stdout,stderr,exit}` | source candidate | evidence |
+| 2026-10-04 / argv secrecy fix | PKCS#12 verification now supplies the transfer code through OpenSSL stdin; public consumer PASS exit 0 | `raw/public-consumer.{stdout,stderr,exit}` | hardening source | commit |
+| 2026-10-04 / schema-export hardening | explicit empty scopes accepted; export verifies current projection and typed receipt fields; consumer PASS exit 0 | `raw/public-consumer.{stdout,stderr,exit}` | hardening source | commit |
 | 2026-10-04 / lifecycle regression | existing dev fixture suite PASS exit 0 | `raw/existing-dev-fixture.{stdout,stderr,exit}` | same source | retain WAIT for real Host |
 
 ## Non-goals and dependencies

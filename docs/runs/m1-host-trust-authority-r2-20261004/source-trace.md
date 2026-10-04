@@ -12,7 +12,8 @@ parent owns the paired runtime, BB01, milestone and independent review.
 | worktree | `/Volumes/Intel/playground/agentbrowser/m1-host-trust-authority-r2-20261004` |
 | branch | `codex/m1-host-trust-authority-r2-20261004` |
 | accepted source start | `dacbb8436981674927a741e561e2cbf58688a496` / tree `b29cd8d4e70699219fa19e8f798b3b501ee83afd` |
-| author commit | `23c6eb320680d2106fd984e0f75097b2cd59c0e0` / tree `f40ec47888be3cc7435e609fe206c797e0a363eb` |
+| product implementation commit | `23c6eb320680d2106fd984e0f75097b2cd59c0e0` / tree `f40ec47888be3cc7435e609fe206c797e0a363eb` |
+| final hardening/evidence commit | reported in the original exec stdout and parent handoff |
 | AB origin/main (parent fetch) | `bc9d67ad037be2c7119bee692f9ad362417ffd05` |
 | OB terminal (design, read-only) | `687db20bb4e08211d1144996befbbf1557d5641e` / tree `905cce37a9038f667c040018d5217cd755e68862` |
 | OB profile r1 design docs | `/Volumes/Intel/playground/obscura/m1-profile-eof-contract-r7-20261004` |
@@ -85,7 +86,7 @@ against the frozen design vectors (see `raw/vector-check.txt`).
 
 | Command | Result | Evidence |
 | --- | --- | --- |
-| `python3 -m py_compile scripts/host-service/host_service.py scripts/host-service/test_host_trust_public.py` | exit 0 | `raw/checks.txt` |
+| `python3 -m py_compile scripts/host-service/host_service.py scripts/host-service/test_host_trust_public.py` | exit 0 | `raw/py-compile.*`; `raw/checks.txt` |
 | `python3 scripts/host-service/test_host_trust_public.py` | exit 0, `HOST_TRUST_PUBLIC_CONSUMER_OK` | `raw/public-consumer.*` |
 | `python3 scripts/host-service/test_host_service.py` | exit 0, `HOST_SERVICE_DEV_FIXTURE_PASS` | `raw/existing-dev-fixture.*` |
 | `npm run verify:local` | exit 0 | `raw/verify-local.*` |
@@ -101,12 +102,14 @@ The public consumer asserts, from the real CLI/module boundary only:
 4. A enroll then B enroll preserves A scopes/selection/cert/`scope_revision`
    while rebinding A's grant freshness to the current global revision.
 5. A revoke keeps B active and current, excludes A from the projection.
-6. Invalid scope or selection creates no device and does not advance revision.
+6. Invalid scope or selection creates no device and does not advance revision;
+   an explicit empty scope set is accepted and preserved.
 7. Exact external projection digest and absence of a self-hash field.
 8. Declared empty/nonempty vector bytes and digests.
 9. A real own-filesystem projection write failure returns
    `PARTIAL_REGISTRY_COMMIT` at exit 4 with the actual committed revision.
-10. Premature export returns `PROFILE_CATALOG_UNAVAILABLE` and leaves no output.
+10. Premature export returns `PROFILE_CATALOG_UNAVAILABLE` and leaves no output;
+    export also rejects stale projection or mismatched typed receipts.
 11. Real PKCS#12 with exactly `agentbrowser-host-ca`, `agentbrowser-endpoint`,
     `agentbrowser-client`; `openssl` extracts a client cert matching the
     enclosed key and the enrolled DER.

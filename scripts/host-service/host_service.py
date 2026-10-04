@@ -1654,9 +1654,15 @@ def projection_client(device: dict[str, object]) -> dict[str, object]:
 
 
 def normalize_scopes(values: list[str] | None) -> list[str]:
-    if not values:
+    if values is None:
         raise ServiceError(
-            "an explicit remote scope subset is required",
+            "an explicit remote scope set is required",
+            TRUST_EXIT_CODE,
+            code="REGISTRY_SCOPE_REQUIRED",
+        )
+    if not isinstance(values, list):
+        raise ServiceError(
+            "remote scopes must be an explicit list",
             TRUST_EXIT_CODE,
             code="REGISTRY_SCOPE_REQUIRED",
         )
@@ -2156,8 +2162,15 @@ def command_trust_revoke(args: argparse.Namespace) -> int:
 def build_device_transfer_p12(root: Path, device_id: str, transfer_code: str) -> bytes:
     validate_transfer_code(transfer_code)
     registry = load_trust_registry(root)
-    if find_device(registry, device_id) is None:
+    device = find_device(registry, device_id)
+    if device is None:
         raise ServiceError(f"unknown device: {device_id}", TRUST_EXIT_CODE, code="DEVICE_NOT_FOUND")
+    if device["status"] != "active":
+        raise ServiceError(
+            "device is not a current active registry entry",
+            TRUST_EXIT_CODE,
+            code="BUNDLE_NOT_READY",
+        )
     record = load_device_record(root, device_id)
     if record is None:
         raise ServiceError(f"device material is missing: {device_id}", TRUST_EXIT_CODE, code="BUNDLE_NOT_READY")
@@ -2199,6 +2212,12 @@ def export_bundle(
             TRUST_EXIT_CODE,
             code="BUNDLE_NOT_READY",
         )
+    if device["initial_profile_grant"]["authorization_revision"] != registry["authorization_revision"]:
+        raise ServiceError(
+            "device grant is not bound to the current registry revision",
+            TRUST_EXIT_CODE,
+            code="BUNDLE_NOT_READY",
+        )
     if membership_receipt is None:
         raise ServiceError(
             "Host profile catalog membership is unavailable; bundle cannot be marked usable",
@@ -2209,9 +2228,19 @@ def export_bundle(
         not isinstance(membership_receipt, dict)
         or membership_receipt.get("device_id") != device_id
         or type(membership_receipt.get("catalog_revision")) is not int
+        or membership_receipt["catalog_revision"] < 0
+        or not isinstance(membership_receipt.get("profile_id"), str)
+        or not membership_receipt["profile_id"]
     ):
         raise ServiceError(
-            "profile membership receipt does not match the enrolled device",
+            "profile membership receipt does not match the enrolled device and profile",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_WRITE_FAILED",
+        )
+    selection = device["initial_profile_grant"]["selection"]
+    if isinstance(selection, dict) and membership_receipt["profile_id"] != selection["profile_id"]:
+        raise ServiceError(
+            "profile membership receipt does not match the initial profile grant",
             TRUST_EXIT_CODE,
             code="PROFILE_ACCESS_WRITE_FAILED",
         )
@@ -2230,10 +2259,20 @@ def export_bundle(
             TRUST_EXIT_CODE,
             code="ENDPOINT_REFRESH_REQUIRED",
         )
-    projection_sha = sha256_bytes(projection_path.read_bytes())
+    expected_projection, _ = refresh_projection(root, registry, registry_bytes)
+    projection_bytes = projection_path.read_bytes()
+    if projection_bytes != expected_projection:
+        raise ServiceError(
+            "authorized-clients projection does not match the current registry",
+            TRUST_EXIT_CODE,
+            code="PROJECTION_MATERIAL_CONFLICT",
+        )
+    projection_sha = sha256_bytes(projection_bytes)
     if (
         not isinstance(endpoint_receipt, dict)
         or endpoint_receipt.get("status") != "refreshed"
+        or type(endpoint_receipt.get("endpoint_pid")) is not int
+        or endpoint_receipt["endpoint_pid"] <= 0
         or endpoint_receipt.get("authorization_revision") != registry["authorization_revision"]
         or endpoint_receipt.get("registry_sha256") != registry_sha
         or endpoint_receipt.get("projection_sha256") != projection_sha

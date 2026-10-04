@@ -72,11 +72,16 @@ def find_openssl() -> str:
 OPENSSL = find_openssl()
 
 
-def openssl(*arguments: str, check_result: bool = True) -> subprocess.CompletedProcess[str]:
+def openssl(
+    *arguments: str,
+    check_result: bool = True,
+    stdin: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         [OPENSSL, *arguments],
         check=False,
         capture_output=True,
+        input=stdin,
         text=True,
         timeout=60,
     )
@@ -300,7 +305,23 @@ def run(root: Path) -> None:
     check(registry["authorization_revision"] == revision_before, "invalid enroll advanced the revision")
     check(len(registry["devices"]) == count_before, "invalid enroll created a device")
 
-    # 9. A real own-filesystem projection write failure exposes committed/partial truth.
+    # 9. An explicit empty scope set is a legal enrolled identity.
+    scopeless_root = root / "scopeless-root"
+    scopeless_root.mkdir(mode=0o700)
+    manager_json(
+        "trust", "init", "--root", str(scopeless_root),
+        "--endpoint-host", "100.64.0.1", "--endpoint-port", "8443",
+    )
+    scopeless = host_service.enroll_device(
+        scopeless_root,
+        label="Scopeless device",
+        scopes=[],
+        selection="default_profile",
+    )
+    check(scopeless["state"] == "enrolled", f"empty scope enroll failed: {scopeless}")
+    check(scopeless["scopes"] == [], "empty scope set was not preserved")
+
+    # 10. A real own-filesystem projection write failure exposes committed/partial truth.
     projection_path.unlink()
     projection_path.mkdir(mode=0o700)
     result = manager(
@@ -319,7 +340,7 @@ def run(root: Path) -> None:
     status = manager_json("trust", "status", "--root", str(root))
     check(status["authorization_state"] == "not_refreshed", "missing projection must report not_refreshed")
 
-    # 10. Premature export refuses and leaves no usable output.
+    # 11. Premature export refuses and leaves no usable output.
     output = root / "bundle.abconnection"
     code = manager_error(
         "trust", "export", "--root", str(root),
@@ -328,7 +349,7 @@ def run(root: Path) -> None:
     check(code == "PROFILE_CATALOG_UNAVAILABLE", f"premature export code was {code}")
     check(not output.exists(), "premature export left an output file")
 
-    # 11. Real PKCS#12 container with exactly the three allowed aliases.
+    # 12. Real PKCS#12 container with exactly the three allowed aliases.
     transfer_code = host_service.generate_transfer_code()
     check(len(transfer_code) == 16, "transfer code length drifted")
     check(
@@ -338,7 +359,10 @@ def run(root: Path) -> None:
     p12 = host_service.build_device_transfer_p12(root, device_b["device_id"], transfer_code)
     p12_path = root / "device.p12"
     p12_path.write_bytes(p12)
-    info = openssl("pkcs12", "-in", str(p12_path), "-passin", f"pass:{transfer_code}", "-info", "-nodes")
+    info = openssl(
+        "pkcs12", "-in", str(p12_path), "-passin", "stdin", "-info", "-nodes",
+        stdin=f"{transfer_code}\n",
+    )
     aliases = sorted(
         line.split(":", 1)[1].strip()
         for line in (info.stdout + info.stderr).splitlines()
@@ -351,12 +375,14 @@ def run(root: Path) -> None:
     extracted_cert = root / "extracted-client.pem"
     extracted_key = root / "extracted-key.pem"
     openssl(
-        "pkcs12", "-in", str(p12_path), "-passin", f"pass:{transfer_code}",
+        "pkcs12", "-in", str(p12_path), "-passin", "stdin",
         "-clcerts", "-nokeys", "-out", str(extracted_cert),
+        stdin=f"{transfer_code}\n",
     )
     openssl(
-        "pkcs12", "-in", str(p12_path), "-passin", f"pass:{transfer_code}",
+        "pkcs12", "-in", str(p12_path), "-passin", "stdin",
         "-nocerts", "-nodes", "-out", str(extracted_key),
+        stdin=f"{transfer_code}\n",
     )
     openssl("verify", "-CAfile", str(ca_pem), str(extracted_cert))
     cert_public = openssl("x509", "-in", str(extracted_cert), "-noout", "-pubkey").stdout
