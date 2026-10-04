@@ -15,6 +15,8 @@ push, OTA, M1 PASS, or paired remote video/touch/caret/IME.
 - Base `origin/main`: `bc9d67ad037be2c7119bee692f9ad362417ffd05`
 - Only product change: `packages/ui-plugins/probe.css`
 - Product CSS blob before commit: `bcddc0f864a431fcd2fd017e42898b1d3afa9ced`
+- Product/evidence commit: `b038277ee538c8b62f19c980964952a2b67ba085`
+- Product/evidence tree: `e13a14db07e8fa076b5bd3ce5eb9d8a91dc085f3`
 
 ## Root fix
 

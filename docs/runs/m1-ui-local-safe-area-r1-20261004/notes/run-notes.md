@@ -92,6 +92,11 @@
   `accelerometer_rotation=0`, `user_rotation=0`.
 - Receipt: `receipt/candidate.md`; geometry:
   `receipt/geometry-green.json`.
+- Product/evidence commit:
+  `b038277ee538c8b62f19c980964952a2b67ba085`, tree
+  `e13a14db07e8fa076b5bd3ce5eb9d8a91dc085f3`, parent
+  `1260172a5aace4cfdb1b1ad1d1e2d4f76b12adbc`; commit binding in
+  `receipt/commit.txt`.
 - Next: stage only `packages/ui-plugins/probe.css` and this task's evidence
   directory, run normal-hook commit, then report
   `INSTALLED_LOCAL_SHELL_AUTHOR_VERIFIED` / `PAIRED_REMOTE_E2E_WAIT`.
