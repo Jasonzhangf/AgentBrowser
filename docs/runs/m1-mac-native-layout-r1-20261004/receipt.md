@@ -3,7 +3,10 @@
 Task: `m1-mac-native-layout-r1-20261004`
 Status: `SOURCE_BUILT` / `PUBLIC_CONSUMER_PARTIAL` / `INSTALLED_E2E_WAIT`
 Input: HEAD `a31c1d9379d0710814315492955291a753ea0004` / tree
-`710a973dd2bb0c0c20b9193691198770ab6a2e50` (not committed; candidate source tree below).
+`710a973dd2bb0c0c20b9193691198770ab6a2e50`.
+Candidate commit: `57a3b23feed72931766a31fc06e6f3de7bd15041` / tree
+`9a413c5377e07f2a0e218638d801658684317fcb` (branch
+`codex/m1-mac-native-layout-r1-20261004`; one product commit over `a31c1d9`).
 
 ## Scope and candidate
 
