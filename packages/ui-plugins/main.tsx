@@ -8,6 +8,7 @@ import {
   type PresentationState,
   type ProbeCommand,
   type ProbeSnapshot,
+  type Rect,
   type SnapshotCommand,
   type VideoQualityProfile,
 } from '../client-domain/probe';
@@ -22,6 +23,8 @@ declare global {
 
 const qualityLabels: Record<VideoQualityProfile, string> = {low: '低', balanced: '均衡', high: '高'};
 const qualityDescriptions: Record<VideoQualityProfile, string> = {low: '省流量', balanced: '清晰与流畅', high: '更清晰'};
+
+type AppliedPresentationReceipt = {webRect: Rect; revision: number};
 
 export function normalizeAddress(value: string): string {
   const address = value.trim();
@@ -151,7 +154,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const drawerFocusBeforeCloseRef = useRef(false);
   const presentationSequenceRef = useRef(0);
   const presentationPendingRef = useRef(false);
-  const appliedPresentationRevisionRef = useRef<number | null>(null);
+  const appliedPresentationReceiptRef = useRef<AppliedPresentationReceipt | null>(null);
   const addressComposingRef = useRef(false);
   const addressCompositionJustEndedRef = useRef(false);
   const addressCompositionTimerRef = useRef<number | null>(null);
@@ -206,12 +209,16 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const hasError = Boolean(snapshot.error || commandProblem || statusProblem || presentationProblem || setup.error);
   const errorText = snapshot.error || commandProblem || statusProblem || presentationProblem || setup.error;
   const selectedProfileId = profiles.selectedProfileId ?? profiles.items.find(profile => profile.active)?.id ?? profiles.items[0]?.id ?? '';
-  const safeInsets = layout
+  const appliedReceipt = appliedPresentationReceiptRef.current;
+  const projectedWebRect = layout && appliedReceipt && layout.revision < appliedReceipt.revision
+    ? appliedReceipt.webRect
+    : layout?.webRect;
+  const safeInsets = layout && projectedWebRect
     ? {
-      top: Math.max(0, layout.safeContentRect.y - layout.webRect.y),
-      right: Math.max(0, layout.webRect.x + layout.webRect.width - layout.safeContentRect.x - layout.safeContentRect.width),
-      bottom: Math.max(0, layout.webRect.y + layout.webRect.height - layout.safeContentRect.y - layout.safeContentRect.height),
-      left: Math.max(0, layout.safeContentRect.x - layout.webRect.x),
+      top: Math.max(0, layout.safeContentRect.y - projectedWebRect.y),
+      right: Math.max(0, projectedWebRect.x + projectedWebRect.width - layout.safeContentRect.x - layout.safeContentRect.width),
+      bottom: Math.max(0, projectedWebRect.y + projectedWebRect.height - layout.safeContentRect.y - layout.safeContentRect.height),
+      left: Math.max(0, layout.safeContentRect.x - projectedWebRect.x),
     }
     : {top: 0, right: 0, bottom: 0, left: 0};
   const shellStyle = {
@@ -344,7 +351,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
         setPresentationProblem(`打开抽屉被拒绝：${result.reason}`);
         return;
       }
-      appliedPresentationRevisionRef.current = result.geometry.revision;
+      appliedPresentationReceiptRef.current = result.geometry;
       setDrawerOpen(true);
       try {
         setSnapshot(ctx.probe.request({op: 'status'}));
@@ -370,7 +377,7 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
         setPresentationProblem(`关闭抽屉被拒绝：${result.reason}`);
         return;
       }
-      appliedPresentationRevisionRef.current = result.geometry.revision;
+      appliedPresentationReceiptRef.current = result.geometry;
       if (focusWasInside && document.activeElement instanceof HTMLElement) document.activeElement.blur();
       drawerFocusBeforeCloseRef.current = focusWasInside;
       drawerCloseSourceRef.current = source;
@@ -436,9 +443,9 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   useEffect(() => {
     const presentation = snapshot.layout?.presentation;
     const revision = snapshot.layout?.revision;
-    const appliedRevision = appliedPresentationRevisionRef.current;
-    if (appliedRevision !== null && revision !== undefined && revision < appliedRevision) return;
-    if (revision !== undefined) appliedPresentationRevisionRef.current = null;
+    const appliedReceipt = appliedPresentationReceiptRef.current;
+    if (appliedReceipt && (revision === undefined || revision < appliedReceipt.revision)) return;
+    if (revision !== undefined) appliedPresentationReceiptRef.current = null;
     if (presentation === 'browsing' && drawerOpen) setDrawerOpen(false);
     if (presentation === 'overlay' && !drawerOpen) setDrawerOpen(true);
   }, [snapshot.layout?.presentation, snapshot.layout?.revision, drawerOpen]);

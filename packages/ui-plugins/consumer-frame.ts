@@ -62,6 +62,7 @@ type TraceEntry = {
   state?: PresentationState;
   status?: string;
   revision?: number;
+  webRect?: {x: number; y: number; width: number; height: number};
   reason?: string;
   error?: string;
 };
@@ -403,7 +404,7 @@ function request(command: ProbeCommand) {
     const receipt = result as {
       id: string;
       status: string;
-      geometry?: {revision: number};
+      geometry?: {webRect: {x: number; y: number; width: number; height: number}; revision: number};
       reason?: string;
     };
     stats.events.push({
@@ -412,6 +413,7 @@ function request(command: ProbeCommand) {
       state: command.state as PresentationState,
       status: receipt.status,
       revision: receipt.geometry?.revision,
+      webRect: receipt.geometry?.webRect,
       reason: receipt.reason,
     });
   }

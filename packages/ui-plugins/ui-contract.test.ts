@@ -96,11 +96,21 @@ test('drawer transitions wait for typed presentation receipts and stay explicit 
   assert.doesNotMatch(main, /set_viewport|declare_viewport/);
 });
 
-test('applied presentation receipt revisions guard stale native projections', () => {
-  assert.match(main, /appliedPresentationRevisionRef/);
-  assert.match(main, /revision < appliedRevision/);
-  assert.match(main, /appliedPresentationRevisionRef\.current = result\.geometry\.revision/);
-  assert.match(main, /if \(revision !== undefined\) appliedPresentationRevisionRef\.current = null;/);
+test('applied presentation receipt geometry guards stale native projections', () => {
+  assert.match(main, /type AppliedPresentationReceipt = \{webRect: Rect; revision: number\}/);
+  assert.match(main, /const appliedPresentationReceiptRef = useRef<AppliedPresentationReceipt \| null>\(null\)/);
+  assert.match(main, /appliedPresentationReceiptRef\.current = result\.geometry/);
+  assert.match(main, /const projectedWebRect = layout && appliedReceipt && layout\.revision < appliedReceipt\.revision/);
+  assert.match(main, /appliedReceipt\.webRect/);
+  assert.match(main, /layout\.safeContentRect\.y - projectedWebRect\.y/);
+  assert.match(main, /if \(revision !== undefined\) appliedPresentationReceiptRef\.current = null/);
+  const openDrawer = main.slice(main.indexOf('function openDrawer'), main.indexOf('function closeDrawer'));
+  const rejectedGuard = openDrawer.indexOf("result.status === 'rejected'");
+  const receiptWrite = openDrawer.indexOf('appliedPresentationReceiptRef.current = result.geometry');
+  assert.ok(
+    rejectedGuard !== -1 && receiptWrite !== -1 && rejectedGuard < receiptWrite,
+    'a rejected presentation must not retain applied receipt geometry',
+  );
 });
 
 test('drawer content consumes native safe insets instead of root padding', () => {
