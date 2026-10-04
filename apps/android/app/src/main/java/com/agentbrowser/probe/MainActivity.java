@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.SurfaceView;
 import android.view.SurfaceHolder;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.MotionEvent;
 import android.view.WindowInsets;
 import android.webkit.JavascriptInterface;
@@ -242,8 +243,25 @@ public final class MainActivity extends Activity {
     private void applyGeometry(LayoutRects rects) {
         float density = getResources().getDisplayMetrics().density;
         Rect presented = rects.presentedContentRect;
-        stage.setLayoutParams(frameParams(px(presented.x, density), px(presented.y, density), px(presented.width, density), px(presented.height, density)));
+        applyFrame(stage, px(presented.x, density), px(presented.y, density), px(presented.width, density), px(presented.height, density));
         layoutVideo();
+    }
+
+    static boolean frameNeedsUpdate(int currentWidth, int currentHeight, int currentLeft, int currentTop,
+            int currentGravity, int width, int height, int left, int top) {
+        return currentWidth != width || currentHeight != height
+            || currentLeft != left || currentTop != top
+            || currentGravity != (Gravity.TOP | Gravity.LEFT);
+    }
+
+    private static void applyFrame(View view, int x, int y, int width, int height) {
+        ViewGroup.LayoutParams current = view.getLayoutParams();
+        if (current instanceof FrameLayout.LayoutParams params
+                && !frameNeedsUpdate(params.width, params.height, params.leftMargin, params.topMargin,
+                    params.gravity, width, height, x, y)) {
+            return;
+        }
+        view.setLayoutParams(frameParams(x, y, width, height));
     }
 
     private static FrameLayout.LayoutParams frameParams(int x, int y, int width, int height) {
@@ -326,11 +344,9 @@ public final class MainActivity extends Activity {
         if (scale <= 0 || !Float.isFinite(scale)) return;
         int clipWidth = Math.max(0, Math.round(visibleWidth * scale));
         int clipHeight = Math.max(0, Math.round(visibleHeight * scale));
-        FrameLayout.LayoutParams clipParams = new FrameLayout.LayoutParams(clipWidth, clipHeight, Gravity.TOP | Gravity.LEFT);
-        clipParams.leftMargin = Math.max(0, (stageWidth - clipWidth) / 2);
-        clipParams.topMargin = Math.max(0, (stageHeight - clipHeight) / 2);
-        videoClip.setLayoutParams(clipParams);
-        video.setLayoutParams(frameParams(0, 0, Math.max(0, Math.round(codedWidth * scale)), Math.max(0, Math.round(codedHeight * scale))));
+        applyFrame(videoClip, Math.max(0, (stageWidth - clipWidth) / 2), Math.max(0, (stageHeight - clipHeight) / 2),
+            clipWidth, clipHeight);
+        applyFrame(video, 0, 0, Math.max(0, Math.round(codedWidth * scale)), Math.max(0, Math.round(codedHeight * scale)));
     }
 
     private void geometry(int cw,int ch,int vw,int vh) {

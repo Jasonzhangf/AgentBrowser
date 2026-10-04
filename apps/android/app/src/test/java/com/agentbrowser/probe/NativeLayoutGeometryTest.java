@@ -3,6 +3,7 @@ package com.agentbrowser.probe;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 
@@ -64,5 +65,15 @@ public final class NativeLayoutGeometryTest {
         MainActivity.LayoutRects second = MainActivity.deriveRects(1080, 2400, 3f, 0, 0, 0, 0, 0);
         assertNotSame(first, second);
         assertTrue(first.safeContentRect.equalsRect(second.safeContentRect));
+    }
+
+    @Test public void identicalFrameDoesNotNeedAnotherLayoutWrite() {
+        assertFalse(MainActivity.frameNeedsUpdate(1080, 2337, 0, 210, android.view.Gravity.TOP | android.view.Gravity.LEFT,
+            1080, 2337, 0, 210));
+    }
+
+    @Test public void changedFrameNeedsOneLayoutWrite() {
+        assertTrue(MainActivity.frameNeedsUpdate(1080, 2337, 0, 210, android.view.Gravity.TOP | android.view.Gravity.LEFT,
+            1080, 2336, 0, 210));
     }
 }
