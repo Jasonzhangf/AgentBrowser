@@ -1,0 +1,6 @@
+removed=m1-ui-safe-area-green-portrait.xml
+removed=m1-ui-safe-area-green-portrait-full.xml
+removed=m1-ui-safe-area-green-drawer-open.xml
+removed=m1-ui-safe-area-green-back-closed.xml
+removed=m1-ui-safe-area-green-landscape.xml
+removed=m1-ui-safe-area-green-restored.xml

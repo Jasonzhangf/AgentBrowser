@@ -1,0 +1,4 @@
+installed_base_path=/data/app/~~yj-O5Y1zDH0Uf3uVYagp_A==/com.agentbrowser.probe-RMuLerN5jcjJpjvKJeAJQQ==/base.apk
+installed_base_sha256=941df5ccbc8680e0161034f938a6e3f10ab1ec642840d7ecc62241e3a290d597
+candidate_apk_sha256=941df5ccbc8680e0161034f938a6e3f10ab1ec642840d7ecc62241e3a290d597
+byte_compare=match

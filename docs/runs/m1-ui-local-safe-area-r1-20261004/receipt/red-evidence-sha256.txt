@@ -1,0 +1,2 @@
+e5c7c611541c220b1d801dd36eaf97a051c68309d2b16eb06f1751c4272e8009  docs/runs/m1-ui-local-safe-area-r1-20261004/screenshots/01-installed-red-portrait.png
+cbd1ff184b5f532f1a29add458c2a0d3f7d46186427343f5cd748ff63dac55ad  docs/runs/m1-ui-local-safe-area-r1-20261004/raw/01-installed-red-portrait.xml

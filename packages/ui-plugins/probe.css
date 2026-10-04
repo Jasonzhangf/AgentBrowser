@@ -58,7 +58,7 @@ input:disabled, select:disabled { background: #edf1ee; color: #6e7b74; cursor: n
   background: var(--surface);
 }
 main[data-remote="false"] .browser-chrome {
-  padding-top: max(6px, env(safe-area-inset-top));
+  padding-top: max(6px, env(safe-area-inset-top), var(--safe-top, 0px));
 }
 main[data-remote="true"][data-visible-content="webview"][data-presentation="browsing"] .browser-chrome {
   padding-top: calc(6px + var(--safe-top, 0px));
@@ -220,7 +220,7 @@ main[data-remote="true"][data-visible-content="native-video"] .viewer { backgrou
 
 @media (max-width: 560px) {
   .browser-chrome { display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px; grid-template-areas: "address tabs menu" "nav nav nav"; align-items: center; gap: 4px 6px; padding: 4px 6px; }
-  main[data-remote="false"] .browser-chrome { padding-top: max(4px, env(safe-area-inset-top)); }
+  main[data-remote="false"] .browser-chrome { padding-top: max(4px, env(safe-area-inset-top), var(--safe-top, 0px)); }
   main[data-remote="true"][data-visible-content="webview"][data-presentation="browsing"] .browser-chrome { padding-top: calc(4px + var(--safe-top, 0px)); }
   .browser-address { grid-area: address; }
   .chrome-nav { grid-area: nav; justify-content: flex-start; }

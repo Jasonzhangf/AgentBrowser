@@ -1,0 +1,75 @@
+{
+  "status": "INSTALLED_LOCAL_SHELL_AUTHOR_VERIFIED",
+  "device": {
+    "serial": "emulator-5554",
+    "sdk": 36,
+    "display_px": "1080x2400",
+    "density": 2.625,
+    "rotation_settings_restored": {
+      "accelerometer_rotation": 0,
+      "user_rotation": 0
+    }
+  },
+  "artifact": {
+    "app_apk_sha256": "941df5ccbc8680e0161034f938a6e3f10ab1ec642840d7ecc62241e3a290d597",
+    "test_apk_sha256": "4589d642a31746322593982b86ffc7298d0540dedb0b658ef9289fdadac5a192",
+    "bundled_app_css_sha256": "2365d201cfd00a05e26813e5a89672332d7d7297f653ba2a33635741166ea6b1",
+    "installed_base_byte_compare": "match",
+    "versionCode": 1,
+    "versionName": "0.1.0-probe",
+    "signature_prefix": "10bb648d",
+    "firstInstallTime": "2026-10-03 15:58:37",
+    "lastUpdateTime": "2026-10-04 05:29:37"
+  },
+  "portrait": {
+    "rotation": 0,
+    "statusBars": "[0,0][1080,63]",
+    "navigationBars": "[0,2337][1080,2400]",
+    "toolbar": "[0,0][1080,317]",
+    "address": "[42,63][627,178]",
+    "menu": "[947,63][1065,181]"
+  },
+  "landscape": {
+    "rotation": 1,
+    "statusBars": "[0,0][2400,63]",
+    "navigationBars": "[0,1017][2400,1080]",
+    "toolbar": "[0,0][2400,199]",
+    "address": "[420,63][1942,178]",
+    "menu": "[2262,63][2380,181]"
+  },
+  "restored_portrait": {
+    "rotation": 0,
+    "address": "[42,63][627,178]",
+    "same_as_initial_portrait": true
+  },
+  "drawer": {
+    "visible_toggle_bounds": "[947,63][1065,181]",
+    "opened_drawer": "[84,63][1080,2338]",
+    "opened_toggle_text": "关闭菜单",
+    "system_back_closed": true,
+    "system_back_app_resumed": "com.agentbrowser.probe/.MainActivity"
+  },
+  "instrumentation": {
+    "runner": "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner",
+    "class": "com.agentbrowser.probe.LayoutDeviceTest",
+    "result": "OK (2 tests)",
+    "exit_code": 0
+  },
+  "evidence": {
+    "portrait_screenshot": "screenshots/10-installed-green-portrait.png",
+    "portrait_xml": "raw/10-installed-green-portrait-full.xml",
+    "portrait_dumpsys": "raw/11-installed-green-window-displays.txt",
+    "drawer_screenshot": "screenshots/20-installed-green-drawer-open.png",
+    "drawer_xml": "raw/20-installed-green-drawer-open.xml",
+    "back_screenshot": "screenshots/30-installed-green-back-closed.png",
+    "back_xml": "raw/30-installed-green-back-closed.xml",
+    "landscape_screenshot": "screenshots/40-installed-green-landscape.png",
+    "landscape_xml": "raw/40-installed-green-landscape.xml",
+    "restored_screenshot": "screenshots/50-installed-green-restored-portrait.png",
+    "restored_xml": "raw/50-installed-green-restored-portrait.xml",
+    "instrument_log": "raw/62-installed-green-instrument.log",
+    "assertion_log": "raw/80-local-safe-area-assertions.log",
+    "base_binding": "raw/64-installed-green-base-binding.txt"
+  },
+  "remaining_dependency": "PAIRED_REMOTE_E2E_WAIT"
+}

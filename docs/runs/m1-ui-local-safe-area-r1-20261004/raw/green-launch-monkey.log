@@ -1,0 +1,5 @@
+  bash arg: -p
+  bash arg: com.agentbrowser.probe
+  bash arg: -c
+  bash arg: android.intent.category.LAUNCHER
+  bash arg: 1

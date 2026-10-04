@@ -1,0 +1,4 @@
+
+> agentbrowser-probe@0.1.0 typecheck
+> tsc --noEmit
+
