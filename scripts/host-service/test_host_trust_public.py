@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import shutil
@@ -19,6 +20,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.parse
 from pathlib import Path
 
 
@@ -121,6 +124,364 @@ def manager_error(*arguments: str) -> str:
     except json.JSONDecodeError as error:
         raise AssertionError(f"manager error was not typed JSON: {result.stderr!r}") from error
     return str(value["error"]["code"])
+
+
+def start_manager(*arguments: str) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [str(MANAGER), *arguments],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def assert_export_refused(
+    root: Path,
+    device_id: str,
+    output: Path,
+    expected_code: str,
+    *,
+    membership_receipt: dict[str, object] | None = None,
+    endpoint_receipt: dict[str, object] | None = None,
+) -> None:
+    trust = root / "trust"
+    registry_path = trust / "registry.json"
+    projection_path = trust / "authorized-clients.json"
+    record_path = trust / "devices" / f"{device_id}.json"
+    registry_hash_before = sha256_file(registry_path)
+    projection_hash_before = sha256_file(projection_path)
+    record_hash_before = sha256_file(record_path) if record_path.is_file() else None
+    revision_before = json.loads(registry_path.read_bytes())["authorization_revision"]
+    count_before = len(json.loads(registry_path.read_bytes())["devices"])
+    try:
+        host_service.export_bundle(
+            root,
+            device_id,
+            output,
+            membership_receipt=membership_receipt,
+            endpoint_receipt=endpoint_receipt,
+        )
+        raise AssertionError(f"export_bundle unexpectedly succeeded for {expected_code}")
+    except host_service.ServiceError as error:
+        check(error.code == expected_code, f"expected {expected_code}, got {error.code}: {error}")
+    check(not output.exists(), f"refused export left an output file: {output}")
+    check(sha256_file(registry_path) == registry_hash_before, "refused export mutated the registry")
+    check(sha256_file(projection_path) == projection_hash_before, "refused export mutated the projection")
+    if record_path.is_file():
+        check(sha256_file(record_path) == record_hash_before, "refused export mutated the device record")
+    registry_now = json.loads(registry_path.read_bytes())
+    check(registry_now["authorization_revision"] == revision_before, "refused export advanced the revision")
+    check(len(registry_now["devices"]) == count_before, "refused export changed the device count")
+
+
+MODULE_ENROLL_SOURCE = r"""
+import json, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[4])
+import host_service
+root = Path(sys.argv[1])
+flag = Path(sys.argv[2])
+label = sys.argv[3]
+deadline = time.time() + 30
+while not flag.exists() and time.time() < deadline:
+    time.sleep(0.01)
+if not flag.exists():
+    print(json.dumps({"state": "barrier_timeout"}), flush=True)
+    raise SystemExit(9)
+try:
+    result = host_service.enroll_device(
+        root,
+        label=label,
+        scopes=["profile_read"],
+        selection="default_profile",
+    )
+except host_service.ServiceError as error:
+    print(json.dumps({"state": "error", "code": error.code, "message": str(error)}), flush=True)
+    raise SystemExit(2)
+print(json.dumps(result), flush=True)
+"""
+
+
+def test_public_mixed_mutation_no_lost_success(root: Path) -> None:
+    """Concurrent public module enrolls and CLI revokes must not lose effects.
+
+    Every public mutation boundary shares one lock, so each caller serializes
+    on the complete registry read/mutate/commit/projection transaction. A
+    successful receipt must therefore survive every other concurrent success.
+    """
+    concurrent_root = root / "concurrent-root"
+    concurrent_root.mkdir(mode=0o700)
+    manager_json(
+        "trust", "init", "--root", str(concurrent_root),
+        "--endpoint-host", "100.64.0.1", "--endpoint-port", "8443",
+    )
+    seed = manager_json(
+        "trust", "provision", "--root", str(concurrent_root), "--label", "Seed",
+        "--scope", "profile_read", "--initial-profile", "default_profile",
+    )
+    revoke_targets = [
+        manager_json(
+            "trust", "provision", "--root", str(concurrent_root), "--label", f"Revoke {index}",
+            "--scope", "profile_read", "--initial-profile", "default_profile",
+        )
+        for index in range(3)
+    ]
+    revision_before = 4
+    registry_path = concurrent_root / "trust" / "registry.json"
+    check(
+        json.loads(registry_path.read_bytes())["authorization_revision"] == revision_before,
+        "seed provisioning did not reach the expected revision",
+    )
+
+    flag = concurrent_root / "go"
+    enroll_processes = [
+        subprocess.Popen(
+            [
+                sys.executable, "-c", MODULE_ENROLL_SOURCE,
+                str(concurrent_root), str(flag), f"Enroll {index}", str(SCRIPT_DIR),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index in range(6)
+    ]
+    revoke_processes = [
+        start_manager(
+            "trust", "revoke", "--root", str(concurrent_root),
+            "--device-id", target["device_id"],
+        )
+        for target in revoke_targets
+    ]
+    flag.write_text("go")
+
+    successful_enrolls: list[dict[str, object]] = []
+    for process in enroll_processes:
+        out, err = process.communicate(timeout=180)
+        check(process.returncode == 0, f"module enroll failed rc={process.returncode}\n{out}\n{err}")
+        receipt = json.loads(out)
+        check(receipt.get("state") == "enrolled", f"module enroll state: {receipt}")
+        successful_enrolls.append(receipt)
+
+    successful_revokes: list[dict[str, object]] = []
+    for process in revoke_processes:
+        out, err = process.communicate(timeout=180)
+        check(process.returncode == 0, f"CLI revoke failed rc={process.returncode}\n{out}\n{err}")
+        receipt = json.loads(out)
+        check(receipt.get("state") == "revoked", f"CLI revoke state: {receipt}")
+        successful_revokes.append(receipt)
+
+    successes = len(successful_enrolls) + len(successful_revokes)
+    registry_bytes = registry_path.read_bytes()
+    registry = json.loads(registry_bytes)
+    devices = {item["device_id"]: item for item in registry["devices"]}
+    for receipt in successful_enrolls:
+        check(receipt["device_id"] in devices, "successful module enroll is not committed")
+        check(devices[receipt["device_id"]]["status"] == "active", "successful enroll is not active")
+    for receipt in successful_revokes:
+        check(
+            devices[receipt["device_id"]]["status"] == "revoked",
+            "successful CLI revocation did not survive",
+        )
+    check(devices[seed["device_id"]]["status"] == "active", "unrelated seed device changed")
+    check(
+        registry["authorization_revision"] == revision_before + successes,
+        f"revision {registry['authorization_revision']} != {revision_before} + {successes} successes",
+    )
+    for device in registry["devices"]:
+        if device["status"] == "active":
+            check(
+                device["initial_profile_grant"]["authorization_revision"] == registry["authorization_revision"],
+                f"active grant for {device['device_id']} is not current",
+            )
+    expected, registry_sha = host_service.refresh_projection(concurrent_root, registry, registry_bytes)
+    check(
+        (concurrent_root / "trust" / "authorized-clients.json").read_bytes() == expected,
+        "published projection does not match the committed registry",
+    )
+    check(sha256_file(registry_path) == registry_sha, "registry digest drifted")
+    record_files = sorted((concurrent_root / "trust" / "devices").glob("*.json"))
+    check(
+        len(record_files) == len(registry["devices"]),
+        "device records and committed registry diverged",
+    )
+
+
+def test_status_owner_and_export_denials(root: Path) -> None:
+    """Status has one owner; export denials are verified from the public API.
+
+    Every receipt here is deliberately malformed, mismatched, or stale. A
+    refusal must never create output, a transfer code, a usable receipt, or any
+    registry/revision/key/profile side effect. Authenticated successful export
+    needs the real catalog/endpoint product and stays NOT_RUN.
+    """
+    denial_root = root / "denial-root"
+    denial_root.mkdir(mode=0o700)
+    manager_json(
+        "trust", "init", "--root", str(denial_root),
+        "--endpoint-host", "100.64.0.1", "--endpoint-port", "8443",
+    )
+    device = manager_json(
+        "trust", "provision", "--root", str(denial_root), "--label", "Denial device",
+        "--scope", "profile_read", "--initial-profile", "profile_id:work",
+    )
+    device_id = device["device_id"]
+    trust = denial_root / "trust"
+    registry_path = trust / "registry.json"
+    projection_path = trust / "authorized-clients.json"
+    output = denial_root / "refused.abconnection"
+
+    cli_status = manager_json("trust", "status", "--root", str(denial_root))
+    module_status = host_service.trust_status(denial_root)
+    for status in (cli_status, module_status):
+        check(status["authorization_state"] == "not_refreshed", f"status claimed {status['authorization_state']}")
+        check(status["endpoint_pid"] is None, "status invented an endpoint PID")
+        check(status["projection_state"] == "current", f"published projection not current: {status['projection_state']}")
+    check(cli_status["authorization_state"] == module_status["authorization_state"], "CLI/module status diverged")
+    check(cli_status["projection_sha256"] == module_status["projection_sha256"], "CLI/module projection digest diverged")
+
+    projection_bytes = projection_path.read_bytes()
+    registry_bytes = registry_path.read_bytes()
+    registry_sha = host_service.sha256_bytes(registry_bytes)
+    projection_sha = host_service.sha256_bytes(projection_bytes)
+    revision = json.loads(registry_bytes)["authorization_revision"]
+    valid_membership = {
+        "device_id": device_id,
+        "catalog_revision": 1,
+        "profile_id": "work",
+    }
+    valid_endpoint = {
+        "status": "refreshed",
+        "endpoint_pid": 424242,
+        "authorization_revision": revision,
+        "registry_sha256": registry_sha,
+        "projection_sha256": projection_sha,
+    }
+
+    # Malformed and mismatched membership receipts are refused.
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={"not": "a receipt"},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "device_id": "00000000-0000-4000-8000-000000000000"},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "profile_id": "other"},
+    )
+    # A missing catalog receipt is an explicit dependency wait, not success.
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_CATALOG_UNAVAILABLE",
+        membership_receipt=None,
+    )
+    # A missing or mismatched endpoint applied receipt is refused.
+    assert_export_refused(
+        denial_root, device_id, output, "ENDPOINT_REFRESH_REQUIRED",
+        membership_receipt=valid_membership,
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROJECTION_MATERIAL_CONFLICT",
+        membership_receipt=valid_membership,
+        endpoint_receipt={**valid_endpoint, "endpoint_pid": -1},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROJECTION_MATERIAL_CONFLICT",
+        membership_receipt=valid_membership,
+        endpoint_receipt={**valid_endpoint, "authorization_revision": revision + 1},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROJECTION_MATERIAL_CONFLICT",
+        membership_receipt=valid_membership,
+        endpoint_receipt={**valid_endpoint, "registry_sha256": "0" * 64},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROJECTION_MATERIAL_CONFLICT",
+        membership_receipt=valid_membership,
+        endpoint_receipt={**valid_endpoint, "projection_sha256": "0" * 64},
+    )
+
+    # Corrupted published projection material is refused and left untouched.
+    projection_path.write_bytes(projection_bytes[: len(projection_bytes) - 10])
+    try:
+        corrupt_status = manager_json("trust", "status", "--root", str(denial_root))
+        check(corrupt_status["projection_state"] == "stale", f"corrupt projection state: {corrupt_status}")
+        check(corrupt_status["authorization_state"] == "not_refreshed", "corrupt projection claimed refreshed")
+        assert_export_refused(
+            denial_root, device_id, output, "PROJECTION_MATERIAL_CONFLICT",
+            membership_receipt=valid_membership,
+            endpoint_receipt=valid_endpoint,
+        )
+    finally:
+        projection_path.write_bytes(projection_bytes)
+
+    # A registry whose active grant is no longer current is refused.
+    stale_registry = json.loads(registry_bytes)
+    for item in stale_registry["devices"]:
+        if item["device_id"] == device_id:
+            item["initial_profile_grant"]["authorization_revision"] = revision - 1
+    registry_path.write_bytes(host_service.serialize_registry(stale_registry))
+    try:
+        assert_export_refused(
+            denial_root, device_id, output, "BUNDLE_NOT_READY",
+            membership_receipt=valid_membership,
+            endpoint_receipt=valid_endpoint,
+        )
+    finally:
+        registry_path.write_bytes(registry_bytes)
+
+    # A newer registry mutation makes the captured endpoint receipt stale.
+    manager_json(
+        "trust", "provision", "--root", str(denial_root), "--label", "Later device",
+        "--scope", "profile_read", "--initial-profile", "default_profile",
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROJECTION_MATERIAL_CONFLICT",
+        membership_receipt=valid_membership,
+        endpoint_receipt=valid_endpoint,
+    )
+
+    # The CLI export path has no receipt input and refuses at the catalog wait.
+    code = manager_error(
+        "trust", "export", "--root", str(denial_root),
+        "--device-id", device_id, "--output", str(output),
+    )
+    check(code == "PROFILE_CATALOG_UNAVAILABLE", f"CLI export code was {code}")
+    check(not output.exists(), "CLI export left an output file")
+
+
+def test_ipv6_url_san(root: Path) -> None:
+    ipv6_root = root / "ipv6-root"
+    ipv6_root.mkdir(mode=0o700)
+    manager_json(
+        "trust", "init", "--root", str(ipv6_root),
+        "--endpoint-host", "fd7a:115c:a1e0::1", "--endpoint-port", "8443",
+    )
+    ca_pem = ipv6_root / "ca.pem"
+    server_pem = ipv6_root / "server.pem"
+    der_to_pem(ipv6_root / "trust" / "ca.der", ca_pem)
+    der_to_pem(ipv6_root / "trust" / "server.der", server_pem)
+    openssl("verify", "-CAfile", str(ca_pem), str(server_pem))
+    san = openssl("x509", "-in", str(server_pem), "-noout", "-ext", "subjectAltName").stdout
+    san_values = [
+        line.split("IP Address:", 1)[1].strip()
+        for line in san.splitlines()
+        if "IP Address:" in line
+    ]
+    check(
+        [ipaddress.ip_address(value) for value in san_values] == [ipaddress.ip_address("fd7a:115c:a1e0::1")],
+        f"IPv6 server SAN mismatch: {san!r}",
+    )
+
+    url = host_service.endpoint_ws_url("fd7a:115c:a1e0::1", "ip", 8443)
+    parsed = urllib.parse.urlsplit(url)
+    check(parsed.scheme == "wss", f"IPv6 URL scheme: {parsed.scheme!r}")
+    check(parsed.hostname == "fd7a:115c:a1e0::1", f"IPv6 URL hostname: {parsed.hostname!r}")
+    check(parsed.port == 8443, f"IPv6 URL port: {parsed.port!r}")
+    check(parsed.username is None and parsed.password is None, "IPv6 URL contains userinfo")
+    check(host_service.endpoint_ws_url("100.64.0.1", "ip", 8443).startswith("wss://100.64.0.1:8443/"), "IPv4 URL drifted")
+    check(host_service.endpoint_ws_url("host.example", "dns", 8443).startswith("wss://host.example:8443/"), "DNS URL drifted")
 
 
 def der_to_pem(der_path: Path, pem_path: Path) -> None:
@@ -393,6 +754,12 @@ def run(root: Path) -> None:
     device_b_record = json.loads((trust / "devices" / f"{device_b['device_id']}.json").read_bytes())
     device_b_der = base64.b64decode(device_b_record["client_certificate_der_base64"])
     check(extracted_der.read_bytes() == device_b_der, "exported client cert is not the enrolled B cert")
+
+    # 13. r3 review repairs: public mutation lock, one status owner, IPv6 URL,
+    #     and verified public export denials.
+    test_public_mixed_mutation_no_lost_success(root)
+    test_status_owner_and_export_denials(root)
+    test_ipv6_url_san(root)
 
     # No private material may appear in the emitted receipts.
     for receipt in (initialized, device_a, device_b, revoked, status, partial):

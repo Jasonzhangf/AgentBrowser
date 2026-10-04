@@ -201,6 +201,26 @@ after atomic publication and reported only through typed status or refresh
 receipts. Install creates an empty revision-0 projection, so a deny-all endpoint
 can start before the first device is enrolled.
 
+Every public authorization mutation (`enroll_device` and `revoke_device`, and
+the `trust provision`/`trust revoke` CLI wrappers that call them) holds the one
+shared `run/.start.lock` across the complete registry read, mutation, registry
+commit, and projection publication. The CLI wrappers do not take the lock
+themselves, so a public module caller and a CLI caller serialize on the same
+boundary and cannot overwrite each other's committed revision or revoke. A
+`PARTIAL_REGISTRY_COMMIT` receipt still reports the committed revision after the
+registry commit succeeds and projection publication fails.
+
+`trust_status` is the single public status calculation behind both
+`trust status` and `trust_summary`. It reads the registry file once, decodes and
+validates those same bytes, and compares the published projection bytes to the
+exact projection derived from the committed registry, so a mismatched client
+set is detected, not just a mismatched header. `projection_state` reports the
+publication fact (`missing`, `current`, or `stale`). `authorization_state`
+reports endpoint-applied authorization and stays `not_refreshed` with
+`endpoint_pid: null` until the endpoint owner supplies a current matching typed
+receipt; the declared `deny_all` and `refreshed` values are never inferred from
+file publication, a PID file, a health probe, or a log.
+
 ```sh
 scripts/host-service/host-service trust init \
   --root "$HOME/Library/Application Support/AgentBrowser/host-service" \
@@ -238,6 +258,11 @@ non-sensitive fields; the transfer code stays in process. The typed errors are
 `PROJECTION_WRITE_FAILED`, and the `PARTIAL_REGISTRY_COMMIT` receipt, which
 carries the actual committed revision and digests.
 
+The connection bundle URL authority is built by `endpoint_ws_url`. It brackets
+an accepted IPv6 literal (`wss://[fd7a:115c:a1e0::1]:8443/`) so the host and
+port stay parseable, while the certificate SAN keeps the unbracketed address
+(`fd7a:115c:a1e0::1`). DNS names and IPv4 literals are unchanged.
+
 The projection module is the whole trust-authority API surface. The future Mac
 `HostProvisioningBridge` maps its typed methods (`enrollDevice`, `revokeDevice`,
 `refreshAuthorizedClients`, `exportBundle`) onto these functions. The Browser
@@ -254,7 +279,20 @@ the A/B enroll and revoke revision matrix, invalid scope/selection refusal, the
 exact external projection digest and absence of a self-hash, the declared empty
 and nonempty vectors, an own-filesystem projection write failure that exposes
 committed/partial truth, and a real PKCS#12 with exactly the three allowed
-aliases. It prints private material only as public hashes.
+aliases. It also launches concurrent public module enrolls and CLI revocations
+behind an external start barrier and asserts every successful receipt stays
+committed, every revocation survives, the revision advances once per success,
+every active grant is current, and no orphan device record is left. It checks
+CLI/module status agreement for the published-but-not-applied and corrupted
+projection cases, a real generated IPv6 certificate SAN and its bracketed URL,
+and public `export_bundle` refusals for malformed/mismatched membership and
+endpoint receipts, wrong registry/projection material, and stale receipts. It
+prints private material only as public hashes.
+
+Authenticated successful export and Android consumption remain `NOT_RUN` here:
+they need the real Host catalog membership and endpoint applied receipts from
+their owning modules. The public consumer verifies only malformed-input refusal
+and never fabricates a positive receipt or treats a fixture as a usable bundle.
 
 ## launchd boundary
 

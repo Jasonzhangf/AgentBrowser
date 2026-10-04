@@ -721,7 +721,7 @@ def socket_path_is_safe(socket_dir: Path) -> None:
             )
 
 
-def acquire_start_lock(root: Path) -> int:
+def acquire_start_lock(root: Path, *, blocking: bool = False) -> int:
     lock = root / "run" / ".start.lock"
     assert_private_directory(root)
     assert_private_directory(lock.parent)
@@ -732,7 +732,7 @@ def acquire_start_lock(root: Path) -> int:
     fd: int | None = None
     try:
         fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as error:
         if fd is not None:
             os.close(fd)
@@ -1500,6 +1500,18 @@ def endpoint_host_san(value: str) -> tuple[str, str]:
     return "ip", str(address)
 
 
+def endpoint_ws_url(host: str, host_kind: str, port: int) -> str:
+    """Build the WSS endpoint URL for an already accepted endpoint host.
+
+    The certificate SAN uses the unbracketed IP literal, but a URL authority
+    must bracket an IPv6 literal so the host and port stay parseable.
+    """
+    authority = host
+    if host_kind == "ip" and crypto_modules().ipaddress.ip_address(host).version == 6:
+        authority = f"[{host}]"
+    return f"wss://{authority}:{port}/"
+
+
 def _key_usage(x509: object, *, digital_signature: bool, key_encipherment: bool, key_cert_sign: bool) -> object:
     return x509.KeyUsage(
         digital_signature=digital_signature,
@@ -1781,13 +1793,22 @@ def validate_registry(registry: object) -> None:
         seen.add(device["device_id"])
 
 
+def parse_trust_registry(registry_bytes: bytes) -> dict[str, object]:
+    try:
+        registry = json.loads(registry_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ServiceError(f"invalid trust registry: {error}") from error
+    if not isinstance(registry, dict):
+        raise ServiceError("trust registry must be a JSON object")
+    validate_registry(registry)
+    return registry
+
+
 def load_trust_registry(root: Path) -> dict[str, object]:
     path = trust_path(root, TRUST_REGISTRY_NAME)
     if not path.is_file():
         raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
-    registry = load_json(path, "trust registry")
-    validate_registry(registry)
-    return registry
+    return parse_trust_registry(path.read_bytes())
 
 
 def find_device(registry: dict[str, object], device_id: str) -> dict[str, object] | None:
@@ -1925,34 +1946,47 @@ def command_trust_init(args: argparse.Namespace) -> int:
         release_start_lock(lock_fd)
 
 
-def command_trust_status(args: argparse.Namespace) -> int:
-    root = root_from(args.root)
-    registry = load_trust_registry(root)
-    registry_bytes = trust_path(root, TRUST_REGISTRY_NAME).read_bytes()
-    registry_sha = sha256_bytes(registry_bytes)
+def projection_publication_state(
+    root: Path,
+    registry: dict[str, object],
+    registry_bytes: bytes,
+) -> tuple[str, str | None]:
     projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-    projection_sha = None
-    authorization_state = "not_refreshed"
-    if projection_path.is_file():
-        projection_bytes = projection_path.read_bytes()
-        projection_sha = sha256_bytes(projection_bytes)
-        projection = json.loads(projection_bytes.decode("utf-8"))
-        if (
-            projection.get("authorization_revision") == registry["authorization_revision"]
-            and projection.get("registry_sha256") == registry_sha
-        ):
-            active = [device for device in registry["devices"] if device["status"] == "active"]
-            authorization_state = "deny_all" if not active else "refreshed"
-        else:
-            authorization_state = "stale"
+    if not projection_path.is_file():
+        return "missing", None
+    projection_bytes = projection_path.read_bytes()
+    projection_sha = sha256_bytes(projection_bytes)
+    expected, _ = refresh_projection(root, registry, registry_bytes)
+    return ("current" if projection_bytes == expected else "stale"), projection_sha
+
+
+def trust_status(root: Path) -> dict[str, object]:
+    """Single public calculation of committed trust state.
+
+    Projection publication is a file fact owned here. Endpoint applied
+    authorization is not: it requires the endpoint owner's typed receipt
+    (revision + registry/projection material + PID). That receipt boundary is
+    not implemented in this module, so ``authorization_state`` stays
+    ``not_refreshed`` and no endpoint PID is invented. The declared
+    ``deny_all``/``refreshed`` values remain reserved for the endpoint receipt.
+    """
+    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
+    if not registry_path.is_file():
+        raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
+    registry_bytes = registry_path.read_bytes()
+    registry = parse_trust_registry(registry_bytes)
+    registry_sha = sha256_bytes(registry_bytes)
+    projection_state, projection_sha = projection_publication_state(root, registry, registry_bytes)
     active_devices = [device for device in registry["devices"] if device["status"] == "active"]
-    emit({
+    return {
         "state": "trust",
         "host_id": registry["host_id"],
         "authorization_revision": registry["authorization_revision"],
         "registry_sha256": registry_sha,
         "projection_sha256": projection_sha,
-        "authorization_state": authorization_state,
+        "projection_state": projection_state,
+        "authorization_state": "not_refreshed",
+        "endpoint_pid": None,
         "active_clients": len(active_devices),
         "devices": [
             {
@@ -1966,11 +2000,36 @@ def command_trust_status(args: argparse.Namespace) -> int:
             }
             for device in registry["devices"]
         ],
-    })
+    }
+
+
+def command_trust_status(args: argparse.Namespace) -> int:
+    emit(trust_status(root_from(args.root)))
     return 0
 
 
 def enroll_device(
+    root: Path,
+    *,
+    label: str,
+    scopes: list[str] | None,
+    selection: object,
+    validity_days: int = DEFAULT_CERT_VALIDITY_DAYS,
+) -> dict[str, object]:
+    lock_fd = acquire_start_lock(root, blocking=True)
+    try:
+        return _enroll_device_locked(
+            root,
+            label=label,
+            scopes=scopes,
+            selection=selection,
+            validity_days=validity_days,
+        )
+    finally:
+        release_start_lock(lock_fd)
+
+
+def _enroll_device_locked(
     root: Path,
     *,
     label: str,
@@ -2079,22 +2138,26 @@ def enroll_device(
 
 def command_trust_provision(args: argparse.Namespace) -> int:
     root = root_from(args.root)
-    lock_fd = acquire_start_lock(root)
-    try:
-        result = enroll_device(
-            root,
-            label=args.label,
-            scopes=args.scope,
-            selection=parse_initial_profile(args.initial_profile),
-            validity_days=args.validity_days,
-        )
-    finally:
-        release_start_lock(lock_fd)
+    result = enroll_device(
+        root,
+        label=args.label,
+        scopes=args.scope,
+        selection=parse_initial_profile(args.initial_profile),
+        validity_days=args.validity_days,
+    )
     emit(result)
     return 0 if result.get("state") != "partial" else PARTIAL_EXIT_CODE
 
 
 def revoke_device(root: Path, device_id: str) -> dict[str, object]:
+    lock_fd = acquire_start_lock(root, blocking=True)
+    try:
+        return _revoke_device_locked(root, device_id)
+    finally:
+        release_start_lock(lock_fd)
+
+
+def _revoke_device_locked(root: Path, device_id: str) -> dict[str, object]:
     registry = load_trust_registry(root)
     device = find_device(registry, device_id)
     if device is None:
@@ -2150,11 +2213,7 @@ def revoke_device(root: Path, device_id: str) -> dict[str, object]:
 
 def command_trust_revoke(args: argparse.Namespace) -> int:
     root = root_from(args.root)
-    lock_fd = acquire_start_lock(root)
-    try:
-        result = revoke_device(root, args.device_id)
-    finally:
-        release_start_lock(lock_fd)
+    result = revoke_device(root, args.device_id)
     emit(result)
     return 0 if result.get("state") != "partial" else PARTIAL_EXIT_CODE
 
@@ -2285,7 +2344,11 @@ def export_bundle(
     transfer_code = generate_transfer_code()
     p12 = build_device_transfer_p12(root, device_id, transfer_code)
     endpoint = trust_endpoint(root)
-    endpoint_url = f"wss://{endpoint['endpoint_host']}:{endpoint['endpoint_port']}/"
+    endpoint_url = endpoint_ws_url(
+        str(endpoint["endpoint_host"]),
+        str(endpoint["endpoint_host_kind"]),
+        int(endpoint["endpoint_port"]),
+    )
     document = {
         "format": "agentbrowser.connection",
         "version": 1,
@@ -2330,29 +2393,14 @@ def command_trust_export(args: argparse.Namespace) -> int:
 def trust_summary(root: Path) -> dict[str, object] | None:
     if not trust_path(root, TRUST_REGISTRY_NAME).is_file():
         return None
-    registry = load_trust_registry(root)
-    registry_bytes = trust_path(root, TRUST_REGISTRY_NAME).read_bytes()
-    registry_sha = sha256_bytes(registry_bytes)
-    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-    authorization_state = "not_refreshed"
-    projection_sha = None
-    if projection_path.is_file():
-        projection_sha = sha256_bytes(projection_path.read_bytes())
-        projection = json.loads(projection_path.read_text(encoding="utf-8"))
-        if (
-            projection.get("authorization_revision") == registry["authorization_revision"]
-            and projection.get("registry_sha256") == registry_sha
-        ):
-            active = [device for device in registry["devices"] if device["status"] == "active"]
-            authorization_state = "deny_all" if not active else "refreshed"
-        else:
-            authorization_state = "stale"
+    status = trust_status(root)
     return {
-        "authorization_revision": registry["authorization_revision"],
-        "authorization_state": authorization_state,
-        "registry_sha256": registry_sha,
-        "projection_sha256": projection_sha,
-        "endpoint_pid": None,
+        "authorization_revision": status["authorization_revision"],
+        "authorization_state": status["authorization_state"],
+        "registry_sha256": status["registry_sha256"],
+        "projection_sha256": status["projection_sha256"],
+        "projection_state": status["projection_state"],
+        "endpoint_pid": status["endpoint_pid"],
     }
 
 
