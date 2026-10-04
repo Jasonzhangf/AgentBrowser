@@ -700,6 +700,7 @@ window.addEventListener('message', event => {
     state.repairCancelledOnce = false;
     state.commands.length = 0;
     stats.events.length = 0;
+    state.presentation = 'browsing';
     return;
   }
   if (event.data?.type === 'presentation-status-recover') {
