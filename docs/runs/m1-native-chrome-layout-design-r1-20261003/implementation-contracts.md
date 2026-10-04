@@ -23,21 +23,27 @@ Status: `DESIGN_CONTRACT`，编码前需独立 design PASS。产品 source 零 d
 
 ```ts
 layout?: {
-  windowFrameRect: Rect;
+  drawableWindowRect: Rect;
+  safeContentRect: Rect;
   advertisedViewportRect: Rect;
   presentedContentRect: Rect;
   chromeRect: Rect;
   webRect: Rect;
   visibleContent: 'webview' | 'native-video';
+  displayedFrame?: { generation: number; sessionId: string; tabId: string; documentRevision: number; viewportRevision: number };
+  currentTabId: string | null;
+  presentationViewport: Rect;
+  geometryMatches: boolean;
   presentation: 'browsing' | 'overlay';
   revision: number;
 }
 ```
 
-`Rect` 为 `{x:number;y:number;width:number;height:number}`，全部非负、尺寸 >= 0，单位为 dp（Android）/ AppKit point（Mac）；CSS px 只用于 `ViewportDeclaration`。
+`Rect` 为 `{x:number;y:number;width:number;height:number}`，全部非负、尺寸 >= 0，位于同一 native 本地 origin，单位为 dp（Android）/ AppKit point（Mac）；CSS px 只用于 `ViewportDeclaration`。Android 的本地 origin 是 edge-to-edge window/root；screenshot/display origin 只用于证据换算。
 
 - `set_presentation` 是同步 typed 命令；成功返回 `{status:'applied', geometry:{webRect, revision}}`，失败以 `{rejection}`/`{status:'rejected', reason}` 返回；UI 不自行回滚几何。
-- `layout.presentation.visibleContent` 只能来自本地几何 owner 的 typed 判定（§5.2），不来自 DOM/firstframe/日志。
+- `layout.presentation.visibleContent` 只能来自本地显示 owner 在 frame 实际显示确认后写入的 displayed identity + geometry match（§5.2），不来自 DOM/首帧到达/日志，也不来自 `inputReady`。
+- `set_presentation` 与本地抽屉不要求远端 writer/control 权限；`NO_AUTHORITY` 只表示 native presentation 自身无权限。Host writer authority 只在真正发送远端写 input 的边界校验。
 - Android/Mac 必须在主线程响应；UI `request` 已通过 Promise/JS bridge 同步。
 - 冻结 `rejection.reason` 取值：`NO_AUTHORITY`、`ACTIVITY_NOT_RESUMED`、`GEOMETRY_UNAVAILABLE`。
 
@@ -46,7 +52,7 @@ layout?: {
 - `reportViewport()` 只读 `advertisedViewportRect`，禁止读 `stage.getWidth()/getHeight()`。
 - 触发集：旋转 / 物理窗口变化、system bars 变化、薄 chrome 高度变化。明确不触发：local 地址栏 IME、remote 编辑 IME、drawer、backdrop、`presentation` 切换、连接态切换。
 - `presentedContentRect` 才随 IME 收缩；原生等比 fit、caret、选区、composition 共用它。
-- Android：Manifest 显式 `android:windowSoftInputMode="adjustResize"`；root insets listener 只扣 `systemBars()`，IME inset 单独只喂 `presentedContentRect`；申报用 `WindowMetrics`（API 30+）+ system bars + 薄 chrome。
+- Android：采用单一 edge-to-edge root；Manifest 显式 `android:windowSoftInputMode="adjustResize"`；root insets listener 只扣 `systemBars()`，IME inset 单独只喂 `presentedContentRect`；`WindowMetrics` 物理 px 先减 window/root 坐标偏移并按 density 转 dp，root 不重复扣 bars，`safeContentRect` 显式扣 bars 一次，`advertisedViewportRect`/`chromeRect` 从 `safeContentRect` 派生。
 - Mac：`advertisedViewportRect == presentedContentRect`（points）；`updateViewport()` 不再乘 `backingScaleFactor`，断连且无矩形时不申报。
 
 ## Android contract
@@ -54,17 +60,17 @@ layout?: {
 1. 移除 `layoutChrome()`（L136-142）的 370/136 面板语义。
 2. Manifest 增加 `android:windowSoftInputMode="adjustResize"`（当前缺失，否则 IME 走 adjustPan）。
 3. 根容器改 `FrameLayout`；root insets listener（L54-58）只扣 `systemBars()`，IME inset 单独读、只喂 `presentedContentRect`；`stage` 位于 `advertisedViewportRect`（浏览态）。
-4. `WebView` 容器 `webRect`：未具正式原生呈现状态或 `visibleContent='webview'` 时为 `windowFrameRect`（全应用，含顶部 chrome，空态可见）；`visibleContent='native-video'` 浏览态时为 `chromeRect`；overlay 态为 `windowFrameRect`。
+4. `WebView` 容器 `webRect`：无有效 displayed frame、几何不匹配或 `visibleContent='webview'` 时为 `drawableWindowRect`（全应用，含顶部 chrome，空态可见）；`visibleContent='native-video'` 浏览态时为 `chromeRect`；overlay 态为 `drawableWindowRect`。
 5. `reportViewport()`（L307-313）改从 `WindowMetrics + system bars + 薄 chrome` 派生 `advertisedViewportRect`；overlay 开关、backdrop、IME 不触发。
 6. Overlay 打开时 `webView.bringToFront()`；关闭后 `stage.bringToFront()`；不发送 pointer 事件到 RemoteIme 或页面。
 7. 触摸在浏览态只走 `video`/`stage`；全应用态/overlay 只走 WebView；`main[data-remote=true] .viewer` 保持 `pointer-events:none`（CSS L95）。
-8. 旋转：唯一 resize 触发，重测 `advertisedViewportRect` 并申报；drawer 打开时保留 overlay，`webRect` 重算为新 `windowFrameRect`；drawer 关闭时恢复浏览态几何。IME 变化只重算 `presentedContentRect`，不申报。
+8. 旋转：唯一 resize 触发，重测 `advertisedViewportRect` 并申报；drawer 打开时保留 overlay，`webRect` 重算为新 `drawableWindowRect`；drawer 关闭时恢复浏览态几何。IME 变化只重算 `presentedContentRect`，不申报。
 9. Close/back/cancel 真实焦点：系统 Back 先关 overlay 再关 drawer，app 留前台；地址栏 focus 关闭时保留到调用控件；远端编辑 focus 由 `RemoteImeView.sync()`（L45-63）决定开关，不因 drawer 改变而误发。
 
 ## Mac contract
 
 1. 移除 `NSSplitViewController` 双最小 320 panel（main.swift L1465-1475）；换成单 content view（`NSView` 容器）。
-2. 同一 `WKWebView`：未具正式原生呈现状态或 `visibleContent='webview'` 时为 content bounds（全应用）；`visibleContent='native-video'` 浏览态时以 `chromeRect` 置顶；overlay 态扩展为 content bounds。`VideoSurfaceView` 填 `presentedContentRect`。
+2. 同一 `WKWebView`：无有效 displayed frame、几何不匹配或 `visibleContent='webview'` 时为 content bounds（全应用）；`visibleContent='native-video'` 浏览态时以 `chromeRect` 置顶；overlay 态扩展为 content bounds。`VideoSurfaceView` 填 `presentedContentRect`。
 3. `updateViewport()`（L1523-1530）改从 `advertisedViewportRect`（AppKit points）计算 CSS px，不再乘 `backingScaleFactor`；断连且无矩形时不申报。
 4. 鼠标：浏览态且 `visibleContent='native-video'` 时才走现有 `mouseDown/Dragged/Up/scrollWheel`（L574-673）；全应用态/overlay 态 WebView 消费 mouse，不转发 DOM。
 5. `firstRect(forCharacterRange:)`（L1404）继续用同一 `viewPoint()`；overlay 时 caret 不可见，关闭后再由远端 context 恢复。
@@ -87,10 +93,16 @@ layout?: {
 
 同一 commit 中不得两作者同时修改上述共享文件；主控串行交接，冲突回退到最先失败的 owner。
 
+## UI consumer binding
+
+- `main.tsx` 的 `.viewer` 不得再以 `connected` 作为 `data-ready`；改为消费 native layout projection 中“有效 displayed frame + `geometryMatches`”的正式可见性。
+- `probe.css` 的 `.viewer[data-ready="true"] .viewer-surface { visibility: hidden; opacity: 0; }` 只在 `visibleContent === 'native-video'` 时命中；`data-ready` 为 false 时空态可见。`native-video` 时 `.viewer` 继续保持透明（`main[data-remote="true"] .viewer`）。
+- 复用既有 `.viewer-empty`，不新增 renderer/DOM/第二输入框。`inputReady` 只可继续用于写权限判断，不得决定空态或视频可见性。
+
 ## Tests
 
-- 单元：`packages/client-domain/probe.test.ts` 覆盖 `set_presentation`（含 `id`、`applied`/`rejected` 与三个 reason）和 `layout` 投影校验（六矩形 + `revision`）。
+- 单元：`packages/client-domain/probe.test.ts` 覆盖 `set_presentation`（含 `id`、`applied`/`rejected` 与三个 reason）和 `layout` 投影校验（`drawableWindowRect`/`safeContentRect`/`advertisedViewportRect`/`presentedContentRect`/`chromeRect`/`webRect`/`presentationViewport`/`revision` 及 `displayedFrame`/`geometryMatches`）。
 - 白盒：不新增 JS hit-test 断言；现有 `ui-contract.test.ts` 仍保留。
-- 公开 consumer：`w4-ui-consumer` 增加 `presentation` 场景，证明 overlay intent 只在 drawer 事件出现一次、关闭后再发一次 `browsing`、全程不产生 viewport 命令。
+- 公开 consumer：`w4-ui-consumer` 增加 `presentation` 场景，覆盖 connected 但无有效 displayed frame → 空态可见；有效 displayed frame → native-video 透明；observe/control 交还/operation pending 不改变可见性；证明 overlay intent 只在 drawer 事件出现一次、关闭后再发一次 `browsing`、全程不产生 viewport 命令。
 - 生命周期：consumer 覆盖 rejected（无假成功）、Back（先 overlay 后 drawer）、卸载（资源释放一次）。
 - 本 run 不执行 product test；只作为后续编码验收的合同输入。

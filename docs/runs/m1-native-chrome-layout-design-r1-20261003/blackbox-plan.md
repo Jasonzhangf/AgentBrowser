@@ -8,8 +8,9 @@ Status: `PLAN_READY` / `NOT_EXECUTED`。下列命令和断言留给实现后、�
 
 - 候选 commit/tree + APK/app hash、安装版本、`ANDROID_SERIAL` / Mac 启动方式
 - 截图 + 同帧 `adb -s "$ANDROID_SERIAL" shell uiautomator dump` 的 Accessibility XML（Mac 用 `osascript`/Accessibility 查询）
-- 每次操作前后同帧读取 `layout` 投影（`windowFrameRect/advertisedViewportRect/presentedContentRect/chromeRect/webRect/visibleContent/presentation/revision`）与 Host `viewportRevision`
+- 每次操作前后同帧读取 `layout` 投影（`drawableWindowRect/safeContentRect/advertisedViewportRect/presentedContentRect/chromeRect/webRect/visibleContent/displayedFrame/currentTabId/geometryMatches/presentation/revision`）与 Host `viewportRevision`
 - 成功/失败/副作用写作 JSON `evidence/*.json` + PNG + XML；`rejection.reason` 原样保留
+- 截图/XML 像素断言必须先实测 app window offset、density、systemBars insets，再从 typed Rect 换算；不得把未测量的 `[0,0][1080,2400]` 当固定 PASS。
 
 ## 真实安装与执行步骤（不属本 run）
 
@@ -29,20 +30,20 @@ bash scripts/build-macos.sh   # install 按项目批准入口，不属本 run
 
 1. 冷启动，等待 UI。
 2. 断言：
-   - `visibleContent == 'webview'`，`webRect == windowFrameRect`，`.viewer-empty` 在内容区居中，顶栏与内容区同一 WebView。
-   - 无 370dp 底部空面板：`webRect` 高度 ≈ 窗口高度（减 system bars），非 `136/370dp` 面板。
+   - `visibleContent == 'webview'`，`webRect == drawableWindowRect`，`.viewer-empty` 在内容区居中，顶栏与内容区同一 WebView。
+   - 无 370dp 底部空面板：`webRect` 高度等于实际 drawable window 高度（本地 dp），不是 `136/370dp` 面板。
    - 无第二网页输入框：DOM/XML 只有 `#address` 一个输入框。
-3. 点 `#drawer-toggle`：断言 backdrop + drawer bounds == `[0,0][1080,2400]`，底部不被截断；`presentation == 'overlay'`，`webRect == windowFrameRect`。
+3. 点 `#drawer-toggle`：断言 backdrop + drawer bounds == 实际 `drawableWindowRect`（按实测 offset/density 换算截图像素），底部不被截断；drawer 内容避开 systemBars；`presentation == 'overlay'`，`webRect == drawableWindowRect`。
 4. 副作用：全程 `viewportRevision` 前后不变；`webView` 未 reload（页面 JS 计数保持）。
 
 ## L2 已连接内容与远端 viewport（P1 #1/#2）
 
 需要独立下发 Host/runtime；本 run 不执行。
 
-1. 连接真实或开发 Host，`inputReady == true` 后：断言 `visibleContent == 'native-video'`，`webRect == chromeRect`，原生视频填 `presentedContentRect`。
-2. 记录 `viewportRevision`（RevBefore）。
-3. 打开 drawer：断言 video 被 overlay 遮蔽（截图），`presentation == 'overlay'`，`webRect == windowFrameRect`。
-4. 关闭 drawer：断言 video 回到同一 `presentedContentRect`、同一 viewpoint；`viewportRevision == RevBefore`（**not** 允许变化）。
+1. 连接真实或开发 Host，等 native 实际显示 frame 并满足 typed session/document/effective viewport/geometry 匹配后：断言 `visibleContent == 'native-video'`，`webRect == chromeRect`，原生视频填 `presentedContentRect`。
+2. **可见性与 input 分离**：在 observe、waiting、交还控制、`commandPending`/`operation running` 各阶段保持有效 displayed frame，断言 `visibleContent` 仍为 `native-video`，不因 `inputReady=false` 切空态。
+3. 制造 connected 但无有效 displayed frame（首帧前、viewport pending 或几何失配）：断言 `visibleContent == 'webview'` 且 `.viewer-empty` 可见；随后 frame 实际显示，断言转为 `native-video` 且 `.viewer-surface` 隐藏。
+4. 记录 `viewportRevision`（RevBefore）。打开 drawer：断言 video 被 overlay 遮蔽（截图），`presentation == 'overlay'`，`webRect == drawableWindowRect`；关闭 drawer 后回到同一 `presentedContentRect`、同一 viewpoint，`viewportRevision == RevBefore`。
 
 ## L3 local / remote IME 前后 viewport 不变（P1 #1）
 
@@ -58,20 +59,20 @@ bash scripts/build-macos.sh   # install 按项目批准入口，不属本 run
 
 1. 记录 RevBefore、session/document/control。
 2. 旋转设备。
-3. 断言：`advertisedViewportRect` 变为新 orientation 尺寸，`viewportRevision != RevBefore`（**必须变化一次**）；session/document/control 不变；drawer 关闭时恢复浏览态几何，drawer 打开时保留 overlay 且 `webRect` == 新 `windowFrameRect`。
+3. 断言：`advertisedViewportRect` 变为新 orientation 尺寸，`viewportRevision != RevBefore`（**必须变化一次**）；session/document/control 不变；drawer 关闭时恢复浏览态几何，drawer 打开时保留 overlay 且 `webRect` == 新 `drawableWindowRect`。
 4. 旋转后输入：touch/caret 用新 transform 命中，恢复可编辑。
 
 ## L5 rejected intent / no authority（P1 #3）
 
-1. 制造无 authority 或未 resumed 状态（例如 Activity 后台/`GEOMETRY_UNAVAILABLE` 注入，方法由作者声明）。
+1. 制造 native presentation 自身无法应用的 `NO_AUTHORITY`、未 resumed 或 `GEOMETRY_UNAVAILABLE` 状态（方法由作者声明）；不能拿远端 observe 当 `NO_AUTHORITY`。
 2. UI 发 `set_presentation({id, state:'overlay'})`。
-3. 断言：native 返回 `{status:'rejected', reason}`（reason 为 `NO_AUTHORITY`/`ACTIVITY_NOT_RESUMED`/`GEOMETRY_UNAVAILABLE` 之一）；UI 不显示有效 overlay 状态；drawer 不误拦截远端点击（远端 operation 计数不变）；`webRect` 不改。
+3. 断言：native 返回 `{status:'rejected', reason}`（reason 为 `NO_AUTHORITY`/`ACTIVITY_NOT_RESUMED`/`GEOMETRY_UNAVAILABLE` 之一）；UI 不显示有效 overlay 状态；drawer 不误拦截远端点击（远端 operation 计数不变）；`webRect` 不改。另用 observe 用户重复 `set_presentation`，断言本地抽屉仍可打开且不要求远端 writer 权限。
 
 ## L6 Back / overlay dispose / 重连 / 资源恢复（P1 #3）
 
 1. **系统 Back**：overlay 打开时按 Back → 断言先关 overlay（`presentation` 经 `applied` 回 `browsing`）再关 drawer，app 留前台，无远端导航。
 2. **overlay dispose**：overlay 打开时旋转/切后台再回，断言 overlay 保留或按 §5.3 规则回落，`revision` 自增，输入恢复。
-3. **重连**：drawer overlay 中断网 → 断言 `visibleContent == 'webview'`、`webRect == windowFrameRect`、空态+错误可见；重连成功且 `inputReady` 后回 `native-video`。
+3. **重连**：drawer overlay 中断网 → 断言 `visibleContent == 'webview'`、`webRect == drawableWindowRect`、空态+错误可见；重连成功且 native 实际显示新 frame 后回 `native-video`。
 4. **资源恢复**：`onStop`/`onDestroy` 后断言永久资源（insets listener、layout listener、webView、RemoteImeView、Mac Timer）按 §6.2 释放一次；drawer 反复开关**不**重建任何永久资源（listener 计数不变）。
 
 ## L7 Edge target and caret
@@ -95,13 +96,23 @@ bash scripts/build-macos.sh   # install 按项目批准入口，不属本 run
   "device": {"serial": "<ANDROID_SERIAL>", "os": "<ver>", "ime": "<id>"},
   "artifact": "evidence/L2-open.png",
   "xml": "evidence/L2-open-window.xml",
+  "measurement": {
+    "windowOffsetPx": "[0,0]",
+    "density": 3.0,
+    "systemBarsInsetsPx": "[0,63,0,63]"
+  },
   "layout": {
-    "windowFrameRect": "[0,0][1080,2400]",
-    "advertisedViewportRect": "[0,63][1080,2271]",
-    "presentedContentRect": "[0,63][1080,2271]",
-    "chromeRect": "[0,63][1080,279]",
-    "webRect": "[0,0][1080,2400]",
+    "drawableWindowRect": "[0,0][360,800]",
+    "safeContentRect": "[0,21][360,779]",
+    "advertisedViewportRect": "[0,93][360,779]",
+    "presentedContentRect": "[0,93][360,779]",
+    "chromeRect": "[0,21][360,93]",
+    "webRect": "[0,0][360,800]",
     "visibleContent": "webview",
+    "displayedFrame": null,
+    "currentTabId": null,
+    "presentationViewport": "[0,93][360,779]",
+    "geometryMatches": false,
     "presentation": "overlay",
     "revision": 7
   },

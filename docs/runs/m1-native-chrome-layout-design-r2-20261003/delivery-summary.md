@@ -38,4 +38,3 @@
 ## 下一步
 
 独立 review 校验（新 candidtate SHA/tree 由提交回执给出）。PASS 后主控按序列交接 AB-04 Android/Mac + AB-02/03 UI/domain 实施。
-

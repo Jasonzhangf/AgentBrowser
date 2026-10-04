@@ -1,7 +1,7 @@
 {
   "id": "m1-native-chrome-layout",
   "version": "2",
-  "description": "原生布局与抽屉补链：布局意图 -> 四矩形 + presentation -> 输入路由 -> overlay 生命周期与资源释放 -> typed 结果唯一出口。P1#1 用 AdvertisedViewportRect/PresentedContentRect 分离申报与呈现；P1#2 用同一 WebView 承载空态与 chrome；P1#3 冻结 rejected/applied/released 终点与唯一释放 owner。",
+  "description": "原生布局与抽屉补链：布局意图 -> 同源 native 几何 + presentation -> 输入路由 -> overlay 生命周期与资源释放 -> typed 结果唯一出口。P1#1 presentation 可见性来自实际 displayed-frame 身份与几何匹配，独立于 input/control 权限；P1#2 同一 WebView 承载空态与 chrome；P1#3 冻结 rejected/applied/released 终点与唯一释放 owner。",
   "inputs": [
     {
       "id": "native-chrome-layout-request",
@@ -35,7 +35,7 @@
     },
     {
       "id": "测量四矩形并只在 AdvertisedViewportRect 变化时申报远端视口",
-      "description": "AB-04 原生 owner 从 WindowMetrics/content bounds + system bars + 薄 chrome 测 windowFrameRect/advertisedViewportRect/presentedContentRect/chromeRect；presentedContentRect 才含 IME。唯申报触发=旋转/物理窗口变化、system bars 变化、chrome 高度变化；IME/drawer/presentation 切换不申报。",
+      "description": "AB-04 原生 owner 采用单一 native 本地 origin/单位：Android edge-to-edge root 逻辑 dp 且 root 不重复扣 systemBars，WindowMetrics 物理 px 先减 window/root 坐标偏移再按 density 转 dp；safeContentRect 显式扣 bars 一次；advertisedViewportRect 与 chromeRect 从 safeContentRect 派生，presentedContentRect 另扣 IME 有效重叠且不重复扣 bar。唯申报触发=旋转/物理窗口变化、system bars 变化、chrome 高度变化；IME/drawer/presentation 切换不申报。Mac 保持 AppKit points 且不乘 backingScaleFactor。",
       "operator": "agentbrowser.native.measure_content_rect",
       "operator_version": "1",
       "inputs": [
@@ -59,7 +59,7 @@
     },
     {
       "id": "按呈现状态切换 WebView 全应用、薄 chrome 与 overlay 几何",
-      "description": "AB-04 原生 owner 依 visibleContent 与 presentation 定 webRect：无正式 native 呈现状态=windowFrameRect(空态可见)；native-video+browsing=chromeRect；overlay=windowFrameRect。UI 只发 set_presentation({id,state})。success=applied+新 revision；rejected=NO_AUTHORITY/ACTIVITY_NOT_RESUMED/GEOMETRY_UNAVAILABLE，无假成功。",
+      "description": "AB-04 原生 owner 依 visibleContent 与 presentation 定 webRect：无有效 displayed-frame 身份/tab/几何匹配=drawableWindowRect(空态可见)；native-video+browsing=chromeRect；overlay=drawableWindowRect。visibleContent 只来自 native 已实际显示 frame 的 generation/session/tab/document/viewport/geometry 匹配，inputReady/control_mode/commandPending/operation_running 仅决定写入/IME，不决定视频可见。tab identity 若当前边界不可得，实现必须先由 owner 补真实读取字段或报告缺口，不得以 session_id/DOM/URL 替代。UI 只发 set_presentation({id,state})，本地 set_presentation/抽屉不要求远端 writer 权限。success=applied+新 revision；rejected=NO_AUTHORITY/ACTIVITY_NOT_RESUMED/GEOMETRY_UNAVAILABLE，无假成功。",
       "operator": "agentbrowser.native.apply_presentation_geometry",
       "operator_version": "1",
       "inputs": [
@@ -83,7 +83,7 @@
     },
     {
       "id": "按 presentation 路由本地与远端输入焦点并闭环 overlay 事件",
-      "description": "browsing+native-video 走 native video 逆变换(pointer/scroll/caret 共用 presentedContentRect)；全应用/overlay 态只由 WebView 消费，不转发远端。事件闭环：UI 开 drawer=set_presentation(overlay)；系统 Back 先 browsing 再关 drawer；drawer close/outside=browsing；旋转保留或回落 overlay。",
+      "description": "browsing+native-video 走 native video 逆变换(pointer/scroll/caret 共用 presentedContentRect)；全应用/overlay 态只由 WebView 消费，不转发远端。可见性选择只消费 displayed-frame 身份与几何匹配，不消费 inputReady/control_mode/commandPending/operation_running。事件闭环：UI 开 drawer=set_presentation(overlay)；系统 Back 先 browsing 再关 drawer；drawer close/outside=browsing；旋转保留或回落 overlay。",
       "operator": "agentbrowser.native.route_input_by_presentation",
       "operator_version": "1",
       "inputs": [
@@ -107,7 +107,7 @@
     },
     {
       "id": "释放布局资源并产出 typed 终态",
-      "description": "唯一释放 owner=AB-04 原生。资源=insets listener/layout listener(永久,onDestroy)、WebView bridge(onDestroy)、RemoteImeView(onStop/onDestroy)、Mac viewport Timer(terminate/window close)。drawer close 不重建永久资源。终点 layout-resource-terminal-result,status in {applied,rejected,released}；result consumer=intent 发起方。",
+      "description": "唯一释放 owner=AB-04 原生。资源=insets listener/layout listener(永久,onDestroy)、WebView bridge(onDestroy)、RemoteImeView(onStop/onDestroy)、Mac viewport Timer(terminate/window close)。drawer close 不重建永久资源。终点 layout-resource-terminal-result,status in {applied,rejected,released}；result consumer=intent 发起方；UI 空态可见性绑定 native presentation，不以 connected 或 inputReady 代替。",
       "operator": "agentbrowser.native.release_layout_resources",
       "operator_version": "1",
       "inputs": [
