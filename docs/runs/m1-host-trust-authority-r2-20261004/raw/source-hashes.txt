@@ -1,0 +1,4 @@
+fb9b239ff980252ae88505bda27fb9466e62733ec9bc58235bfe6277ca90419f  scripts/host-service/host_service.py
+48a509f2772066235397c94193cb0ea4d2548ce3e8bcef25a571bae78b291474  scripts/host-service/test_host_trust_public.py
+bdbcbed54572da1ae2d263c1205eb6d33f8496414c818c49bc1cd983680aae1d  docs/host-service.md
+72b2b5bf4d12ab691bfd9546f02c2dabac61ba26b33421742562f79ce6b74b67  docs/runs/m1-host-trust-authority-r2-20261004/source-trace.md
