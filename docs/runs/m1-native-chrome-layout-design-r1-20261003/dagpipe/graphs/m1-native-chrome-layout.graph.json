@@ -35,7 +35,7 @@
     },
     {
       "id": "测量四矩形并只在 AdvertisedViewportRect 变化时申报远端视口",
-      "description": "AB-04 原生 owner 采用单一 native 本地 origin/单位：Android edge-to-edge root 逻辑 dp 且 root 不设置 systemBars padding，WindowMetrics 物理 px 先减 window/root 坐标偏移再按 density 转 dp；drawableWindowRect 是 root 完整本地坐标；safeContentRect 只扣 bars 一次；advertisedViewportRect 与 chromeRect 从 safeContentRect 派生并直接以 root-local bounds 应用，presentedContentRect 另扣 IME 有效重叠且不重复扣 bar；不得 root padding 后二次应用已扣 bars 的矩形。唯申报触发=旋转/物理窗口变化、system bars 变化、chrome 高度变化；IME/drawer/presentation 切换不申报。Mac 保持 AppKit points 且不乘 backingScaleFactor。",
+      "description": "AB-04 原生 owner 采用单一 native 本地 origin/单位：Android edge-to-edge root 逻辑 dp 且 root 不设置 systemBars padding，WindowMetrics 物理 px 先减 window/root 坐标偏移再按 density 转 dp；drawableWindowRect 是 root 完整本地坐标；safeContentRect 只扣 bars 一次；advertisedViewportRect/chromeRect/presentedContentRect 从其派生。保持 root->stage->videoClip->SurfaceView 实际层级：stage 是 root 直接子 View，只接收 presentedContentRect 的 root-local frame；videoClip 是 stage 直接子 View，只接收 stage-local aspect-fit/center；SurfaceView 是 clip 直接子 View，只接收 clip-local coded/source geometry；RemoteImeView 的实际父容器是 stage。有效可见图像 root rect 由 stage origin + clip fit origin + visible-source origin×scale 一次换算；不得把 stage 的 root-local x/y 再应用到 videoClip，也不得 root padding 后二次应用已扣 bars。唯申报触发=旋转/物理窗口变化、system bars 变化、chrome 高度变化；IME/drawer/presentation 切换不申报。Mac 保持 AppKit points 且不乘 backingScaleFactor。",
       "operator": "agentbrowser.native.measure_content_rect",
       "operator_version": "1",
       "inputs": [
@@ -83,7 +83,7 @@
     },
     {
       "id": "按 presentation 路由本地与远端输入焦点并闭环 overlay 事件",
-      "description": "browsing+native-video 走 native video 逆变换(pointer/scroll/caret 共用 presentedContentRect)；全应用/overlay 态只由 WebView 消费，不转发远端。可见性选择只消费 displayed-frame 身份与几何匹配，不消费 inputReady/control_mode/commandPending/operation_running。事件闭环：UI 开 drawer=set_presentation(overlay)；系统 Back 先 browsing 再关 drawer；drawer close/outside=browsing；旋转保留或回落 overlay。",
+      "description": "browsing+native-video 走 native video frame/source transform：pointer 在 SurfaceView/clip-local 按 visible-source origin 与 scale 逆变换，caret/selection/composition 用 stage+clip+source 的 root/window 有效可见图像 rect，二者共用同一 native parent chain，不新增第二套 UI 公式；全应用/overlay 态只由 WebView 消费，不转发远端。可见性选择只消费 displayed-frame 身份与几何匹配，不消费 inputReady/control_mode/commandPending/operation_running。事件闭环：UI 开 drawer=set_presentation(overlay)；系统 Back 先 browsing 再关 drawer；drawer close/outside=browsing；旋转保留或回落 overlay。",
       "operator": "agentbrowser.native.route_input_by_presentation",
       "operator_version": "1",
       "inputs": [

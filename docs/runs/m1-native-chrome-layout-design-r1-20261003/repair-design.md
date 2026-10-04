@@ -1,11 +1,11 @@
-# Native 内容区与抽屉补链设计（R2）
+# Native 内容区与抽屉补链设计（R5）
 
 状态：`DESIGN_READY` / `NOT_IMPLEMENTED`。产品 source 零 diff；本文件只做设计，不宣称已安装、已连网或已通过黑盒。
 
-分支：`codex/m1-native-chrome-layout-design-r4-20261004`
+分支：`codex/m1-native-chrome-layout-design-r5-20261004`
 输入：`origin/main bc9d67ad037be2c7119bee692f9ad362417ffd05`，原冻结树 `d11150fdad7b39daab895b69f9b269abb0b70144` / tree `9cba13e4c4d16c22cea2d5f2afc970a24f26f472`。
-R4 从 exact r3 `d9d27236e69bc5bf01dcc50d62cf5569c838ca42` / tree `752c53524aff4df13ec3e1fde0b0d05bd09b0ce5` 直接继续，不重复组合。
-review 输入：`m1-native-chrome-layout-design-20261004-r3` 实际 failed/code_failure、review exit0/validJSON 一项 P1；不是 provider 错误，不重试旧候选取 PASS。
+R5 从 exact r4 `0e387b36af08edacb97ad1b8ed0d28b0a0eaf5a6` / tree `0deb5dca5369c1339867960300b1bef1c362e2c6` 直接继续，不重复组合。
+review 输入：`m1-native-chrome-layout-design-20261004-r4` 实际 failed/code_failure、review exit0/validJSON 一项 P1；不是 provider 错误，不重试旧候选取 PASS。
 
 ## 1. 首次偏离与唯一 owner
 
@@ -14,32 +14,35 @@ review 输入：`m1-native-chrome-layout-design-20261004-r3` 实际 failed/code_
 `.../evidence/02-drawer-window.xml`
 
 - 窗口：`[0,0][1080,2400]`。
-- 原生 stage：`[0,63][1080,1366]`，视频 clip：`[173,63][906,1366]`。
+- 原生 stage：`[0,63][1080,1366]`（display/root 坐标）；视频 clip：
+  `[173,0][906,1303]`（相对 stage 的坐标；换算 root 后为
+  `[173,63][906,1366]`）。这两个层级数值不能同时当作 root-local 值应用。
 - WebView：`[0,1366][1080,2337]`，即被原有 `LinearLayout` 当成 370dp 面板使用。
 - 浏览器工具栏：`[0,1366][1080,1631]`。
 - 抽屉：`Dialog browser-drawer [84,1366][1080,2337]`，只覆盖 WebView 面板，不覆盖应用窗口；`02-drawer-window.xml` 中标签页/Profile/质量/诊断所有节都掉到 `bottom=2337`，视觉上被截断在 WebView 底部。
 
 首次偏离点：`apps/android/app/src/main/java/com/agentbrowser/probe/MainActivity.java` 的 `layoutChrome()`（当前基线约 L136-141）。该函数按 `networkSelected` 把 WebView 设为 `370dp` 或 `136dp` 面板，并让 stage 占据“剩余区域”。这是 native 容器尺寸决策，不是 CSS 可修复或 WebView 内测量可修复的问题。
 
-### 1.1 R1 三个 P1 的唯一偏离点与裁决
+### 1.1 历史 P1 的唯一偏离点与裁决
 
-| R1 P1 | 唯一偏离点 | R2 裁决 |
+| Review P1 | 唯一偏离点 | 裁决 |
 | --- | --- | --- |
 | IME 呈现/申报矛盾 | `MainActivity.reportViewport()`（L307-313）从 `stage.getWidth()/getHeight()` 申报；`stage` 尺寸来自含 `ime()` 的 root padding（L54-58），R1 同时要求“按 stage 变化申报”与“IME 不申报”，两条规则不可能同时满足 | 拆成 `AdvertisedViewportRect` 与 `PresentedContentRect` 两个独立矩形：申报矩形由窗口 metrics + system bars + chrome 派生，排除 IME；呈现矩形才包含 IME。申报触发集冻结，见 §2 |
 | 空态缺渲染 owner | `main.tsx` 空态在 `.viewer`（L396-403），R1 把该 WebView 限定到 `chromeRect`，而 `MainActivity.stage` 无空态渲染器 | 空态复用同一 WebView：连接且具备正式原生呈现状态前 WebView 覆盖 `drawableWindowRect`（含顶部 chrome）；具备状态后 WebView 缩到 `chromeRect`，原生视频填 `presentedContentRect`。见 §3 |
 | 失败取消释放不可验 | R1 只有“返回 `{rejection}`”，图末端只有泛化 `layout-lifecycle-release`，没有触发、资源清单、result consumer | 冻结 intent `id`、`rejection.reason`、资源清单、唯一释放 owner 与唯一出口；所有结果落到既有 SESE 图末端 `layout-resource-terminal-result`。见 §4、§5 |
-| R3 几何应用矛盾 | R3 同时要求 edge-to-edge root、root `systemBars` padding，以及把已经扣过 bars 的 `safeContentRect`/`chromeRect`/`drawableWindowRect` 当 root 子 View 矩形应用 | 删除 root `systemBars` padding；`drawableWindowRect` 是 root local；只派生一次 `safeContentRect`；chrome/video/overlay 子 bounds 用同一 root-local origin 和显式单位直接应用，不允许 padding-compensation 第二路径 |
+| R3 几何应用矛盾 | R3 同时要求 edge-to-edge root、root `systemBars` padding，以及把已经扣过 bars 的 `safeContentRect`/`chromeRect`/`drawableWindowRect` 当 root 子 View 矩形应用 | 删除 root `systemBars` padding；`drawableWindowRect` 是 root local；只派生一次 `safeContentRect`；chrome/overlay 与 stage 的 frame 按各自直接父级的 root-local/可直接应用的 bounds 使用，不允许 padding-compensation 第二路径 |
+| R4 父子坐标重复 | R4 要求 `stage` 与嵌套 `videoClip` 都使用 `presentedContentRect` 的 root-local left/top；实际层级是 `stage.addView(videoClip)`，Android child left/top 相对直接父容器，非零 top 会把 stage 偏移重复到 clip | 保留实际层级：只有 stage 的 frame 接收 `presentedContentRect` root-local position/dimensions；videoClip 接收 stage-local aspect-fit/center rect；SurfaceView 接收 clip-local coded-frame geometry/cropping；有效可见区域由 native parent transform 一次算出，pointer/caret/selection/composition 共用该 transform |
 
 ### 1.2 唯一 owner
 
 | 对象 | Owner | 现状 |
 | --- | --- | --- |
-| 应用窗口、窗口 metrics、系统 bars insets、IME insets、内容区 | AB-04 `apps/android/` / `apps/macos` | `MainActivity.layout={stage,webView}` 与 Mac `NSSplitViewController` 是宿主布局 owner |
-| `AdvertisedViewportRect` / `PresentedContentRect` / `ChromeRect` / `WebRect` 计算与应用 | AB-04 原生布局 owner | R4 新增计算，当前无实现 |
+| 应用窗口、窗口 metrics、系统 bars insets、IME insets、内容区 | AB-04 `apps/android/` / `apps/macos` | `MainActivity.layout={stage,webView}` 与 Mac `NSSplitViewController` 是宿主布局 owner；stage/videoClip 的父子层级保持不变 |
+| `AdvertisedViewportRect` / `PresentedContentRect` / `ChromeRect` / `WebRect` 计算与应用 | AB-04 原生布局 owner | R5 继续细化 parent-space transform，当前无实现 |
 | WebView 在应用窗口内的容器几何 | AB-04 原生容器；UI 只发 typed intent | 当前 WebView 是持久面板 |
 | 抽屉是否打开、焦点和内容状态 | AB-02/03 UI & client-domain | `main.tsx` 的 `drawerOpen` 是本地状态 |
 | 远端 browser viewport | Host 唯一；客户端只按 `ViewportDeclaration.css_width/css_height` 申报 | 当前 `reportViewport()` 从 stage 申报 |
-| 指针 / caret 显示变换 | 原生 consumer：Android `videoClip` 逆变换，Mac `pageCoordinates`/`viewPoint` | 实现已存在，本设计不改坐标语义 |
+| 指针 / caret 显示变换 | 原生 consumer：Android `videoClip`/source 逆变换，Mac `pageCoordinates`/`viewPoint` | 实现已存在，本设计不改坐标语义，只显式冻结 parent chain |
 | 空态渲染 | UI（`main.tsx` `.viewer-empty`）承载；AB-04 只负责给 WebView 正确容器矩形 | 内容已在 `.viewer`，缺容器 owner 决策 |
 | 布局资源释放与结果消费 | AB-04 原生 owner 唯一释放；result consumer 为意图发起方 | R4 新增契约，当前无实现 |
 
@@ -50,7 +53,10 @@ review 输入：`m1-native-chrome-layout-design-20261004-r3` 实际 failed/code_
 采用“薄 chrome + 全窗 overlay 抽屉”：
 
 1. Android / Mac 应用根容器由原生 owner 改为单一 `FrameLayout` / 单一 content view；Android root 不设置任何 `systemBars` padding，系统 bars 只在派生矩形时计算一次。
-2. 原生视频 stage 占据 `presentedContentRect`：在同一 root-local origin 下，从 `safeContentRect` 去掉浏览态 chrome 高度；不得先 padding root 再二次应用已扣 bars 的矩形。
+2. 原生视频 stage 是 root 直接子 View，接收 `presentedContentRect` 的
+   root-local position/dimensions；不得先 padding root 再二次应用已扣 bars 的
+   矩形。嵌套 `videoClip` 不接收 root-local x/y，只接收 stage-local aspect-fit/
+   center rect。
 3. 同一 WebView 是 UI 载体：
    - 浏览态（已具备正式原生呈现状态）：WebView 按原生给定的 `ChromeRect` 布局，只承载工具栏/根页面。
    - 抽屉态：UI 发出 `presentation` typed intent，原生把 WebView 临时扩展到整个 `drawableWindowRect`（主线程布局，不发 reload），CSS 抽屉用 fixed 覆盖全窗并带 backdrop。
@@ -86,17 +92,17 @@ type NativeDisplayedFrameIdentity = {
 
 // snapshot projection（只读，不是控制真源）
 type NativeLayoutProjection = {
-  drawableWindowRect: Rect;      // SystemUI 实际可绘制 window/root bounds，原点为 window/root 原点
-  safeContentRect: Rect;         // 同一 native 本地 origin，显式扣 systemBars insets 一次
-  advertisedViewportRect: Rect;  // 从 safeContentRect 派生并排除 IME，唯申报给 Host
-  presentedContentRect: Rect;    // 从 safeContentRect 派生，另扣当前 IME 有效重叠
-  chromeRect: Rect;              // safeContentRect 内的薄 chrome 容器矩形
-  webRect: Rect;                 // 当前 WebView 实际容器矩形；来自同一本地 origin
+  drawableWindowRect: Rect;      // root-local；SystemUI 实际可绘制 window/root bounds
+  safeContentRect: Rect;         // root-local；drawableWindowRect 显式扣 systemBars insets 一次
+  advertisedViewportRect: Rect;  // root-local；从 safeContentRect 派生并排除 IME，唯申报给 Host
+  presentedContentRect: Rect;    // root-local；从 safeContentRect 派生，另扣当前 IME 有效重叠
+  chromeRect: Rect;              // root-local；safeContentRect 内的薄 chrome 容器矩形
+  webRect: Rect;                 // root-local；WebView 是 root 直接子 View
   visibleContent: 'webview' | 'native-video'; // 由 displayedFrame 与当前呈现身份匹配决定
   displayedFrame?: NativeDisplayedFrameIdentity; // native 已实际显示的 frame；缺失即无效
   currentTabId: string | null;   // 同一 Host 边界的当前 tab identity；不可得时为 null
-  presentationViewport: Rect;    // 产出该 displayed frame 时实际使用的 presentedContentRect
-  geometryMatches: boolean;      // displayedFrame 存在且匹配当前 session/tab/document/effective viewport，且 presentationViewport == presentedContentRect
+  presentationViewport: Rect;    // root-local；产出该 displayed frame 时 stage 实际使用的 presentedContentRect
+  geometryMatches: boolean;      // displayedFrame 匹配当前身份/effective viewport，且 stage 实际 frame == presentedContentRect
   presentation: 'browsing' | 'overlay';
   revision: number;           // 本地布局 revision，每次几何应用成功自增
 };
@@ -104,19 +110,48 @@ type NativeLayoutProjection = {
 
 约束：
 
-- **单位与 origin**：Android 一律用逻辑 dp（px = dp × density），每个 Rect 的 `x/y` 都是同一 edge-to-edge window/root 本地原点 `(0,0)` 的偏移，不混入 screenshot/display 原点；Mac 一律用 AppKit points。初始实现若无 effective window offset 能力，native 本地 origin 允许从 `(0,0)` 开始，但必须生成一致的 screenshot 映射证据并报告精确 offset，不能把未测量的全 display 坐标当固定契约。
+- **单位与 origin**：typed projection 中的 Rect 均为 Android 逻辑 dp
+  （px = dp × density）或 Mac AppKit points；Android 的 origin 是
+  edge-to-edge window/root 本地 `(0,0)`，不混入 screenshot/display 原点。初始
+  实现若无 effective window offset 能力，native 本地 origin 允许从 `(0,0)` 开始，
+  但必须生成一致的 screenshot 映射证据并报告精确 offset，不能把未测量的全
+  display 坐标当固定契约。**Rect 的 space/parent 不能只由数值推断**：下表是
+  typed root-local 与 native derived parent-local 的唯一分层契约。
 - **测量与派生边界**：
   - `drawableWindowRect`：Android 是单一 edge-to-edge root 的 drawable bounds，逻辑 dp，包含系统栏区域；root 不重复扣 `systemBars`。`WindowMetrics.getBounds()` 的物理 px 先减 window/root 坐标偏移，再按 density 转 dp。Mac 是 `window.contentView!.bounds`，AppKit points，不乘 `backingScaleFactor`。Android root 定义需保留当前 Activity 的实际 bounds 并加证据断言：若 window offset `(0,0)` 与 `drawableWindowRect` origin `(0,0)` 不相等，必须显式报告该差异；不得在没有 offset 能力时改用未量测全显示坐标。
   - `safeContentRect`：从 `drawableWindowRect` 显式扣 systemBars insets 一次，仍在同一 native 本地 origin/单位。
   - `advertisedViewportRect`：从 `safeContentRect` 派生并扣薄 chrome，**不含 IME**；Mac 无软键盘 IME，等于 `safeContentRect` 减 chrome。
   - `presentedContentRect`：从 `safeContentRect` 派生，另扣当前 IME 有效重叠并只扣一次，再扣 chrome；会随 IME 变化。不得从已经扣过 bar 的 root 再重复扣。
   - `chromeRect`：从 `safeContentRect` 派生的薄 chrome 条带，横屏换向，见 §4。
-- **应用边界（唯一一次）**：`drawableWindowRect` 是 Android root 的完整本地坐标；root 不设置任何 padding。`safeContentRect` 是唯一一次从系统 bars 派生得到的矩形；`chromeRect`/`advertisedViewportRect`/`presentedContentRect`/`webRect` 全部以同一 root-local origin 赋值给 child bounds（Android 转 px 时按 density 直接换算，Mac 直接用 AppKit points）。不允许先 root padding 再布局 child、不允许给 child 补 bars 二次偏移。
+- **应用边界（按直接父级一次）**：`drawableWindowRect` 是 Android root 的完整
+  本地坐标；root 不设置任何 padding。`safeContentRect` 是唯一一次从系统 bars
+  派生得到的矩形。root 直接子 View（`stage`、`webView`）使用 root-local
+  bounds；`stage` 的直接子 View 只使用 stage-local bounds；`videoClip` 的直接子
+  View 只使用 clip-local bounds。不得把 root-local `stage` x/y 再加到
+  `videoClip`，也不得把 `videoClip` 的实际 root bounds 冒充其 LayoutParams。
 - **唯一真源**：几何全部来自原生布局 owner，两条系统测量源是 `drawableWindowRect`/`safeContentRect`，其余矩形只按同一 origin/单位派生；`presentation` 当前值只由 `set_presentation` 的 applied 结果确认；`revision` 只由原生自增。不得从 UI 的 `data-drawer-open`、日志、DOM `getBoundingClientRect`、首帧或 status payload 反推。
 - **不得从 stage 当前尺寸反推申报矩形**：申报用 `advertisedViewportRect`，呈现用 `presentedContentRect`；两者物理隔离，`reportViewport()` 禁止再读 `stage.getWidth()/getHeight()`。
-- **接收边界**：命令只处理 `set_presentation`，未知字段拒绝；`overlay` 只扩展 `webRect` 到 `drawableWindowRect`，不改 `stage` 尺寸、不 `requestApplyInsets`、不 `reportViewport`。
+- **接收边界**：命令只处理 `set_presentation`，未知字段拒绝；`overlay` 只扩展 `webRect` 到 `drawableWindowRect`，不改 `stage` 尺寸、不 `requestApplyInsets`、不 `reportViewport`。WebView 是 root 直接子 View，因此它的 `webRect` 始终是 root-local；不得把 `chromeRect`/`drawableWindowRect` 转成 stage-local。
 - **presentation 独立性**：`visibleContent` 只看 native 已实际完成的 displayed-frame 身份与当前 session/document/viewport/geometry 是否匹配；`inputReady`、`control_mode`、`commandPending`、`operation_running` 只决定 IME/写入资格，绝不决定视频可见。没有有效 displayed frame 或几何不匹配时才显示 `webview`/空态。
 - 不消费 profile ABI；不扩展 Obscura wire；不改变原 input/edit/operation 语义（`NetworkSession.declareViewport` 签名不变，只换调用来源）。
+
+### 3.1 每个 Rect 的 space、units 与 parent
+
+| 对象 | space / units | parent / 用途 |
+| --- | --- | --- |
+| `drawableWindowRect`、`safeContentRect`、`advertisedViewportRect`、`presentedContentRect`、`chromeRect`、`webRect`、`presentationViewport` | Android root-local dp；Mac content points | typed projection；root 直接子 View 或 Host 申报只消费 root-local 值 |
+| `stage` frame | root-local px（由 `presentedContentRect` dp × density 一次换算） | root 直接子 View；只接收 `presentedContentRect` 的 x/y/width/height |
+| `videoClip` frame | stage-local px | stage 直接子 View；`scale = min(stageWidth/visibleSourceWidth, stageHeight/visibleSourceHeight)`，width/height 为 visible source 的 fit 尺寸，x/y 为 `(stageSize - fitSize)/2`；绝不加 stage 的 root-local x/y |
+| `SurfaceView` frame | clip-local px | videoClip 直接子 View；使用 coded-frame 尺寸和同一个 `scale`，位置由 visible-source origin 决定；当前 Android frame contract 的 visible-source origin 为 `(0,0)`，coded padding 超出 clip 的部分由 `clipChildren` 裁掉且不可点击 |
+| `RemoteImeView` | stage-local px | 实际父容器是 stage；1×1 focus anchor 保持 stage-local；任何 caret/candidate 位置通过 stage + fit clip + source transform 的 root/window 坐标一次计算，不把 root-local stage origin 塞进它的 LayoutParams |
+
+有效可见图像 rect（root/window）是
+`stage origin + videoClip fit origin + visible-source origin × scale`，由 native
+parent chain 一次换算得到；它不是第二个 typed 控制真源。typed projection 只拥有
+上表第一行的 root-local 容器/申报 Rect 与 displayed-frame 身份，fit clip、coded
+SurfaceView 与有效可见图像 rect 都是 native owner 从这些真源和当前 frame
+geometry 派生的结果。`presentedContentRect` 是可用容器，aspect fit 可留下
+letterbox bands；bands 不属于可见图像，也不能被当作点击目标。
 
 ## 4. viewport 与 IME 唯一策略（P1 #1）
 
@@ -132,19 +167,51 @@ type NativeLayoutProjection = {
 
 ### 4.2 PresentedContentRect 与等比 fit
 
-- 原生等比 fit 使用 `presentedContentRect`：Android 先把 `presentedContentRect` 的 root-local dp 转成 px，并给 `stage`/`videoClip` 设置显式 left/top/width/height；`videoClip` 在该 bounds 内按 `min(w/visibleWidth, h/visibleHeight)` 缩放并居中。Mac `VideoSurfaceView.frame` 即 `presentedContentRect` 的 AppKit points。留边（letterbox）不得点击，沿用既有逆变换越界拒绝（Android `networkTouch` 的本地坐标映射、Mac `pageCoordinates` L690 bounds 检查）。
-- IME 开闭时：`presentedContentRect` 变化 → `videoClip` 重新 fit 同一远端 buffer → 本地 transform 与 caret/选区/composition 同步更新（Mac `viewPoint` L696 与 `firstRect` L1404 共用同一 transform）。远端 buffer、Host revision 与 document 都不变。
-- frame/transform/caret/输入共用同一个 `presentedContentRect`：不得为 caret 另算一套矩形，不得为 IME 伪造 Host 配置。
+- 原生等比 fit 使用 `presentedContentRect`：Android 先把
+  `presentedContentRect` 的 root-local dp 转成 px，只给 **stage** 设置显式
+  left/top/width/height；stage 的直接子 `videoClip` 使用 stage-local
+  `min(stageWidth/visibleWidth, stageHeight/visibleHeight)` 的 fit 尺寸和居中
+  x/y；SurfaceView 使用同一个 `scale` 的 coded-frame 尺寸与 clip-local source
+  origin。Mac `VideoSurfaceView.frame` 即 `presentedContentRect` 的 AppKit
+  points，并作为其 content view 的局部 fit bounds。留边（letterbox）不得点击，
+  沿用既有逆变换越界拒绝（Android `networkTouch` 的 clip-local 坐标映射、Mac
+  `pageCoordinates` L690 bounds 检查）。
+- IME 开闭时：`presentedContentRect` 变化 → stage frame 变化 → `videoClip` 在
+  新 stage bounds 内重新 fit 同一远端 buffer → 本地 transform 与 caret/选区/
+  composition 同步更新。Android pointer 从 `SurfaceView` 事件坐标减去
+  visible-source origin×scale，再除以同一个 `scale`；caret/candidate 的
+  root/window 位置用 `stage origin + videoClip fit origin +
+  visible-source origin×scale` 一次换算。Mac `viewPoint` L696 与 `firstRect`
+  L1404 继续共用同一 transform。远端 buffer、Host revision 与 document 都不变。
+- frame/transform/caret/输入共用同一个 native parent chain：不得为 caret 另算
+  一套 root-local 矩形，不得把 `videoClip` 当作 root 直接子 View，不得为 IME
+  伪造 Host 配置。
 
 ### 4.3 Android 根窗口与 chrome 高度的具体实现约束
 
 - **`android:windowSoftInputMode="adjustResize"`**：AndroidManifest 的 activity 必须显式声明 `adjustResize`（当前缺失），否则 IME 走 `adjustPan`，`presentedContentRect` 无法反映真实遮挡。
-- **root 是单一 edge-to-edge 坐标且无 padding**：Android 采用一个 edge-to-edge root，逻辑 dp 原点 `(0,0)`；root bounds 即 `drawableWindowRect` 且 root 不设置任何 `systemBars` padding。`layout.setOnApplyWindowInsetsListener`（MainActivity L54-58）当前用 `systemBars() | ime()` 设置 padding，这是缺陷来源；改为只读取 insets 供 rect 派生，绝不调用 `setPadding`。`safeContentRect` 显式扣 bars 一次，`advertisedViewportRect`/`chromeRect`/`presentedContentRect`/`webRect` 从它派生并按 root-local bounds 直接应用。
+- **root 是单一 edge-to-edge 坐标且无 padding**：Android 采用一个
+  edge-to-edge root，逻辑 dp 原点 `(0,0)`；root bounds 即
+  `drawableWindowRect` 且 root 不设置任何 `systemBars` padding。
+  `layout.setOnApplyWindowInsetsListener`（MainActivity L54-58）当前用
+  `systemBars() | ime()` 设置 padding，这是缺陷来源；改为只读取 insets 供
+  rect 派生，绝不调用 `setPadding`。`safeContentRect` 显式扣 bars 一次，
+  `advertisedViewportRect`/`chromeRect`/`presentedContentRect`/`webRect` 从它
+  派生；root 直接子 View 使用 root-local bounds，stage 的直接子 View 使用
+  stage-local fit，SurfaceView 使用 clip-local coded/source geometry。
 - **申报矩形只用 `WindowMetrics` + system bars + 薄 chrome**：`WindowMetrics.getBounds()` 物理 px 先减 window/root 坐标偏移，再按 density 转 dp，得到 `drawableWindowRect`；显式扣 system bars 一次得 `safeContentRect`，再扣 chrome 高度得 `advertisedViewportRect`；禁止从 `stage` 当前尺寸反推。
 - **薄 chrome 高度**：UI 通过 `data-chrome-height`（或等价 typed 投影）申报实际 CSS px 高度，原生换算成 dp/point 后写 `chromeRect`；横竖屏若换向则重算并触发申报。
 - **Mac points 对应关系**：Mac 无软键盘 IME；`advertisedViewportRect == presentedContentRect`（均以 AppKit points 计）。`updateViewport()`（main.swift L1523-1530）当前用 `videoView.bounds * backingScaleFactor`，必须改为：以 `advertisedViewportRect` points 计算 CSS px（不再乘 `backingScaleFactor`，CSS px 与 points 1:1），断连后无 `advertisedViewportRect` 时不申报，也不得从 `videoView.bounds` 或 display 像素反推。
-- **每次活动/旋转/IME 同源**：每次活动生命周期、旋转或 IME 变化都重测这组 Rect；pointer、caret、selection、composition 共用 `presentedContentRect` 的同一逆变换，不做第二套坐标。`advertisedViewportRect` 只在物理窗口/viewport 真变化时申报；IME、presentation 与本地 chrome 操作不申报。
-- **应用与 fit 同源**：Android 的显式 child bounds 与 pointer 逆变换必须使用同一个实际 `presentedContentRect`（px 转换后）；不得让 `videoClip` 从 stage 减去 padding 推算，也不得让 pointer 单独从 container 尺寸推算。Mac 的 `VideoSurfaceView.frame`、pointer 和 caret 必须来自同一 points rect。
+- **每次活动/旋转/IME 同源**：每次活动生命周期、旋转或 IME 变化都重测这组
+  Rect；pointer、caret、selection、composition 共用 stage-local fit clip 与
+  clip-local coded/source transform 的同一 parent chain，不做第二套坐标。
+  `advertisedViewportRect` 只在物理窗口/viewport 真变化时申报；IME、presentation
+  与本地 chrome 操作不申报。
+- **应用与 fit 同源**：Android stage 只使用 root-local
+  `presentedContentRect`；videoClip 只使用 stage-local fit/center；SurfaceView
+  只使用 clip-local coded/source geometry。pointer 不得从 stage 或 root 尺寸另算
+  offset，caret 不得从 UI DOM 反算；Mac 的 `VideoSurfaceView.frame`、pointer 和
+  caret 必须来自同一 content points/bounds 与 image fit transform。
 
 ### 4.4 冻结的真值断言（取代 R1 的条件断言）
 
@@ -167,7 +234,7 @@ type NativeLayoutProjection = {
 | 已连接且具备正式原生呈现状态 | `webRect = chromeRect` | 原生视频（填 `presentedContentRect`） | 顶栏 WebView，视频填内容区 |
 | drawer overlay | `webRect = drawableWindowRect`（临时） | WebView overlay | 全窗 backdrop + system-bar-safe drawer |
 
-- **内容区 owner**：`main.tsx` 的 `.viewer`/`.viewer-empty`（L396-403、CSS L88-100）继续是唯一空态渲染者；R3 只改它的容器来源——浏览态窄容器由原生给 `chromeRect`，全应用态由原生给 `drawableWindowRect`。空态不再依赖 `.viewer` 假定自己占满内容区。
+- **内容区 owner**：`main.tsx` 的 `.viewer`/`.viewer-empty`（L396-403、CSS L88-100）继续是唯一空态渲染者；R5 只改它的容器来源——浏览态窄容器由原生给 `chromeRect`，全应用态由原生给 `drawableWindowRect`。空态不再依赖 `.viewer` 假定自己占满内容区。
 - **`.viewer` 职责收敛**：浏览态 `.viewer` 只保留为本地 chrome 下的透明占位（`pointer-events:none`，已被 CSS L95 覆盖），不再承担远端页面投影；远端投影在 native stage。
 - **UI 消费修正（P1 #2）**：`main.tsx` 现在用 `data-ready={String(connected)}`，`probe.css` 在 `data-ready="true"` 时隐藏 `.viewer-surface`。后续最小修改必须把 ready/empty 投影绑定到 native presentation（有效 displayed frame + geometry match），而不是 `connected` 或 `inputReady`；`native-video` 状态时容器保持透明。按现有源码拆分，`connected` 仅控制网络相关 chrome，`canNavigate`/`canManageTabs` 可继续使用 `inputReady` 作为写权限，但不承载 viewer 可见性。
 
@@ -270,7 +337,16 @@ type PresentationResult =
 
 - `drawableWindowRect` 是实际 app window 的可绘制范围（示例 display bounds `[0,0][1080,2400]`，若 window offset 非 `(0,0)` 必须换算到本地 origin/dp）。
 - root（FrameLayout）bounds 等于 `drawableWindowRect`，没有任何 `systemBars` padding；`safeContentRect` 从它显式扣 systemBars 一次（示例顶部约 63px/对应 dp）；浏览态 chrome 为薄栏，`advertisedViewportRect` 从 `safeContentRect` 再扣 chrome 高度，底部不再留 370dp 空面板。
-- Android 子 View 只按 root-local typed Rect 直接布局：`chromeRect`、`presentedContentRect`、`drawableWindowRect` 在 px 转换时使用同一 density，不能因任何 padding/offset 各做一次补偿。
+- Android root 直接子 View 才使用 root-local typed Rect：`stage` 接收
+  `presentedContentRect`，`webView` 接收 `chromeRect`/`drawableWindowRect`。
+  `videoClip` 和 `SurfaceView` 分别使用 stage-local 与 clip-local 派生几何；
+  所有 px 转换使用同一 density，不能因 padding/offset 各做一次补偿。
+- 以 `drawableWindowRect=[0,0][360,800]`、top/bottom bars 各 21dp、chrome
+  72dp 为例，`safeContentRect=[0,21][360,779]`、
+  `presentedContentRect=[0,93][360,779]` 时，stage 的 root-local top 是 93dp；
+  stage-local centered clip 若 top=23dp，则有效可见图像 root top 是
+  `93+23=116dp` 一次相加，绝不是 `93+93=186dp`。此数值仅示例，实际验证必须
+  读取测量值与实际 child bounds。
 - 抽屉态 backdrop + WebView overlay 覆盖实际 `drawableWindowRect`；drawer 自身内容单独避开 system bars，右宽最大约 `min(92vw,390dp)`；不通过 root 或 WebView 的 padding 二重实现。
 - 未连接或没有有效 displayed frame 时：`webRect = drawableWindowRect`，顶栏 + 内容区空态在同一 WebView，不能把 `empty-state` 当成第二页面输入框。
 
@@ -293,7 +369,11 @@ type PresentationResult =
 
 本节只声明能力归属，不属本设计 run 的实施范围：
 
-- AB-04 Android `MainActivity.java` / `RemoteImeView.java`：`drawableWindowRect`/`safeContentRect`/矩形派生、root 无 padding、root-local child bounds 应用、`adjustResize`、`set_presentation` 接收、资源释放。
+- AB-04 Android `MainActivity.java` / `RemoteImeView.java`：
+  `drawableWindowRect`/`safeContentRect`/矩形派生、root 无 padding、root
+  直接子 View 的 root-local 应用、stage-local fit clip、clip-local coded
+  surface、有效可见图像 transform、`adjustResize`、`set_presentation` 接收、
+  资源释放。
 - AB-04 Mac `main.swift` / `connection-bridge`：单 content view、points 申报、`set_presentation` 绑定。
 - AB-02/03 UI/domain：`set_presentation` intent、`NativeLayoutProjection`、`.viewer` 容器来源、`PresentationResult` 消费。
 
