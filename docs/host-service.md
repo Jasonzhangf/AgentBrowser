@@ -148,6 +148,113 @@ file or old log exists.
 
 ## launchd boundary
 
+## Local trust authority
+
+The service owns the Mac-local trust root. It is the only writer of the device
+registry and of the derived authorized-client projection. The design contract
+is `docs/runs/m1-first-connection-e2e-design-r2-20261003/implementation-contracts.md`
+with its r9 correction note; the consumption boundary is
+`docs/runs/m1-first-connection-profile-grant-design-r1-20261004/interface-handoff.md`.
+This module implements only the Host-side trust primitives and the freeze API
+for the future Mac `HostProvisioningBridge` and profile/endpoint consumers.
+
+`trust/` under the service root holds the trust material:
+
+```text
+trust/
+  ca.der                   0644  public CA certificate, Host-service-owned
+  ca-key.der               0600  CA private key, never exported
+  server.der               0644  endpoint server certificate with the requested SAN
+  server-key.der           0600  server private key, never exported
+  endpoint.json            0600  endpoint host/port recorded at init
+  registry.json            0600  authorization truth: identity, scopes, initial grant
+  authorized-clients.json  0600  derived projection of active clients only
+  devices/<device-id>.json 0600  per-device client certificate and key material
+```
+
+`registry.json` uses `schema_version: 2`. Each device carries `device_id`,
+`device_label`, `client_certificate_sha256`, the ordered `scopes` set, an
+explicit `initial_profile_grant` with `selection` and `authorization_revision`,
+`scope_revision`, `status`, lifetime, and creation/revocation timestamps. The
+four legal scopes are `observe_human_control`, `profile_read`, `profile_create`,
+and `profile_select`; an empty set is not accepted as an explicit request.
+`initial_profile_grant.selection` is either `default_profile` or
+`{"profile_id": "..."}`. No other shape is legal.
+
+`authorization_revision` is a single monotonic counter for the whole registry.
+Every mutable write (enroll, revoke, scope or selection change) increments it.
+In the same atomic write, every still-active device's
+`initial_profile_grant.authorization_revision` is rebound to the new counter,
+while its selection, scopes, certificate identity, and `scope_revision` stay
+unchanged. Only the device that the mutation targets advances its own
+`scope_revision`. A rebind is derived freshness, not a permission grant, so
+enrolling B never makes A's grant unreachable. Revoked devices stay revoked and
+are excluded from the projection.
+
+`authorized-clients.json` is a read-only derived projection. It contains
+`schema_version: 2`, the current `authorization_revision`, the exact-byte
+`registry_sha256`, and one entry per active device. The projection content never
+carries a `projection_sha256` self-hash. The external `projection_sha256` is the
+SHA-256 of the complete published UTF-8 file bytes, computed by the producer
+after atomic publication and reported only through typed status or refresh
+receipts. Install creates an empty revision-0 projection, so a deny-all endpoint
+can start before the first device is enrolled.
+
+```sh
+scripts/host-service/host-service trust init \
+  --root "$HOME/Library/Application Support/AgentBrowser/host-service" \
+  --endpoint-host 100.x.y.z --endpoint-port 8443
+scripts/host-service/host-service trust status --root "$ROOT"
+scripts/host-service/host-service trust provision --root "$ROOT" \
+  --label "Android phone" \
+  --scope observe_human_control --scope profile_read --scope profile_select \
+  --initial-profile profile_id:<uuid>
+scripts/host-service/host-service trust revoke --root "$ROOT" --device-id "<uuid>"
+scripts/host-service/host-service trust export --root "$ROOT" \
+  --device-id "<uuid>" --output "<path.abconnection>"
+```
+
+`trust init` generates the CA, the server certificate with the requested SAN,
+the revision-0 registry, and the empty projection exactly once. A reinitialize
+is refused with `TRUST_ALREADY_INITIALIZED`; it never overwrites identity or
+material. `trust provision` reads the CA, generates one client key/certificate,
+writes the per-device record, then commits the registry and projection in the
+declared order. The one-time transfer code is a 16-character opaque value that
+never contains `0`, `O`, `1`, `I`, or `L`; it is returned only through the
+sensitive in-process API and is never written to files, argv, logs, the bundle,
+or the registry.
+
+`trust export` refuses with `PROFILE_CATALOG_UNAVAILABLE`,
+`ENDPOINT_REFRESH_REQUIRED`, `PROJECTION_MATERIAL_CONFLICT`, or
+`BUNDLE_NOT_READY` until a real Host catalog membership receipt and a real
+current endpoint applied receipt exist. It does not create substitute receipts
+to make the export succeed. The CLI export path emits only non-sensitive
+fields; the transfer code stays in process. The typed errors are
+`REGISTRY_SCOPE_REQUIRED`, `MISSING_INITIAL_PROFILE_GRANT`,
+`AUTHORIZATION_REVISION_CONFLICT`, `REGISTRY_WRITE_FAILED`,
+`PROJECTION_WRITE_FAILED`, and the `PARTIAL_REGISTRY_COMMIT` receipt, which
+carries the actual committed revision and digests.
+
+The projection module is the whole trust-authority API surface. The future Mac
+`HostProvisioningBridge` maps its typed methods (`enrollDevice`, `revokeDevice`,
+`refreshAuthorizedClients`, `exportBundle`) onto these functions. The Browser
+wire and the Host catalog membership stay outside this module.
+
+```sh
+python3 scripts/host-service/test_host_trust_public.py
+```
+
+That public consumer drives only the CLI and the public module functions, then
+verifies the CA, server SAN/EKU, and client certificate with the real installed
+`openssl`, checks private modes, initialize/reinitialize identity preservation,
+the A/B enroll and revoke revision matrix, invalid scope/selection refusal, the
+exact external projection digest and absence of a self-hash, the declared empty
+and nonempty vectors, an own-filesystem projection write failure that exposes
+committed/partial truth, and a real PKCS#12 with exactly the three allowed
+aliases. It prints private material only as public hashes.
+
+## launchd boundary
+
 `install` writes `<launchd-root>/<service-label>.plist` with `RunAtLoad` and
 `KeepAlive` with failed successful exits restarted by launchd. It reports
 `launchd_loaded: false`. This worker does not load a plist into the user's real
