@@ -68,6 +68,20 @@ Evidence: `raw/build-macos-third.log`, `raw/cargo-test-macos-bridge.log`, `raw/a
 Input: HEAD `a31c1d9` + scoped diff.
 Next: record receipt and stop before installed E2E (root allocates fixed install/review).
 
+## Node 5 - candidate commit
+
+Time: 2026-10-04
+Node: allowed-range commit and cleanliness
+Conclusion: product/hook run clean. Product commit `57a3b23feed72931766a31fc06e6f3de7bd15041`
+/ tree `9a413c5377e07f2a0e218638d801658684317fcb`; receipt-notes commit `7d00ed8`.
+Tracked changes vs `a31c1d9` are only `apps/macos/Sources/main.swift`,
+`apps/macos/connection-bridge/src/main.rs`, `scripts/build-macos.sh`, and
+`docs/runs/m1-mac-native-layout-r1-20261004/**`; `git diff --check a31c1d9..HEAD` exit 0; worktree
+clean (`node_modules` ignored only).
+Evidence: `git diff --check a31c1d9..HEAD`, `git status --short`.
+Input: HEAD `a31c1d9` + scoped diff.
+Next: root intake allocates fixed install, native E2E and independent architecture review.
+
 ## Resource ledger
 
 - Worktree: `/Volumes/Intel/playground/agentbrowser/m1-mac-native-layout-r1-20261004` (owned; preserve for root intake).
