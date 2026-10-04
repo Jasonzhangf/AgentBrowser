@@ -1,0 +1,47 @@
+{
+  "status": "INCOMPLETE_UI_OWNER_HANDOFF",
+  "device": {
+    "serial": "emulator-5554",
+    "display_px": "1080x2400",
+    "density": 2.625,
+    "status_bars_px": "[0,0][1080,63]",
+    "navigation_bars_px": "[0,2337][1080,2400]"
+  },
+  "native_projection_dp": {
+    "drawableWindowRect": {"x": 0, "y": 0, "width": 411, "height": 914},
+    "safeContentRect": {"x": 0, "y": 24, "width": 411, "height": 866},
+    "chromeRect": {"x": 0, "y": 24, "width": 411, "height": 56},
+    "advertisedViewportRect": {"x": 0, "y": 80, "width": 411, "height": 810},
+    "presentedContentRect": {"x": 0, "y": 80, "width": 411, "height": 810},
+    "webRect": {"x": 0, "y": 0, "width": 411, "height": 914},
+    "visibleContent": "webview",
+    "currentTabId": null,
+    "geometryMatches": false,
+    "presentation": "browsing"
+  },
+  "native_actual_px": {
+    "stage": "[0,210][1079,2336]",
+    "videoClip": "[0,314][1079,2232]",
+    "surfaceView": "[0,314][1079,2232]"
+  },
+  "ui_observed": {
+    "shell": "local-shell",
+    "dataRemote": "false",
+    "safeTop": "24px",
+    "safeBottom": "24px",
+    "browserChromeY": 0,
+    "addressY": 5,
+    "addressBottom": 47
+  },
+  "first_failing_gate": {
+    "owner": "UI/domain",
+    "path": "packages/ui-plugins/probe.css",
+    "rule": "main[data-remote=\"false\"] .browser-chrome",
+    "cause": "local shell consumes env(safe-area-inset-top) but not typed var(--safe-top)",
+    "minimal_change": "padding-top: max(6px, env(safe-area-inset-top), var(--safe-top, 0px)); and mobile max(4px, ...)"
+  },
+  "source_commit": "71aa70cb94e2f1f6d797bfd60bc776a92f7080b7",
+  "source_tree": "4da374f4ca9458e803bbcda9a2017450c012a617",
+  "app_apk_sha256": "ab56723fd316b9c171b6b4f4a66dbed5f4ddacb54f9235724749b078a9f04740",
+  "test_apk_sha256": "4589d642a31746322593982b86ffc7298d0540dedb0b658ef9289fdadac5a192"
+}

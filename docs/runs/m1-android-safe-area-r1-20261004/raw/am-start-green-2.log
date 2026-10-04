@@ -1,0 +1,7 @@
+Starting: Intent { cmp=com.agentbrowser.probe/.MainActivity }
+Status: ok
+LaunchState: COLD
+Activity: com.agentbrowser.probe/.MainActivity
+TotalTime: 1700
+WaitTime: 1709
+Complete
