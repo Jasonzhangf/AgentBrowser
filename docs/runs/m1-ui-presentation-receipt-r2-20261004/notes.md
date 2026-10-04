@@ -126,3 +126,25 @@ Environment: Ego TaskSpace 120 (then 121 for final repeat), owned server port
 64750; desktop and phone viewports.
 
 Next: write the receipt and commit the allowlist.
+
+## Node 5 - allowlist commit
+
+Time: 2026-10-03
+
+Node: product/evidence commit.
+
+Conclusion: Committed the allowed product files plus this run directory through
+the existing `.githooks/pre-commit` hook. The hook ran `verify:local` and passed
+typecheck, 28/28 tests, and `build:ui`. Candidate commit
+`8c4528419c39806b8280218bfb463c21afdd7287` / tree
+`d043aaa85368df5859ea58e5ea79fba9012c748f`. `git diff --check a6bec4e..HEAD`
+exits 0. No forbidden path changed.
+
+Evidence: hook stdout; commit stdout; `git status`, `git rev-parse`,
+`git diff --check a6bec4e..HEAD`, scope diff.
+
+Input: verified fixed source and evidence tree.
+
+Environment: owned branch; no remote integration or native install.
+
+Next: author receipt readback and controller handoff.

@@ -11,7 +11,9 @@ architecture review and native/installed acceptance are not claimed).
 - Worktree:
   `/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004`
 - Final product commit SHA/tree: reported by the author handoff after this
-  allowlist commit.
+  allowlist commit. Candidate commit:
+  `8c4528419c39806b8280218bfb463c21afdd7287`; tree
+  `d043aaa85368df5859ea58e5ea79fba9012c748f`.
 
 ## Product changes
 
