@@ -61,16 +61,17 @@
 时间：2026-10-03
 节点：docs-only verification
 结论：`git diff --check` exit 0；产品 source 零 diff（只改 docs/runs r1 四份+r2 新增）。未运行产品构建/测试冒充实现。
-证据：`git diff --check`、`git diff --name-only`、`git status --short`
-输入：HEAD `d11150f` 冻结树
+证据：`git diff --check`、`git diff --name-only`、`git diff --name-only d11150f..HEAD -- ':!docs/**'` 为空、`git status --short`
+输入：HEAD `d11150f` 冻结树，tree `9cba13e4c4d16c22cea2d5f2afc970a24f26f472`
 下一步：正常 hook commit，输出设计 SHA/tree 供独立 review
 
 ## Node 7 - commit hook evidence
 
 时间：2026-10-03
 节点：原 hook
-结论：pre-commit `npm run verify:local` 结果见交付摘要；以明确 docs allowlist 提交，不 `git add .`，不绕 hook。
-证据：commit stdout / hook log
+结论：两笔提交均以明确 docs allowlist 提交（不 `git add .`、不绕 hook），pre-commit `npm run verify:local` 均 exit 0。
+设计提交 `f3f4946a362213f419e8ba5d554cf68c07906ccb`（tree `e4d133f30ba3704f713d87d41c43e19aee374d85`）：typecheck + 21 tests + build:ui 全通过。
+摘要提交 `48345779eec427bc59aebd4d8c63ec77a5d9248b`（tree `80b9708df037068dafb49efd705ba2ca63154ab7`）：同 hook 通过。
+证据：`git commit` stdout、`git rev-parse HEAD`、`git rev-parse HEAD^{tree}`、hook 内 TAP `# pass 21 # fail 0`
 输入：本 run docs-only diff
-下一步：交付摘要收口
-
+下一步：交付摘要收口；tree 保留供新独立 review
