@@ -23,7 +23,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 U32_MAX = (1 << 32) - 1
 DEFAULT_LABEL = "com.agentbrowser.obscura-host"
 DEFAULT_ROOT = Path.home() / "Library" / "Application Support" / "AgentBrowser" / "host-service"
@@ -194,6 +194,38 @@ def config_path(root: Path) -> Path:
     return root / CONFIG_NAME
 
 
+def existing_profile_root(root: Path) -> str | None:
+    path = config_path(root)
+    if not path.is_file():
+        return None
+    if mode(path) != 0o600:
+        raise ServiceError(f"existing config permissions must be 0600: {path}")
+    config = load_json(path, "service config")
+    version = config.get("config_version")
+    if type(version) is not int or version not in {1, CONFIG_VERSION}:
+        raise ServiceError("cannot preserve profile root from unsupported service config")
+    if version == 1:
+        if "profile_root" in config:
+            raise ServiceError("legacy service config cannot contain profile_root")
+        return None
+    if "profile_root" not in config:
+        raise ServiceError("v2 service config is missing profile_root")
+    value = config.get("profile_root")
+    if value is None:
+        if config.get("profile_mode") != "in_memory":
+            raise ServiceError("existing persistent service config requires profile_root")
+        return None
+    if not isinstance(value, str) or not value:
+        raise ServiceError("existing service config profile_root is invalid")
+    normalized = normalize_absolute(value, "existing profile root")
+    if str(normalized) != value:
+        raise ServiceError("existing service config profile_root must be canonical")
+    validate_process_path(value, "existing profile root")
+    if config.get("profile_mode") != "persistent":
+        raise ServiceError("existing profile_root requires persistent mode")
+    return value
+
+
 def state_path(root: Path) -> Path:
     return root / "run" / STATE_NAME
 
@@ -233,8 +265,8 @@ def write_json(path: Path, value: dict[str, object]) -> None:
         raise
 
 
-def expected_config_keys() -> set[str]:
-    return {
+def expected_config_keys(config_version: object) -> set[str]:
+    keys = {
         "config_version",
         "config_id",
         "service_label",
@@ -246,6 +278,9 @@ def expected_config_keys() -> set[str]:
         "allow_private_network",
         "runtime_root",
     }
+    if config_version == CONFIG_VERSION:
+        keys.add("profile_root")
+    return keys
 
 
 def load_config(root: Path) -> tuple[dict[str, object], str]:
@@ -255,11 +290,16 @@ def load_config(root: Path) -> tuple[dict[str, object], str]:
     if mode(path) != 0o600:
         raise ServiceError(f"config permissions must be 0600: {path}")
     config = load_json(path, "service config")
-    unknown = sorted(set(config) - expected_config_keys())
+    config_version = config.get("config_version")
+    if type(config_version) is not int or config_version not in {1, CONFIG_VERSION}:
+        raise ServiceError("unsupported host-service config version")
+    expected_keys = expected_config_keys(config_version)
+    missing = sorted(expected_keys - set(config))
+    if missing:
+        raise ServiceError(f"service config is missing keys: {', '.join(missing)}")
+    unknown = sorted(set(config) - expected_keys)
     if unknown:
         raise ServiceError(f"unsupported config keys: {', '.join(unknown)}")
-    if config.get("config_version") != CONFIG_VERSION:
-        raise ServiceError("unsupported host-service config version")
     if not isinstance(config.get("config_id"), str) or not config["config_id"]:
         raise ServiceError("config_id is required")
     service_label = config.get("service_label")
@@ -280,13 +320,37 @@ def load_config(root: Path) -> tuple[dict[str, object], str]:
     if not isinstance(profile_id, str):
         raise ServiceError("profile_id must be a string")
     validate_profile_id(profile_id)
-    if config.get("profile_mode") != "in_memory":
-        raise ServiceError("profile_mode must be in_memory; disk profile persistence is not supported by this Host")
+    profile_mode = config.get("profile_mode")
+    if profile_mode not in {"in_memory", "persistent"}:
+        raise ServiceError("profile_mode must be in_memory or persistent")
+    if config_version == 1:
+        if profile_mode != "in_memory":
+            raise ServiceError("legacy config cannot enable persistent profile mode")
+        profile_root_value = None
+    else:
+        profile_root_value = config.get("profile_root")
+    if profile_root_value is not None:
+        if not isinstance(profile_root_value, str):
+            raise ServiceError("profile_root must be an absolute path or null")
+        profile_root = normalize_absolute(profile_root_value, "profile root")
+        if str(profile_root) != profile_root_value:
+            raise ServiceError("profile_root must be the canonical absolute path")
+        validate_process_path(str(profile_root), "profile root")
+        if profile_mode != "persistent":
+            raise ServiceError("profile_root requires profile_mode persistent")
+    else:
+        profile_root = None
+        if profile_mode != "in_memory":
+            raise ServiceError("persistent profile_mode requires profile_root")
     if not isinstance(config.get("allow_private_network"), bool):
         raise ServiceError("allow_private_network must be boolean")
     runtime_root = runtime_root_from(str(config.get("runtime_root", "")))
     if str(runtime_root) != config["runtime_root"]:
         raise ServiceError("runtime_root must be the canonical absolute path")
+    # Normalize the pre-profile config version to the complete v2 shape so
+    # every downstream consumer reads one config identity. The legacy schema
+    # never carried a root and cannot enable persistence.
+    config["profile_root"] = str(profile_root) if profile_root is not None else None
     assert_private_directory(root)
     assert_private_directory(root / "run")
     assert_private_directory(root / "logs")
@@ -315,6 +379,7 @@ def validate_state(state: dict[str, object]) -> None:
         "protocol_version",
         "profile_id",
         "profile_mode",
+        "profile_root",
         "runtime_root",
         "socket_dir",
         "session_id",
@@ -324,7 +389,7 @@ def validate_state(state: dict[str, object]) -> None:
         "started_at_unix",
         "ready_error",
     }
-    missing = sorted(expected - set(state) - {"ready_error"})
+    missing = sorted(expected - set(state) - {"ready_error", "profile_root"})
     unknown = sorted(set(state) - expected)
     if missing:
         raise ServiceError(f"service state is missing keys: {', '.join(missing)}")
@@ -351,8 +416,20 @@ def validate_state(state: dict[str, object]) -> None:
     if not isinstance(profile_id, str):
         raise ServiceError("service state profile_id must be a string")
     validate_profile_id(profile_id)
-    if state["profile_mode"] != "in_memory":
-        raise ServiceError("service state profile_mode must be in_memory")
+    if state["profile_mode"] not in {"in_memory", "persistent"}:
+        raise ServiceError("service state profile_mode is invalid")
+    state_profile_root = state.get("profile_root")
+    if state_profile_root is not None:
+        if not isinstance(state_profile_root, str):
+            raise ServiceError("service state profile_root must be a string or null")
+        normalized_root = normalize_absolute(state_profile_root, "service state profile root")
+        if str(normalized_root) != state_profile_root:
+            raise ServiceError("service state profile_root must be canonical")
+        validate_process_path(state_profile_root, "service state profile root")
+        if state["profile_mode"] != "persistent":
+            raise ServiceError("service state profile_root requires persistent mode")
+    elif state["profile_mode"] == "persistent":
+        raise ServiceError("persistent service state requires profile_root")
     runtime_root_value = state["runtime_root"]
     if not isinstance(runtime_root_value, str):
         raise ServiceError("service state runtime_root must be a string")
@@ -444,17 +521,27 @@ def process_snapshot(pid: int) -> tuple[str, str] | None:
     return parts[0], parts[1] if len(parts) == 2 else ""
 
 
-def host_command_matches(snapshot: tuple[str, str], binary: str, socket_dir: str) -> bool:
+def host_command_matches(
+    snapshot: tuple[str, str],
+    binary: str,
+    socket_dir: str,
+    profile_root: str | None,
+) -> bool:
     try:
         argv = shlex.split(snapshot[1])
     except ValueError:
         return False
     if len(argv) < 3 or argv[:3] != [binary, "--socket-dir", socket_dir]:
         return False
-    return argv[3:] in ([], ["--allow-private-network"])
+    remainder = argv[3:]
+    if profile_root is None:
+        return remainder in ([], ["--allow-private-network"])
+    if len(remainder) not in {2, 3} or remainder[:2] != ["--profile-root", profile_root]:
+        return False
+    return remainder[2:] in ([], ["--allow-private-network"])
 
 
-def stop_target_status(pid: int, binary: str, socket_dir: str) -> str:
+def stop_target_status(pid: int, binary: str, socket_dir: str, profile_root: str | None) -> str:
     snapshot = process_snapshot(pid)
     if snapshot is None:
         if pid_alive(pid):
@@ -462,13 +549,13 @@ def stop_target_status(pid: int, binary: str, socket_dir: str) -> str:
         return "gone"
     if snapshot[0].startswith("Z"):
         return "gone"
-    if not host_command_matches(snapshot, binary, socket_dir):
+    if not host_command_matches(snapshot, binary, socket_dir, profile_root):
         return "changed"
     return "owned"
 
 
-def stop_target_is_verified(pid: int, binary: str, socket_dir: str) -> bool:
-    status = stop_target_status(pid, binary, socket_dir)
+def stop_target_is_verified(pid: int, binary: str, socket_dir: str, profile_root: str | None) -> bool:
+    status = stop_target_status(pid, binary, socket_dir, profile_root)
     if status == "gone":
         return False
     if status != "owned":
@@ -488,7 +575,8 @@ def state_identity(state: dict[str, object]) -> tuple[bool, str]:
     command = snapshot[1]
     binary = str(state.get("host_binary", ""))
     socket_dir = str(state.get("socket_dir", ""))
-    if not host_command_matches(snapshot, binary, socket_dir):
+    profile_root = state.get("profile_root")
+    if not host_command_matches(snapshot, binary, socket_dir, profile_root if isinstance(profile_root, str) else None):
         return False, "foreign"
     return True, command
 
@@ -647,6 +735,7 @@ def state_for(
         "protocol_version": config["protocol_version"],
         "profile_id": config["profile_id"],
         "profile_mode": config["profile_mode"],
+        "profile_root": config["profile_root"],
         "runtime_root": config["runtime_root"],
         "socket_dir": str(socket_dir),
         "session_id": session_id,
@@ -682,8 +771,8 @@ def stop_child_process(process: subprocess.Popen[object]) -> None:
         raise ServiceError(f"Host child did not stop after owned termination: {process.pid}") from error
 
 
-def stop_pid(pid: int, binary: str, socket_dir: str) -> None:
-    if not stop_target_is_verified(pid, binary, socket_dir):
+def stop_pid(pid: int, binary: str, socket_dir: str, profile_root: str | None) -> None:
+    if not stop_target_is_verified(pid, binary, socket_dir, profile_root):
         return
     try:
         os.kill(pid, signal.SIGTERM)
@@ -691,11 +780,11 @@ def stop_pid(pid: int, binary: str, socket_dir: str) -> None:
         return
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        status = stop_target_status(pid, binary, socket_dir)
+        status = stop_target_status(pid, binary, socket_dir, profile_root)
         if status == "gone":
             return
         time.sleep(0.05)
-    term_status = stop_target_status(pid, binary, socket_dir)
+    term_status = stop_target_status(pid, binary, socket_dir, profile_root)
     if term_status == "gone":
         return
     if term_status != "owned":
@@ -706,13 +795,13 @@ def stop_pid(pid: int, binary: str, socket_dir: str) -> None:
         return
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        status = stop_target_status(pid, binary, socket_dir)
+        status = stop_target_status(pid, binary, socket_dir, profile_root)
         if status == "gone":
             return
         if status != "owned":
             raise ServiceError(f"Host PID identity changed; refusing to signal: {pid}")
         time.sleep(0.05)
-    final_status = stop_target_status(pid, binary, socket_dir)
+    final_status = stop_target_status(pid, binary, socket_dir, profile_root)
     if final_status == "owned":
         raise ServiceError(f"Host did not stop after explicit PID termination: {pid}")
     if final_status != "gone":
@@ -737,6 +826,70 @@ def cleanup_stale(root: Path, state: dict[str, object]) -> None:
     remove_state(root)
 
 
+def host_command(config: dict[str, object], socket_dir: Path) -> list[str]:
+    command = [str(config["host_binary"]), "--socket-dir", str(socket_dir)]
+    profile_root = config.get("profile_root")
+    if profile_root is not None:
+        command.extend(["--profile-root", str(profile_root)])
+    if config["allow_private_network"]:
+        command.append("--allow-private-network")
+    return command
+
+
+def flush_profiles(socket_path: Path, expected_version: object) -> int:
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(10)
+    try:
+        client.connect(str(socket_path))
+        ready = json.loads(client.makefile("rb").readline().decode("utf-8"))
+        if not isinstance(ready, dict) or ready.get("type") != "ready":
+            raise ServiceError("cannot confirm profile flush: invalid Host ready response")
+        ready_version = protocol_version_from(ready.get("version"), "Host ready protocol version")
+        if ready_version != protocol_version_from(expected_version, "expected host protocol version"):
+            raise ServiceError(
+                f"cannot confirm profile flush: Host protocol version is {ready_version}, "
+                f"expected {expected_version}"
+            )
+        request = {"id": 1, "command": {"type": "flush_profiles"}}
+        client.sendall((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+        response = json.loads(client.makefile("rb").readline().decode("utf-8"))
+        if not isinstance(response, dict) or response.get("id") != 1:
+            raise ServiceError("cannot confirm profile flush: invalid Host maintenance response")
+        if response.get("type") == "error":
+            code = response.get("code")
+            message = response.get("message")
+            raise ServiceError(f"profile flush failed ({code}): {message}")
+        if response.get("type") != "result":
+            raise ServiceError("cannot confirm profile flush: Host did not return a typed result")
+        value = response.get("value")
+        if not isinstance(value, dict) or "flushed" not in value or "profiles" not in value:
+            raise ServiceError("cannot confirm profile flush: Host returned an unexpected result")
+        if value.get("flushed") is not True:
+            raise ServiceError("profile flush did not report flushed=true")
+        profiles = value.get("profiles")
+        if type(profiles) is not int or profiles < 0:
+            raise ServiceError("profile flush returned an invalid profile count")
+        return profiles
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ServiceError(f"cannot confirm profile flush: {error}") from error
+    finally:
+        client.close()
+
+
+def flush_loaded_profiles(socket_dir: Path, protocol_version: object, profile_mode: object) -> None:
+    if profile_mode != "persistent":
+        return
+    flush_profiles(socket_dir / "host.sock", protocol_version)
+
+
+def flush_before_stop(state: dict[str, object]) -> None:
+    flush_loaded_profiles(
+        Path(str(state.get("socket_dir", ""))),
+        state.get("protocol_version"),
+        state.get("profile_mode"),
+    )
+
+
 def supervise_launchd_process(
     process: subprocess.Popen[object],
     root: Path,
@@ -746,27 +899,49 @@ def supervise_launchd_process(
 ) -> int:
     stopping = False
 
-    def stop_owned_process(_signum: int, _frame: object) -> None:
+    def request_stop(_signum: int, _frame: object) -> None:
         nonlocal stopping
-        if stopping:
-            return
         stopping = True
-        try:
-            stop_child_process(process)
-            cleanup_runtime(state_for(config, config_hash, process.pid, socket_dir, "launchd", "closed"))
-            remove_state(root)
-        finally:
-            raise SystemExit(0)
 
-    previous_handlers = {signum: signal.signal(signum, stop_owned_process) for signum in (signal.SIGTERM, signal.SIGINT)}
+    # The signal handler only records the request. Flushing and reaping must
+    # run in the main thread: Popen.wait() is not reentrant, so stopping the
+    # child from inside a handler that interrupted an outer wait() would
+    # deadlock until the stop deadline expired.
+    previous_handlers = {
+        signum: signal.signal(signum, request_stop)
+        for signum in (signal.SIGTERM, signal.SIGINT)
+    }
     try:
-        return process.wait()
+        while process.poll() is None:
+            if stopping:
+                exit_code = 0
+                try:
+                    flush_loaded_profiles(
+                        socket_dir,
+                        config["protocol_version"],
+                        config["profile_mode"],
+                    )
+                    stop_child_process(process)
+                    cleanup_runtime(state_for(config, config_hash, process.pid, socket_dir, "launchd", "closed"))
+                    remove_state(root)
+                except ServiceError as error:
+                    # The confirmed flush is the precondition for terminating
+                    # the launchd-owned child. A busy or failed store leaves the
+                    # Host and its state in place and reports the typed error; it
+                    # never claims a saved stop.
+                    print(f"host-service: {error}", file=sys.stderr)
+                    exit_code = error.exit_code
+                return exit_code
+            try:
+                process.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                pass
+        cleanup_runtime(state_for(config, config_hash, process.pid, socket_dir, "launchd", "closed"))
+        remove_state(root)
+        return process.returncode or 0
     finally:
         for signum, previous in previous_handlers.items():
             signal.signal(signum, previous)
-        if not stopping:
-            cleanup_runtime(state_for(config, config_hash, process.pid, socket_dir, "launchd", "closed"))
-            remove_state(root)
 
 
 def write_plist(config: dict[str, object], root: Path, launchd_root: Path) -> Path:
@@ -820,6 +995,16 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
     profile_id = validate_profile_id(args.profile_id)
     protocol_version = protocol_version_from(args.protocol_version, "protocol version")
     runtime_root = runtime_root_from(args.runtime_root)
+    profile_root_value = args.profile_root
+    if profile_root_value is None:
+        profile_root_value = existing_profile_root(root)
+    profile_root = (
+        normalize_absolute(profile_root_value, "profile root")
+        if profile_root_value is not None
+        else None
+    )
+    if profile_root is not None:
+        validate_process_path(str(profile_root), "profile root")
     existing = load_state(root) if state_path(root).is_file() else None
     if existing is not None:
         state_status = stale_or_running(root, existing)
@@ -839,7 +1024,8 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
         "binary_sha256": sha256_file(binary),
         "protocol_version": protocol_version,
         "profile_id": profile_id,
-        "profile_mode": "in_memory",
+        "profile_mode": "persistent" if profile_root is not None else "in_memory",
+        "profile_root": str(profile_root) if profile_root is not None else None,
         "allow_private_network": bool(args.allow_private_network),
         "runtime_root": str(runtime_root),
     }
@@ -858,7 +1044,8 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
         "binary_sha256": config["binary_sha256"],
         "protocol_version": config["protocol_version"],
         "profile_id": profile_id,
-        "profile_mode": "in_memory",
+        "profile_mode": config["profile_mode"],
+        "profile_root": config["profile_root"],
         "runtime_root": str(runtime_root),
         "launchd_plist": str(plist),
         "launchd_loaded": False,
@@ -897,9 +1084,7 @@ def start_locked(args: argparse.Namespace, root: Path, config: dict[str, object]
             cleanup_stale(root, existing)
         socket_dir = make_socket_dir(runtime_root_from(str(config["runtime_root"])))
         log_handle = log_path(root).open("ab")
-        command = [str(binary), "--socket-dir", str(socket_dir)]
-        if config["allow_private_network"]:
-            command.append("--allow-private-network")
+        command = host_command(config, socket_dir)
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
@@ -929,6 +1114,7 @@ def start_locked(args: argparse.Namespace, root: Path, config: dict[str, object]
             "protocol_version": config["protocol_version"],
             "profile_id": config["profile_id"],
             "profile_mode": config["profile_mode"],
+            "profile_root": config["profile_root"],
             "socket_dir": str(socket_dir),
             "config_id": config["config_id"],
             "config_sha256": config_hash,
@@ -968,6 +1154,7 @@ def command_status(args: argparse.Namespace) -> int:
         "protocol_version": config["protocol_version"],
         "profile_id": config["profile_id"],
         "profile_mode": config["profile_mode"],
+        "profile_root": config["profile_root"],
         "runtime_root": config["runtime_root"],
         "config_id": config["config_id"],
         "config_sha256": config_hash,
@@ -1068,10 +1255,12 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
     if alive and state.get("launch_mode") == "launchd":
         raise ServiceError("launchd-managed Host must be stopped through launchctl; refusing subprocess stop")
     if alive:
+        flush_before_stop(state)
         stop_pid(
             pid_from_state(state),
             str(state.get("host_binary", "")),
             str(state.get("socket_dir", "")),
+            str(state["profile_root"]) if state.get("profile_root") is not None else None,
         )
     cleanup_runtime(state)
     remove_state(root)
@@ -1104,9 +1293,7 @@ def command_launchd(args: argparse.Namespace) -> int:
         if state_status == "stale" and existing is not None:
             cleanup_stale(root, existing)
         socket_dir = make_socket_dir(runtime_root_from(str(config["runtime_root"])))
-        command = [str(binary), "--socket-dir", str(socket_dir)]
-        if config["allow_private_network"]:
-            command.append("--allow-private-network")
+        command = host_command(config, socket_dir)
         write_json(
             state_path(root),
             state_for(config, config_hash, os.getpid(), socket_dir, "launchd_starting", None),
@@ -1182,6 +1369,7 @@ def parser() -> argparse.ArgumentParser:
     install.add_argument("--binary", required=True)
     install.add_argument("--protocol-version", required=True, type=protocol_version_argument)
     install.add_argument("--runtime-root")
+    install.add_argument("--profile-root")
     install.add_argument("--launchd-root")
     install.add_argument("--service-label", default=DEFAULT_LABEL)
     install.add_argument("--profile-id", default="default")

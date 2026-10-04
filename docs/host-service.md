@@ -9,14 +9,22 @@ the Obscura engine, the direct endpoint, or the Mac UI.
 The service starts the real Obscura Host binary with one fresh socket directory:
 
 ```text
-obscura-host --socket-dir <fresh-private-directory>
+obscura-host --socket-dir <fresh-private-directory> [--profile-root <canonical-absolute-directory>]
 ```
 
 The current Host CLI also accepts the explicit local-test flag
 `--allow-private-network`. The service passes it only when enabled in the typed
-config. It does not start `obscura serve`, create a second Session owner, or
-replace `obscura-endpoint`. The endpoint is a separate transport process that
-connects to an already-running Host.
+config. The explicit Host11 profile root is passed only when the service was
+installed with `--profile-root`; the service never substitutes a default shared
+root or modifies an existing profile directory. It does not start `obscura
+serve`, create a second Session owner, or replace `obscura-endpoint`. The
+endpoint is a separate transport process that connects to an already-running
+Host.
+
+Reinstalling without `--profile-root` reuses the canonical root already stored
+in a v2 config. It never silently drops that root or modifies the existing
+profile directory; switching to a different explicit root requires passing the
+new root to `install`.
 
 The Host itself owns `Session`, `Page`, attachment admission, operation identity,
 viewport state, and `host.sock`/`frames.sock`. A client closing its Unix socket
@@ -38,6 +46,13 @@ label, config ID, config hash, and configured protocol version in service state.
 `status` reports the configured version as typed config projection; it never
 reconstructs ownership or health from log text.
 
+The Host ready response is also the first message on the local Unix maintenance
+connection. For a persistent service, the manager sends the Host-local
+`flush_profiles` request before stop or restart and requires the matching typed
+`ProfileFlush` result with `flushed: true`. A busy, storage-failed, timed-out,
+or otherwise unknown result fails explicitly; the manager does not signal the
+Host, remove state, start a replacement, or report `saved`.
+
 `status` validates a ready response through the same configured-version rule as
 startup and rejects it when the ready session does not match the state. A dead
 recorded PID is reported as `stale`; a mismatching ready response is reported
@@ -46,17 +61,27 @@ state is interpreted as successful startup progress.
 
 ## Profile boundary
 
-`profile_id` identifies the service configuration. `profile_mode` is explicitly
-`in_memory`. The current Obscura Host constructs its browser context without a
-storage directory, so this entrypoint does not claim disk-profile, cookie,
-localStorage, DOM, form, timer, or JavaScript persistence across a daemon
-restart. A restart creates a new Host Session identity. Same-daemon reconnect
-and process-restart persistence are separate claims.
+`profile_id` identifies the service configuration. The install argument
+`--profile-root` is optional. With no explicit root, config version 2 projects
+`profile_mode: in_memory` and `profile_root: null`; the Host runs one in-memory
+profile and a restart creates a new Session identity. With an explicit root,
+config and state project `profile_mode: persistent` and the canonical
+`profile_root`; the service passes that exact root to the Host on both
+subprocess and launchd starts.
 
-The config schema rejects unknown keys and any profile mode other than
-`in_memory`; credentials, bearer tokens, and client certificates are not
-accepted as service config. They are not written to service logs or the launchd
-plist.
+The Host owns the profile catalog, profile selection, profile storage and the
+meaning of a successful flush. The service owns only the process/config and
+consumes the typed Host maintenance result before lifecycle termination. It
+does not read profile files, infer saved state from logs or cookies, or treat
+ordinary UI profile selection as a service configuration change or restart.
+
+Config version 1 is accepted only as the legacy in-memory shape and is
+normalized to an explicit null root for downstream projection. A v2 config must
+contain `profile_root`; a persistent mode without a root, a root with in-memory
+mode, a non-canonical root, or a root containing characters that cannot be
+matched in the recorded argv fails explicitly. Credentials, bearer tokens, and
+client certificates are not accepted as service config and are not written to
+service logs or the launchd plist.
 
 ## Commands
 
@@ -73,7 +98,8 @@ Host's exact argv. The default is a private per-user directory under
 scripts/host-service/host-service install \
   --root "$HOME/Library/Application Support/AgentBrowser/host-service" \
   --binary /absolute/path/to/obscura-host \
-  --protocol-version 10
+  --profile-root /absolute/private/profile-root \
+  --protocol-version 11
 
 scripts/host-service/host-service start --root "$HOME/Library/Application Support/AgentBrowser/host-service"
 scripts/host-service/host-service status --root "$HOME/Library/Application Support/AgentBrowser/host-service"
@@ -95,6 +121,13 @@ Before any ownership check, signal, or runtime cleanup, `state.json` must match
 the complete typed schema, including canonical binary/runtime/socket identities.
 Malformed state fails explicitly and is never used to signal a PID or remove a
 runtime directory.
+
+For persistent service, `stop` sends the local `flush_profiles` request first.
+Only a matching `ProfileFlush { flushed: true, profiles: <u32> }` permits the
+existing verified-PID termination path. `restart` performs the same
+stop-and-confirm sequence and then starts a fresh Host with the same explicit
+root; it never reuses the old Session or epoch. A rejected or unknown
+maintenance result leaves the running Host and its recorded state in place.
 
 Startup records a typed `subprocess_starting` state before waiting for the Host
 ready response, then replaces it with the Session-bearing state. Failed startup
@@ -122,8 +155,9 @@ launchd domain. The plist's program is the same service manager in `launchd`
 mode; that mode allocates a fresh runtime socket directory, validates the
 configured Host ready version against the real socket, and only then records
 the running launchd-owned Host identity. The manager waits for that child while
-it remains the service owner; SIGINT/SIGTERM terminate the owned child and
-remove its owned socket runtime and state.
+it remains the service owner. SIGINT/SIGTERM for a persistent service first
+request the same typed Host flush in the main thread; only a confirmed result
+terminates the owned child and removes its owned socket runtime and state.
 
 A launchd protocol rejection uses `terminate`/`wait` on the already spawned
 child, removes its owned socket runtime, and writes a terminal
@@ -150,15 +184,19 @@ CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR="$OBSCURA_TARGET" \
   cargo build --release -p obscura-host --features render
 
 OBSCURA_HOST_BINARY="$OBSCURA_TARGET/release/obscura-host" \
-OBSCURA_HOST_PROTOCOL_VERSION=10 \
+OBSCURA_HOST_PROTOCOL_VERSION=11 \
   scripts/host-service/verify-host-service
 ```
 
 The test uses the actual binary and checks: missing executable, invalid profile
 config, missing/invalid protocol version, configured ready/session identity,
 version mismatch cleanup, duplicate start, client exit without Host exit,
-normal stop/status, and restart producing a new Session identity. It does not
-load launchd, install a real user service, touch Android/ADB resources, or claim
+normal stop/status, restart producing a new Session identity, and the
+persistent stop/restart maintenance success/failure cases. The development
+fixture additionally exercises busy/storage-failed/unknown flush receipts,
+foreign-PID protection, legacy config projection, explicit-root argv matching,
+and launchd supervisor ordering without claiming a real Host. It does not load
+launchd, install a real user service, touch Android/ADB resources, or claim
 full M1 product acceptance.
 
 The AppSDK build and regression bindings invoke the same resolver wrapper. It
@@ -182,7 +220,7 @@ on its owner branch, select the validated AppSDK executable on `PATH`, and run:
 
 ```sh
 OBSCURA_HOST_BINARY=/absolute/path/to/validated/obscura-host \
-OBSCURA_HOST_PROTOCOL_VERSION=10 \
+OBSCURA_HOST_PROTOCOL_VERSION=11 \
   node scripts/host-service/validate-admission.mjs
 ```
 
@@ -197,14 +235,16 @@ This private acceptance installation does not replace the user's default Host
 service or establish full M1 acceptance. Existing admission records are preserved:
 the adapter refuses to overwrite a candidate/validation graph.
 
-The later real launchd window must add the two missing negative/positive cases
-without using placeholders: install a compiled bundle whose explicit
-`--protocol-version` is legal but does not match the Host binary, bootstrap the
-unique label, assert non-zero `ready_rejected` plus owned process/socket/state
-cleanup, then repeat with the matching binary/version and assert ready,
-observe attach, restart, stop, and unique-label bootout. The controller must
-provide the validated binary path, its SHA-256, the positive protocol version,
-a mismatching legal version, the launchd root and private UID.
+The later real launchd window must add the missing cases without using
+placeholders: install a compiled bundle whose explicit `--protocol-version` is
+legal but does not match the Host binary, bootstrap the unique label, assert
+non-zero `ready_rejected` plus owned process/socket/state cleanup; then repeat
+with the matching binary/version and assert ready, observe attach, confirmed
+profile flush, restart with a new Session/epoch, stop, and unique-label
+bootout. The controller must provide the validated Host binary path and hash,
+the positive protocol version 11, a legal mismatching version, an explicit
+private profile root containing real store data, the launchd root and private
+UID.
 
 ## Ownership and non-goals
 
