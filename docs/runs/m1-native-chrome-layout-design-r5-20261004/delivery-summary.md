@@ -11,7 +11,10 @@ graph 返修，未编码、未安装、未启动、未连网，未跑产品黑�
 - 基线：exact r4 `0e387b36af08edacb97ad1b8ed0d28b0a0eaf5a6` / tree
   `0deb5dca5369c1339867960300b1bef1c362e2c6`；输入 origin/main
   `bc9d67ad037be2c7119bee692f9ad362417ffd05`。
-- r5 候选：docs/graph commit（exact SHA/tree 见提交回执，不写回自身以避免自引用）。
+- r5 design candidate：`b4d63afdb5c32e112e64619d4780e291a0c72e2b` / tree
+  `64e042d744b0ad87c072ed7194994ad426aa1c35`，normal hook `verify:local`
+  PASS（typecheck、21/21 tests、`build:ui`）。最终 receipt commit 仅写入本
+  摘要与 notes，SHA/tree 由 author handoff 报告。
 - 产品 `apps/ packages/ scripts/ protocol/ .appsdk/ Cargo.toml Cargo.lock`
   相对 r4 零 diff；未触碰共享 target、设备、runtime、profile、其他树或
   canonical main。

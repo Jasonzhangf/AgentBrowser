@@ -108,27 +108,32 @@ bounds”类指令。
 
 ## Node 6 - commit / dependency gate
 
-时间：提交时记录
+时间：2026-10-03
 节点：commit
-结论：将按 normal hook 提交，不 `--no-verify`、不 `git add .`；fresh worktree
-首错预期为缺 locked deps 后按仓库文档执行 `npm ci`。exact commit SHA/tree 在
-提交回执中记录，不写回本 commit 以避免自引用。
-证据：commit stdout / `git log -1` 回执。
+结论：normal hook commit 成功。候选
+`b4d63afdb5c32e112e64619d4780e291a0c72e2b` / tree
+`64e042d744b0ad87c072ed7194994ad426aa1c35`。fresh worktree 首次提交因缺
+`node_modules` 触发 typecheck 的模块解析失败；按 tracked `package-lock.json`
+执行 `npm ci` 后以同一 staged docs/graph 重试，hook `verify:local` 通过：
+typecheck、21/21 tests、`build:ui`。未使用 `--no-verify`，未 amend。
+证据：`npm ci` stdout；commit stdout；`git log -1`。
 输入：Node 5 验证通过的 docs/graph。
 环境：docs allowlist；locked npm ci if needed。
 下一步：post-commit identity/scope 复核并收口。
 
 ## Node 7 - final deliverable identity
 
-时间：commit 回执后
+时间：2026-10-03
 节点：final identity/readback
-结论：工作树 clean、`git diff --check 0e387b3 HEAD` raw exit0、产品 scope diff
-空、graph validate/hash 同上、r5 notes 与 delivery-summary 保留。状态
-`DESIGN_READY` / `NOT_IMPLEMENTED` / `BB_NOT_EXECUTED`；独立 design review 由
-controller 后续执行。
+结论：候选提交后工作树 clean、`git diff --check 0e387b3
+b4d63af` raw exit0、产品 scope diff 空、graph validate raw exit0 且 SHA-256
+同上，r5 notes 与 delivery-summary 保留。状态 `DESIGN_READY` /
+`NOT_IMPLEMENTED` / `BB_NOT_EXECUTED`；独立 design review 由 controller
+后续执行。本节点内容以独立 receipt commit 写入；最终 receipt SHA/tree 由
+author handoff 报告，避免把自身 SHA 写回自身树造成自引用。
 证据：`git rev-parse HEAD`/`HEAD^{tree}`、`git status --short`、
 `git diff --check 0e387b3 HEAD`、`git diff --name-only ... product`、graph
-validate/hash。
-输入：R5 commit。
+validate/hash、`git show --name-status`。
+输入：R5 candidate `b4d63af`。
 环境：docs-only tree 保留。
 下一步：交付摘要收口；等待 controller。
