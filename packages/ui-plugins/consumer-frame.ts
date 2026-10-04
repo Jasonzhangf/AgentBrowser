@@ -35,6 +35,7 @@ type HarnessScenario =
   | 'unavailable-no-repair'
   | 'unavailable-repair-cancel'
   | 'configured-repair'
+  | 'configured-repaired'
   | 'connected-unresolved'
   | 'connected-unavailable'
   | 'configured-long-label'
@@ -315,6 +316,23 @@ function snapshot() {
         capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
         layout: layout(),
       };
+    case 'configured-repaired':
+      return {
+        state: 'idle',
+        generation: state.generation,
+        renderedFrames: 0,
+        released: true,
+        codec: '',
+        error: null,
+        source: 'network',
+        connectionState: 'stopped',
+        controlMode: 'observe',
+        pending: null,
+        networkConfigured: true,
+        connectionSetup: {state: 'configured', error: null, label: 'Repaired phone', repair_import_allowed: false, active_revision: 6},
+        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
+        layout: layout(),
+      };
     case 'connected-unresolved':
       return {
         ...connectedBase(),
@@ -522,30 +540,15 @@ function applyCommand(command: ProbeCommand) {
     case 'open_connection_setup':
     case 'import_connection':
     case 'repair_connection_import':
-      if (['unavailable-repair', 'unavailable-repair-cancel'].includes(state.scenario)) {
-        if (state.scenario === 'unavailable-repair-cancel' && !state.repairCancelledOnce) {
-          state.repairCancelledOnce = true;
-          state.generation += 1;
-          return snapshot();
-        }
-        state.scenario = 'configured';
+      if (state.scenario === 'unavailable-repair-cancel' && !state.repairCancelledOnce) {
+        state.repairCancelledOnce = true;
         state.generation += 1;
-        return {
-          state: 'idle',
-          generation: state.generation,
-          renderedFrames: 0,
-          released: true,
-          codec: '',
-          error: null,
-          source: 'network',
-          connectionState: 'stopped',
-          controlMode: 'observe',
-          pending: null,
-          networkConfigured: true,
-          connectionSetup: {state: 'configured', error: null, label: 'Repaired phone', repair_import_allowed: false, active_revision: 6},
-          capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-          layout: layout(),
-        };
+        return snapshot();
+      }
+      if (['unavailable-repair', 'unavailable-repair-cancel', 'configured-repair'].includes(state.scenario)) {
+        state.scenario = 'configured-repaired';
+        state.generation += 1;
+        return snapshot();
       }
       state.scenario = 'configured';
       state.generation += 1;
@@ -701,6 +704,7 @@ window.addEventListener('message', event => {
     state.commands.length = 0;
     stats.events.length = 0;
     state.presentation = 'browsing';
+    (window as unknown as {__w4Scenario?: HarnessScenario}).__w4Scenario = state.scenario;
     return;
   }
   if (event.data?.type === 'presentation-status-recover') {
