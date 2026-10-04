@@ -1,0 +1,15 @@
+merge_exit=0
+--- merge output ---
+Merge made by the 'ort' strategy.
+--- npm log ---
+<absent>
+--- repo status ---
+## main
+?? .githooks/
+--- merge result ---
+*   013766b (HEAD -> main) Merge branch 'candidate'
+|\
+| * acefc7a (candidate) candidate
+* | cefda9c main-side
+|/
+* 958181f base

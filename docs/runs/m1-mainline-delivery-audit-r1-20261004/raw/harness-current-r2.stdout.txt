@@ -1,0 +1,41 @@
+hook=.githooks/pre-push
+fixture_root=/Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003
+
+=== scenario: scenario_candidate_to_main ===
+Protected mainline push rejected
+error: failed to push some refs to '/Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/candidate-to-main/remote.git'
+RESULT PASS scenario_candidate_to_main
+
+=== scenario: scenario_clean_main ===
+Protected mainline push rejected
+error: failed to push some refs to '/Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/clean-main/remote.git'
+FAIL: clean local main push failed
+RESULT FAIL scenario_clean_main
+
+=== scenario: scenario_dirty_main ===
+Protected mainline push rejected
+error: failed to push some refs to '/Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/dirty-main/remote.git'
+RESULT PASS scenario_dirty_main
+
+=== scenario: scenario_failing_gate ===
+Protected mainline push rejected
+error: failed to push some refs to '/Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/failing-gate/remote.git'
+FAIL: expected fixture gate run verify:ci
+RESULT FAIL scenario_failing_gate
+
+=== scenario: scenario_non_fast_forward ===
+To /Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/non-fast-forward/remote.git
+ ! [rejected]        main -> main (non-fast-forward)
+error: failed to push some refs to '/Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/non-fast-forward/remote.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+RESULT PASS scenario_non_fast_forward
+
+=== scenario: scenario_unrelated_branch ===
+To /Volumes/Intel/playground/agentbrowser/m1-mainline-delivery-audit-r1-20261004/docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-r2-20261003/unrelated-branch/remote.git
+ * [new branch]      candidate -> candidate
+RESULT PASS scenario_unrelated_branch
+
+summary: 6 scenarios, 2 failures
