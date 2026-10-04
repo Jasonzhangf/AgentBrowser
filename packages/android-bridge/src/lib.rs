@@ -178,7 +178,9 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_frame(mut en
                     JValue::Long(source.document_revision as i64), JValue::Long(source.viewport_revision as i64),
                 ]).map_err(error)?;
                 session.pending = Some((source.sequence, DisplayedFrame { generation: session.connection.generation,
-                    session_id: source.session_id.clone(), document_revision: source.document_revision, viewport_revision: source.viewport_revision }));
+                    session_id: source.session_id.clone(), tab_id: source.tab_id.clone(),
+                    presentation_revision: source.presentation_revision,
+                    document_revision: source.document_revision, viewport_revision: source.viewport_revision }));
                 Ok(object.into_raw())
             }
         }

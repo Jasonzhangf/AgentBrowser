@@ -1000,6 +1000,8 @@ fn acknowledge_frame(
         frame: DisplayedFrame {
             generation: session.connection.generation,
             session_id: source.session_id.clone(),
+            tab_id: source.tab_id.clone(),
+            presentation_revision: source.presentation_revision,
             document_revision: source.document_revision,
             viewport_revision: source.viewport_revision,
         },

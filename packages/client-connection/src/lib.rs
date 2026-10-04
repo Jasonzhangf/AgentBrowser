@@ -8,7 +8,7 @@ mod relay_backend;
 mod transport;
 pub use transport::{
     Connection, Connector, DisplayedFrame, EditingInput, EditingOutcome, Input, Pairing,
-    PresentedFrame,
+    ProfileState, PresentedFrame,
 };
 mod webrtc;
 pub use webrtc::WebRtcConfig;

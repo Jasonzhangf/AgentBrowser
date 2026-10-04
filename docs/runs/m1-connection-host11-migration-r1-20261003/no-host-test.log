@@ -1,0 +1,23 @@
+    Finished `release` profile [optimized] target(s) in 1.10s
+────────────
+ Nextest run ID 2cee683e-3ca0-4261-bb82-d6ab734f4c2f with nextest profile: default
+    Starting 17 tests across 2 binaries
+        PASS [   0.052s] ( 1/17) agentbrowser-connection::framing encoder_unavailable_is_typed_terminal_error_while_unavailable_recovers
+        PASS [   0.056s] ( 2/17) agentbrowser-connection::framing rejects_session_encoder_and_revision_changes_without_poisoning_last_frame
+        PASS [   0.060s] ( 3/17) agentbrowser-connection::framing host11_frame_identity_rejects_missing_or_unknown_fields
+        PASS [   0.064s] ( 4/17) agentbrowser-connection relay::tests::generation_reservation_is_unique_and_published_in_order
+        PASS [   0.062s] ( 5/17) agentbrowser-connection relay::tests::config_rejects_plaintext_and_embedded_credentials
+        PASS [   0.061s] ( 6/17) agentbrowser-connection transport::tests::browser_mutations_reuse_navigate_operation_and_status_projection
+        PASS [   0.060s] ( 7/17) agentbrowser-connection::framing rejects_unbounded_and_mismatched_network_packets
+        PASS [   0.063s] ( 8/17) agentbrowser-connection relay::tests::media_and_control_limits_are_separate
+        PASS [   0.064s] ( 9/17) agentbrowser-connection relay::tests::relay_control_wire_is_v0_and_legacy_auth_is_rejected
+        PASS [   0.063s] (10/17) agentbrowser-connection relay::tests::device_public_key_uses_ed25519_spki
+        PASS [   0.064s] (11/17) agentbrowser-connection transport::tests::action_is_serviced_while_video_receive_is_pending
+        PASS [   0.065s] (12/17) agentbrowser-connection transport::tests::lost_mutation_reply_is_unknown_without_retry
+        PASS [   0.064s] (13/17) agentbrowser-connection transport::tests::mismatched_read_reply_is_protocol_failure
+        PASS [   0.069s] (14/17) agentbrowser-connection::framing validates_raw_dimensions_padding_and_payload_bounds
+        PASS [   0.069s] (15/17) agentbrowser-connection transport::tests::encoder_unavailable_marker_ends_worker_with_typed_failure
+        PASS [   0.078s] (16/17) agentbrowser-connection webrtc::tests::peer_guard_releases_udp_driver_after_setup_cancellation
+        PASS [   0.165s] (17/17) agentbrowser-connection relay::tests::secure_frame_reader_preserves_partial_frames_after_cancellation
+────────────
+     Summary [   0.171s] 17 tests run: 17 passed, 0 skipped

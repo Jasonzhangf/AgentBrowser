@@ -56,6 +56,8 @@ pub struct Pairing {
 pub struct DisplayedFrame {
     pub generation: u64,
     pub session_id: String,
+    pub tab_id: String,
+    pub presentation_revision: u64,
     pub document_revision: u64,
     pub viewport_revision: u64,
 }
@@ -85,12 +87,14 @@ pub enum Input {
 pub struct PresentedFrame {
     pub generation: u64,
     pub session_id: String,
+    pub tab_id: String,
+    pub presentation_revision: u64,
     pub frame_sequence: u64,
     pub document_revision: u64,
     pub viewport_revision: u64,
 }
 
-/// One typed Host10 remote-input operation.
+/// One typed remote-input operation.
 ///
 /// A whole pointer gesture or one text composition keeps a single
 /// `operation_id`; `event_sequence` orders the events inside it. The connection
@@ -118,12 +122,27 @@ pub enum EditingOutcome {
     Editor(EditingReceipt),
 }
 
+/// Host-owned navigation/tab projection exposed by status and navigation
+/// results. It is read from the Host response, never synthesized locally.
+#[derive(Clone, Debug)]
+pub struct ProfileState {
+    pub session_id: String,
+    pub profile_id: String,
+    pub active_tab_id: String,
+    pub presentation_revision: u64,
+    pub navigation: crate::protocol::NavigationState,
+    pub tabs: Vec<crate::protocol::TabSummary>,
+}
+
 enum Action {
     Status,
     DeclareViewport(ViewportDeclaration),
     Takeover(u64),
     Release(u64),
-    Navigate(String, u64),
+    Navigate {
+        command: Command,
+        epoch: u64,
+    },
     Input(Input, DisplayedFrame, u64),
     Editing(EditingInput),
 }
@@ -187,7 +206,38 @@ impl Connection {
         status(self.call(Action::Release(epoch)).await?)
     }
     pub async fn navigate(&self, url: String, epoch: u64) -> Result<SessionStatus, Failure> {
-        status(self.call(Action::Navigate(url, epoch)).await?)
+        self.browser_mutation(Command::Navigate { url }, epoch).await
+    }
+    /// History back on the active tab. `NO_HISTORY` is returned unchanged.
+    pub async fn back(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::Back, epoch).await
+    }
+    /// History forward on the active tab. `NO_HISTORY` is returned unchanged.
+    pub async fn forward(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::Forward, epoch).await
+    }
+    /// Reload the active tab's current document.
+    pub async fn reload(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::Reload, epoch).await
+    }
+    /// Create and activate a blank tab in the bound profile session.
+    pub async fn tab_create(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::TabCreate {}, epoch).await
+    }
+    /// Activate an existing Host-assigned tab without reloading it.
+    pub async fn tab_select(&self, tab_id: String, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::TabSelect { tab_id }, epoch).await
+    }
+    /// Close a Host-assigned tab. `LAST_TAB` is returned unchanged.
+    pub async fn tab_close(&self, tab_id: String, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::TabClose { tab_id }, epoch).await
+    }
+    async fn browser_mutation(
+        &self,
+        command: Command,
+        epoch: u64,
+    ) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::Navigate { command, epoch }).await?)
     }
     pub async fn input(
         &self,
@@ -200,7 +250,7 @@ impl Connection {
             _ => Err(Failure::Protocol("Expected input receipt".into())),
         }
     }
-    /// Submit one typed Host10 input event (gesture or target-bound edit).
+    /// Submit one typed Host11 input event (gesture or target-bound edit).
     ///
     /// The returned [`EditingOutcome`] is the Host's real result for this
     /// event: a gesture input state or a target-bound editing receipt. Host
@@ -226,6 +276,28 @@ pub(crate) fn status(value: ResultValue) -> Result<SessionStatus, Failure> {
     match value {
         ResultValue::Status(status) => Ok(status),
         _ => Err(Failure::Protocol("Expected status".into())),
+    }
+}
+
+pub(crate) fn profile_state(status: SessionStatus) -> ProfileState {
+    ProfileState {
+        session_id: status.session_id,
+        profile_id: status.profile_id,
+        active_tab_id: status.active_tab_id,
+        presentation_revision: status.presentation_revision,
+        navigation: status.navigation,
+        tabs: status.tabs,
+    }
+}
+
+impl Connection {
+    /// Return the authoritative navigation/tab/profile projection.
+    ///
+    /// This is a read-only status projection. It does not grant profile
+    /// management authority; `ProfileCatalog/Create/Select` are refused by
+    /// the current mTLS endpoint until an explicit scope is bound.
+    pub async fn profile_state(&self) -> Result<ProfileState, Failure> {
+        Ok(profile_state(self.status().await?))
     }
 }
 
@@ -700,7 +772,7 @@ async fn execute<B: Backend>(
         Action::DeclareViewport(viewport) => (Command::DeclareViewport { viewport }, None),
         Action::Takeover(epoch) => (Command::RequestTakeover { epoch }, None),
         Action::Release(epoch) => (Command::ReleaseControl { epoch }, None),
-        Action::Navigate(url, epoch) => {
+        Action::Navigate { command, epoch } => {
             let current = status(exchange_backend(backend, id, Command::Status {}, None).await?)?;
             if current.session_id != session || current.attachment_id != attachment {
                 return Err(Failure::Protocol("Control attachment changed".into()));
@@ -712,7 +784,7 @@ async fn execute<B: Backend>(
                 });
             }
             (
-                Command::Navigate { url },
+                command,
                 Some(Operation {
                     operation_id: format!("legacy-{}", current.next_sequence),
                     session_id: session.into(),
@@ -791,6 +863,8 @@ async fn execute<B: Backend>(
             let operation_id = input.operation_id;
             let frame = PresentedFrameIdentity {
                 session_id: input.frame.session_id,
+                tab_id: input.frame.tab_id,
+                presentation_revision: input.frame.presentation_revision,
                 frame_sequence: input.frame.frame_sequence,
                 document_revision: input.frame.document_revision,
                 viewport_revision: input.frame.viewport_revision,
@@ -837,7 +911,7 @@ async fn execute<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};
 
     struct PendingVideoBackend {
         status: SessionStatus,
@@ -904,6 +978,7 @@ mod tests {
     fn pending_video_status() -> SessionStatus {
         SessionStatus {
             session_id: "session".into(),
+            profile_id: "default".into(),
             attachment_id: Some(7),
             mode: Some(Mode::Observe),
             attachments: 1,
@@ -917,6 +992,15 @@ mod tests {
             next_sequence: 1,
             viewport_revision: 1,
             document_revision: 1,
+            presentation_revision: 1,
+            active_tab_id: "tab".into(),
+            tabs: Vec::new(),
+            navigation: crate::protocol::NavigationState {
+                url: String::new(),
+                title: String::new(),
+                can_go_back: false,
+                can_go_forward: false,
+            },
             viewport: None,
             viewport_owner: None,
             viewport_pending: false,
@@ -960,6 +1044,87 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(closed.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn browser_mutations_reuse_navigate_operation_and_status_projection() {
+        struct RecordingBackend {
+            status: SessionStatus,
+            commands: Arc<Mutex<Vec<Command>>>,
+        }
+
+        impl Backend for RecordingBackend {
+            fn request<'a>(&'a mut self, request: Request) -> BackendFuture<'a, Response> {
+                self.commands.lock().unwrap().push(request.command.clone());
+                let status = self.status.clone();
+                Box::pin(async move {
+                    Ok(Response::Result {
+                        id: request.id,
+                        value: ResultValue::Status(status),
+                    })
+                })
+            }
+
+            fn next_video<'a>(&'a mut self) -> BackendFuture<'a, Video> {
+                Box::pin(std::future::pending())
+            }
+
+            fn close<'a>(&'a mut self) -> BackendFuture<'a, ()> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let status = pending_video_status();
+        let (_generation_sender, changed) = watch::channel(1);
+        let mut status = status;
+        status.navigation.can_go_back = true;
+        let connection = spawn_connection(
+            1,
+            status.clone(),
+            RecordingBackend {
+                status,
+                commands: Arc::clone(&commands),
+            },
+            0,
+            changed,
+        );
+
+        assert_eq!(connection.back(0).await.unwrap().active_tab_id, "tab");
+        assert_eq!(connection.forward(0).await.unwrap().profile_id, "default");
+        assert_eq!(connection.reload(0).await.unwrap().session_id, "session");
+        assert_eq!(connection.tab_create(0).await.unwrap().tabs.len(), 0);
+        assert_eq!(
+            connection.tab_select("tab-b".into(), 0).await.unwrap().presentation_revision,
+            1
+        );
+        assert_eq!(
+            connection.tab_close("tab-b".into(), 0).await.unwrap().document_revision,
+            1
+        );
+        let projection = connection.profile_state().await.unwrap();
+        assert_eq!(projection.active_tab_id, "tab");
+        assert!(projection.navigation.can_go_back);
+
+        let commands = commands.lock().unwrap();
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                Command::Status {},
+                Command::Back,
+                Command::Status {},
+                Command::Forward,
+                Command::Status {},
+                Command::Reload,
+                Command::Status {},
+                Command::TabCreate {},
+                Command::Status {},
+                Command::TabSelect { .. },
+                Command::Status {},
+                Command::TabClose { .. },
+                Command::Status {}
+            ]
+        ));
     }
 
     #[tokio::test]

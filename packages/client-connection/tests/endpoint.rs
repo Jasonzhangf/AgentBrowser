@@ -60,6 +60,7 @@ async fn exercise() {
         if let VideoPacket::AccessUnit { source, .. } = &video.packet {
             assert!(!video.bytes.is_empty());
             break DisplayedFrame { generation: connection.generation, session_id: source.session_id.clone(),
+                tab_id: source.tab_id.clone(), presentation_revision: source.presentation_revision,
                 document_revision: source.document_revision, viewport_revision: source.viewport_revision };
         }
     };
@@ -80,6 +81,7 @@ async fn exercise() {
         if let VideoPacket::AccessUnit { source, .. } = &video.packet {
             if source.document_revision == navigated.document_revision {
                 break DisplayedFrame { generation: connection.generation, session_id: source.session_id.clone(),
+                    tab_id: source.tab_id.clone(), presentation_revision: source.presentation_revision,
                     document_revision: source.document_revision, viewport_revision: source.viewport_revision };
             }
         }
@@ -284,7 +286,8 @@ async fn exercise_editing() {
     let mut observer_connector = Connector::default();
     let observer = observer_connector.connect(pairing(), None).await.unwrap();
     let agent = state(local_call(&mut local, &mut id, Command::Status {}, None).await);
-    let agent_frame = PresentedFrameIdentity { session_id: agent.session_id.clone(), frame_sequence: 0,
+    let agent_frame = PresentedFrameIdentity { session_id: agent.session_id.clone(),
+        tab_id: agent.active_tab_id.clone(), presentation_revision: agent.presentation_revision, frame_sequence: 0,
         document_revision: agent.document_revision, viewport_revision: agent.viewport_revision };
     let gesture = Operation { operation_id: "agent-wait".into(), session_id: agent.session_id.clone(),
         attachment_id: agent.attachment_id.unwrap(), sequence: agent.next_sequence, control_epoch: agent.control.epoch,
@@ -387,6 +390,7 @@ async fn next_frame(connection: &agentbrowser_connection::Connection) -> Present
         let video = media.borrow_and_update().clone().unwrap();
         if let VideoPacket::AccessUnit { source, .. } = &video.packet {
             return PresentedFrame { generation: connection.generation, session_id: source.session_id.clone(),
+                tab_id: source.tab_id.clone(), presentation_revision: source.presentation_revision,
                 frame_sequence: source.sequence, document_revision: source.document_revision, viewport_revision: source.viewport_revision };
         }
     }

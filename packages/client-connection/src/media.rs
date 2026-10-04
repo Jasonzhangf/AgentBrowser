@@ -122,6 +122,7 @@ pub(crate) fn from_webrtc(
 /// intact. The transport must close the connection on any validation failure.
 pub struct MediaSequence {
     session: String,
+    presentation: Option<(String, u64)>,
     last: Option<(String, u64, u64, u64, u64, u32, u32)>,
     closed: bool,
 }
@@ -130,6 +131,7 @@ impl MediaSequence {
     pub fn new(session: String) -> Self {
         Self {
             session,
+            presentation: None,
             last: None,
             closed: false,
         }
@@ -145,9 +147,15 @@ impl MediaSequence {
                 ..
             } => {
                 require(source.session_id == self.session, "Media session mismatch")?;
-                if let Some((encoder, sequence, pts, document, viewport, width, height)) =
-                    &self.last
-                {
+                if let Some((tab, revision)) = &self.presentation {
+                    let valid = if source.tab_id == *tab {
+                        source.presentation_revision >= *revision
+                    } else {
+                        source.presentation_revision > *revision
+                    };
+                    require(valid, "Media tab presentation regressed")?;
+                }
+                if let Some((encoder, sequence, pts, document, viewport, width, height)) = &self.last {
                     require(
                         encoder == encoder_id
                             && source.sequence > *sequence
@@ -162,6 +170,7 @@ impl MediaSequence {
                         "Dimensions changed without viewport revision",
                     )?;
                 }
+                self.presentation = Some((source.tab_id.clone(), source.presentation_revision));
                 self.last = Some((
                     encoder_id.clone(),
                     source.sequence,
