@@ -18,6 +18,13 @@ fi
 cd "$root_dir"
 node scripts/build-macos-ui.mjs
 
+# Cargo honors CARGO_TARGET_DIR; mirror its default so the bundle copies the
+# bridge from the same target tree the build actually wrote.
+target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
+if [[ "$target_dir" != /* ]]; then
+  target_dir="$root_dir/$target_dir"
+fi
+
 CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 cargo build --release \
   -p agentbrowser-macos-bridge \
   --config "patch.crates-io.obscura-host-protocol.path=\"$protocol_root\""
@@ -25,7 +32,7 @@ CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 cargo build --release \
 app_dir="$root_dir/apps/macos/build/AgentBrowserMac.app"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp apps/macos/Info.plist "$app_dir/Contents/Info.plist"
-cp target/release/agentbrowser-macos-bridge "$app_dir/Contents/MacOS/AgentBrowserMacBridge"
+cp "$target_dir/release/agentbrowser-macos-bridge" "$app_dir/Contents/MacOS/AgentBrowserMacBridge"
 mkdir -p "$app_dir/Contents/Resources/ui"
 cp -R apps/macos/build/ui/. "$app_dir/Contents/Resources/ui/"
 xcrun swiftc -O apps/macos/Sources/main.swift \

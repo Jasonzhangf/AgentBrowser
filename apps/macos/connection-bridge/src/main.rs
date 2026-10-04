@@ -925,6 +925,8 @@ fn presented_frame(app: &AppState) -> Option<PresentedFrame> {
     Some(PresentedFrame {
         generation: displayed.frame.generation,
         session_id: displayed.frame.session_id.clone(),
+        tab_id: displayed.frame.tab_id.clone(),
+        presentation_revision: displayed.frame.presentation_revision,
         frame_sequence: displayed.frame_sequence,
         document_revision: displayed.frame.document_revision,
         viewport_revision: displayed.frame.viewport_revision,
@@ -1086,6 +1088,11 @@ fn snapshot(app: &AppState) -> String {
         displayed_ticket,
         displayed_document_revision,
         displayed_viewport_revision,
+        active_tab_id,
+        viewport_pending,
+        displayed_generation,
+        displayed_session_id,
+        displayed_tab_id,
         editor_context,
         input_lease,
         session_error,
@@ -1124,6 +1131,25 @@ fn snapshot(app: &AppState) -> String {
                     .displayed
                     .as_ref()
                     .map(|frame| frame.frame.viewport_revision),
+                Some(session.status.active_tab_id.as_str()),
+                session.status.viewport_pending,
+                session
+                    .displayed
+                    .as_ref()
+                    // The native view fences decoded frames by the app-level
+                    // (client) generation carried on the frame header, which is
+                    // the same value as the snapshot's `generation`; the stored
+                    // `frame.generation` is the transport generation used only
+                    // for input fencing.
+                    .map(|_| session.client_generation),
+                session
+                    .displayed
+                    .as_ref()
+                    .map(|frame| frame.frame.session_id.as_str()),
+                session
+                    .displayed
+                    .as_ref()
+                    .map(|frame| frame.frame.tab_id.as_str()),
                 editor_context_json(session.status.editor_context.as_ref()),
                 input_lease_json(session.status.input_lease.as_ref()),
                 session.error.as_deref(),
@@ -1143,6 +1169,11 @@ fn snapshot(app: &AppState) -> String {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            false,
             None,
             None,
             None,
@@ -1172,6 +1203,11 @@ fn snapshot(app: &AppState) -> String {
         "displayedTicket": displayed_ticket,
         "displayedDocumentRevision": displayed_document_revision,
         "displayedViewportRevision": displayed_viewport_revision,
+        "activeTabId": active_tab_id,
+        "viewportPending": viewport_pending,
+        "displayedGeneration": displayed_generation,
+        "displayedSessionId": displayed_session_id,
+        "displayedTabId": displayed_tab_id,
         "editorContext": editor_context,
         "inputLease": input_lease,
     });
@@ -1203,6 +1239,10 @@ fn omit_optional_nulls(value: &mut serde_json::Value) {
             "displayedTicket",
             "displayedDocumentRevision",
             "displayedViewportRevision",
+            "activeTabId",
+            "displayedGeneration",
+            "displayedSessionId",
+            "displayedTabId",
             "editorContext",
             "inputLease",
         ] {

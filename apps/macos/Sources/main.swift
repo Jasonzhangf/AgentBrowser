@@ -41,12 +41,41 @@ private struct Snapshot: Decodable {
     let connectionState: String?
     let controlMode: String?
     let sessionId: String?
+    let documentRevision: UInt64?
+    let viewportRevision: UInt64?
     let displayedTicket: UInt64?
     let epoch: UInt64?
     let inputReady: Bool
     let editorContext: EditorContext?
     let inputLease: InputLease?
     let editingOutcome: EditingEnvelope?
+    let activeTabId: String?
+    let viewportPending: Bool?
+    let displayedGeneration: UInt64?
+    let displayedSessionId: String?
+    let displayedTabId: String?
+    let displayedDocumentRevision: UInt64?
+    let displayedViewportRevision: UInt64?
+}
+
+private enum PresentationState: String {
+    case browsing
+    case overlay
+}
+
+private struct PresentationRequest {
+    let id: String
+    let state: PresentationState
+}
+
+private struct AppliedLayout: Equatable {
+    let drawableWindowRect: NSRect
+    let safeContentRect: NSRect
+    let advertisedViewportRect: NSRect
+    let presentedContentRect: NSRect
+    let chromeRect: NSRect
+    let webRect: NSRect
+    let presentation: PresentationState
 }
 
 private struct SelectionRange: Decodable {
@@ -239,6 +268,7 @@ private final class NativeBridge {
 
     var onFrame: ((FrameHeader, Data) -> Void)?
     var onSnapshot: ((String) -> Void)?
+    var responseTransform: ((String) -> String)?
 
     init(helperURL: URL, pairingDirectory: String?) throws {
         process = Process()
@@ -296,8 +326,9 @@ private final class NativeBridge {
         guard let value else {
             return rejection(stillAlive ? "NATIVE_BRIDGE_TIMEOUT" : "NATIVE_BRIDGE_CLOSED")
         }
-        onSnapshot?(value)
-        return value
+        let projected = responseTransform?(value) ?? value
+        onSnapshot?(projected)
+        return projected
     }
 
     func close() {
@@ -378,6 +409,17 @@ private let videoToolboxCallback: VTDecompressionOutputCallback = {
     view.decoded(status: status, imageBuffer: imageBuffer, presentationTimeStamp: presentationTimeStamp, token: token)
 }
 
+private final class BrowserContentView: NSView {
+    var onLayout: (() -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
 private final class VideoSurfaceView: NSView, NSTextInputClient {
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var decompressionSession: VTDecompressionSession?
@@ -425,12 +467,14 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     private var pendingPointer: PendingPointer?
     private var editingActivated = false
 
+    private(set) var displayedViewport: NSRect?
     var onDisplayed: ((UInt64) -> Void)?
     var onDecodeError: ((UInt64, String) -> Void)?
     var onInput: ((String) -> Void)?
     var onEdit: ((String) -> String?)?
     var currentEpoch: (() -> UInt64)?
     var inputReady: (() -> Bool)?
+    var nativeVideoInputEnabled: (() -> Bool)?
 
     override var isFlipped: Bool { true }
 
@@ -496,6 +540,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         inputControlMode = nil
         invalidateDecoder(clearParameterSets: false)
         image = nil
+        displayedViewport = nil
         visibleWidth = 0
         visibleHeight = 0
         activeSessionID = nil
@@ -572,7 +617,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard inputReady?() == true, let epoch = currentEpoch?() else { return }
+        guard nativeVideoInputEnabled?() == true, inputReady?() == true, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point) else { return }
         let operationId = nextOperationId(prefix: "pointer")
@@ -600,7 +645,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard inputReady?() == true, var pending = pendingPointer, let epoch = currentEpoch?() else { return }
+        guard nativeVideoInputEnabled?() == true, inputReady?() == true, var pending = pendingPointer, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point) else { return }
         guard coordinates.x != pending.lastX || coordinates.y != pending.lastY else {
@@ -631,7 +676,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard inputReady?() == true, let epoch = currentEpoch?() else { return }
+        guard nativeVideoInputEnabled?() == true, inputReady?() == true, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point) else {
             releaseHeldInput()
@@ -654,6 +699,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        guard nativeVideoInputEnabled?() == true else { return }
         let ready = inputReady?() == true
         guard let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
@@ -1075,12 +1121,32 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.activeGeneration == token.generation else { return }
             self.image = cgImage
+            self.displayedViewport = nil
             self.visibleWidth = token.visibleWidth
             self.visibleHeight = token.visibleHeight
             self.needsDisplay = true
             self.onDisplayed?(token.ticket)
         }
         _ = presentationTimeStamp
+    }
+
+    func hasFrame(matching viewport: NSRect) -> Bool {
+        return image != nil && displayedViewport == viewport
+    }
+
+    func recordDisplayed(viewport: NSRect) {
+        guard image != nil else { return }
+        displayedViewport = viewport
+    }
+
+    func setPresentationInteractive(_ active: Bool) {
+        if active {
+            if editingActive {
+                activateEditing()
+            }
+        } else {
+            deactivateEditing()
+        }
     }
 
     private func invalidateDecoder(clearParameterSets: Bool = true) {
@@ -1420,11 +1486,20 @@ private extension VideoSurfaceView {
 }
 
 private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+    private static let chromeHeightPoints: CGFloat = 56
+
     private var window: NSWindow!
+    private var contentView: BrowserContentView!
     private var webView: WKWebView!
     private var videoView: VideoSurfaceView!
     private var bridge: NativeBridge?
     private var latestSnapshot: Snapshot?
+    private var presentationState: PresentationState = .browsing
+    private var layoutRevision: UInt64 = 0
+    private var appliedLayout: AppliedLayout?
+    private var lastAdvertisedViewport: NSRect?
+    private var viewportTimer: Timer?
+    private var webViewAboveVideo = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -1435,6 +1510,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         videoView = VideoSurfaceView(frame: .zero)
         videoView.onDisplayed = { [weak self] ticket in
             guard let self else { return }
+            self.videoView.recordDisplayed(viewport: self.appliedLayout?.presentedContentRect ?? .zero)
+            self.applyLayout(revision: true)
             _ = self.bridge?.request("{\"op\":\"ack_frame\",\"ticket\":\(ticket)}")
         }
         videoView.onDecodeError = { [weak self] ticket, error in
@@ -1451,6 +1528,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         }
         videoView.currentEpoch = { [weak self] in self?.currentEpoch() ?? 0 }
         videoView.inputReady = { [weak self] in self?.isInputReady() ?? false }
+        videoView.nativeVideoInputEnabled = { [weak self] in self?.shouldRouteNativeVideoInput() ?? false }
 
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptEnabled = true
@@ -1462,22 +1540,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
 
-        let split = NSSplitViewController()
-        let videoController = NSViewController()
-        videoController.view = videoView
-        let webController = NSViewController()
-        webController.view = webView
-        let videoItem = NSSplitViewItem(viewController: videoController)
-        let webItem = NSSplitViewItem(viewController: webController)
-        videoItem.minimumThickness = 320
-        webItem.minimumThickness = 320
-        split.addSplitViewItem(videoItem)
-        split.addSplitViewItem(webItem)
+        contentView = BrowserContentView(frame: .zero)
+        contentView.onLayout = { [weak self] in self?.applyLayout(revision: true) }
+        contentView.addSubview(videoView)
+        contentView.addSubview(webView)
 
-        window = NSWindow(contentViewController: split)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.contentView = contentView
         window.title = "AgentBrowser"
-        window.setContentSize(NSSize(width: 1180, height: 760))
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -1491,7 +1561,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             DispatchQueue.main.async {
                 self?.latestSnapshot = snapshot
                 self?.videoView.apply(snapshot: snapshot)
+                self?.applyLayout(revision: true)
             }
+        }
+        bridge?.responseTransform = { [weak self] raw in
+            guard let self, let data = raw.data(using: .utf8),
+                  var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["state"] != nil,
+                  let layout = self.layoutProjection() else {
+                return raw
+            }
+            object["layout"] = layout
+            guard let projected = try? JSONSerialization.data(withJSONObject: object),
+                  let encoded = String(data: projected, encoding: .utf8) else {
+                return raw
+            }
+            return encoded
         }
 
         guard let uiURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "ui") else {
@@ -1499,11 +1584,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             return
         }
         webView.loadFileURL(uiURL, allowingReadAccessTo: uiURL.deletingLastPathComponent())
+        applyLayout(revision: true)
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.updateViewport() }
+        viewportTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        viewportTimer?.invalidate()
+        viewportTimer = nil
         bridge?.close()
         return .terminateNow
     }
@@ -1513,6 +1602,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             completionHandler(nil)
             return
         }
+        if let request = parsePresentationRequest(defaultText) {
+            guard let result = applyPresentation(request) else {
+                completionHandler(presentationRejection(id: request.id, reason: "GEOMETRY_UNAVAILABLE"))
+                return
+            }
+            completionHandler(result)
+            return
+        }
+        // Stay on the main thread so the presentation projection in
+        // `responseTransform` only ever reads AppKit state on its owning thread.
         completionHandler(bridge?.request(defaultText) ?? rejection("NATIVE_BRIDGE_UNAVAILABLE"))
     }
 
@@ -1521,12 +1620,191 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
     }
 
     private func updateViewport() {
-        guard let bridge, videoView.bounds.width > 0, videoView.bounds.height > 0 else { return }
-        let scale = window.backingScaleFactor
-        let width = max(1, Int((videoView.bounds.width * scale).rounded()))
-        let height = max(1, Int((videoView.bounds.height * scale).rounded()))
+        guard let bridge, let layout = appliedLayout else { return }
+        // A disconnected probe owns no Host viewport; clearing the fence lets the
+        // first declaration after reconnect through instead of being suppressed.
+        guard latestSnapshot?.sessionId != nil else {
+            lastAdvertisedViewport = nil
+            return
+        }
+        let viewport = layout.advertisedViewportRect
+        guard viewport.width > 0, viewport.height > 0, viewport != lastAdvertisedViewport else { return }
+        let width = max(1, Int(viewport.width.rounded()))
+        let height = max(1, Int(viewport.height.rounded()))
         let orientation = width >= height ? "landscape" : "portrait"
         _ = bridge.request("{\"op\":\"viewport\",\"width\":\(width),\"height\":\(height),\"orientation\":\"\(orientation)\"}")
+        lastAdvertisedViewport = viewport
+    }
+
+    private func applyLayout(revision: Bool) {
+        guard let contentView, contentView.bounds.width > 0, contentView.bounds.height > 0 else { return }
+        let drawable = contentView.bounds
+        // Mac has no system bars or soft keyboard: the drawable content view is
+        // the safe content once, and advertised == presented in AppKit points.
+        let safeContent = drawable
+        // Thin chrome matches the frozen UI's `.browser-chrome` 56pt bar.
+        let chromeHeight = min(Self.chromeHeightPoints, safeContent.height)
+        let chromeRect = NSRect(x: safeContent.minX, y: safeContent.minY, width: safeContent.width, height: chromeHeight)
+        let contentRect = NSRect(
+            x: safeContent.minX,
+            y: safeContent.minY + chromeHeight,
+            width: safeContent.width,
+            height: max(0, safeContent.height - chromeHeight)
+        )
+        let nativeVideo = nativeVideoVisible(for: contentRect)
+        let videoVisible = nativeVideo && presentationState == .browsing
+        // No valid matching displayed frame, geometry mismatch or overlay: the
+        // WebView owns the full drawable content. Browsing native video: the
+        // WebView shrinks to the thin chrome and the video fills the content.
+        let webRect = videoVisible ? chromeRect : drawable
+        let layout = AppliedLayout(
+            drawableWindowRect: drawable,
+            safeContentRect: safeContent,
+            advertisedViewportRect: contentRect,
+            presentedContentRect: contentRect,
+            chromeRect: chromeRect,
+            webRect: webRect,
+            presentation: presentationState
+        )
+        if appliedLayout != layout, revision {
+            layoutRevision += 1
+        }
+        appliedLayout = layout
+        videoView.frame = contentRect
+        webView.frame = webRect
+        videoView.isHidden = !videoVisible
+        setWebViewAboveVideo(!videoVisible)
+        videoView.setPresentationInteractive(videoVisible)
+    }
+
+    private func setWebViewAboveVideo(_ above: Bool) {
+        guard webViewAboveVideo != above else { return }
+        webViewAboveVideo = above
+        contentView.addSubview(webView, positioned: above ? .above : .below, relativeTo: videoView)
+    }
+
+    /// Visibility is owned by the displayed frame identity plus the local
+    /// geometry match. `inputReady`/`controlMode`/pending operations never enter
+    /// this decision; the connection lifecycle only supplies the outer fence.
+    private func nativeVideoVisible(for contentRect: NSRect) -> Bool {
+        guard let snapshot = latestSnapshot, snapshot.connectionState == "connected" else { return false }
+        guard snapshot.viewportPending != true else { return false }
+        guard let displayedGeneration = snapshot.displayedGeneration,
+              let displayedSessionId = snapshot.displayedSessionId,
+              let displayedTabId = snapshot.displayedTabId,
+              let activeTabId = snapshot.activeTabId,
+              let documentRevision = snapshot.documentRevision,
+              let viewportRevision = snapshot.viewportRevision else {
+            return false
+        }
+        guard displayedGeneration == snapshot.generation,
+              displayedSessionId == snapshot.sessionId,
+              displayedTabId == activeTabId,
+              snapshot.displayedDocumentRevision == documentRevision,
+              snapshot.displayedViewportRevision == viewportRevision else {
+            return false
+        }
+        return videoView.hasFrame(matching: contentRect)
+    }
+
+    private func shouldUseNativeVideo() -> Bool {
+        guard let contentRect = appliedLayout?.presentedContentRect else { return false }
+        return nativeVideoVisible(for: contentRect)
+    }
+
+    private func shouldRouteNativeVideoInput() -> Bool {
+        return presentationState == .browsing && shouldUseNativeVideo()
+    }
+
+    private func parsePresentationRequest(_ raw: String) -> PresentationRequest? {
+        guard let data = raw.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              value["op"] as? String == "set_presentation",
+              let id = value["id"] as? String,
+              let stateRaw = value["state"] as? String,
+              let state = PresentationState(rawValue: stateRaw) else {
+            return nil
+        }
+        return PresentationRequest(id: id, state: state)
+    }
+
+    private func layoutProjection() -> [String: Any]? {
+        guard let layout = appliedLayout else { return nil }
+        let nativeVideo = nativeVideoVisible(for: layout.presentedContentRect)
+        var projection: [String: Any] = [
+            "drawableWindowRect": rectJSON(layout.drawableWindowRect),
+            "safeContentRect": rectJSON(layout.safeContentRect),
+            "advertisedViewportRect": rectJSON(layout.advertisedViewportRect),
+            "presentedContentRect": rectJSON(layout.presentedContentRect),
+            "chromeRect": rectJSON(layout.chromeRect),
+            "webRect": rectJSON(layout.webRect),
+            "visibleContent": nativeVideo ? "native-video" : "webview",
+            "currentTabId": latestSnapshot?.activeTabId as Any? ?? NSNull(),
+            "presentationViewport": rectJSON(layout.presentedContentRect),
+            "geometryMatches": nativeVideo,
+            "presentation": layout.presentation.rawValue,
+            "revision": layoutRevision,
+        ]
+        if let displayedFrame = displayedFrameProjection() {
+            projection["displayedFrame"] = displayedFrame
+        }
+        return projection
+    }
+
+    private func displayedFrameProjection() -> [String: Any]? {
+        guard let snapshot = latestSnapshot,
+              let generation = snapshot.displayedGeneration,
+              let sessionId = snapshot.displayedSessionId,
+              let tabId = snapshot.displayedTabId else {
+            return nil
+        }
+        return [
+            "generation": generation,
+            "sessionId": sessionId,
+            "tabId": tabId,
+            "documentRevision": snapshot.displayedDocumentRevision as Any? ?? UInt64(0),
+            "viewportRevision": snapshot.displayedViewportRevision as Any? ?? UInt64(0),
+        ]
+    }
+
+    private func applyPresentation(_ request: PresentationRequest) -> String? {
+        guard contentView != nil, window != nil else { return nil }
+        presentationState = request.state
+        applyLayout(revision: true)
+        guard let layout = appliedLayout else { return nil }
+        let result: [String: Any] = [
+            "id": request.id,
+            "op": "set_presentation",
+            "status": "applied",
+            "geometry": [
+                "webRect": rectJSON(layout.webRect),
+                "revision": layoutRevision,
+            ],
+        ]
+        return encodeJSON(result)
+    }
+
+    private func presentationRejection(id: String, reason: String) -> String {
+        return encodeJSON([
+            "id": id,
+            "op": "set_presentation",
+            "status": "rejected",
+            "reason": reason,
+        ]) ?? rejection(reason)
+    }
+
+    private func encodeJSON(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func rectJSON(_ rect: NSRect) -> [String: Double] {
+        return [
+            "x": Double(rect.minX),
+            "y": Double(rect.minY),
+            "width": Double(rect.width),
+            "height": Double(rect.height),
+        ]
     }
 
     private func currentEpoch() -> UInt64 {
