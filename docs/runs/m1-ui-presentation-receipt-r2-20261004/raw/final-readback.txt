@@ -1,0 +1,38 @@
+== product commit ==
+8c4528419c39806b8280218bfb463c21afdd7287
+d043aaa85368df5859ea58e5ea79fba9012c748f
+
+== readback pre-final HEAD ==
+4fb3eec3529c3c0960087a711e40b8aa4bf4b713
+45ca5bebc75be0b86949c546798871af8a64faa6
+## codex/m1-ui-presentation-receipt-r2-20261004...origin/main [ahead 18]
+ M docs/runs/m1-ui-presentation-receipt-r2-20261004/notes.md
+ M docs/runs/m1-ui-presentation-receipt-r2-20261004/receipt/receipt.md
+?? docs/runs/m1-ui-presentation-receipt-r2-20261004/raw/final-readback.txt
+
+== product paths changed after product commit ==
+exit=0
+
+== all paths changed after product commit ==
+docs/runs/m1-ui-presentation-receipt-r2-20261004/notes.md
+docs/runs/m1-ui-presentation-receipt-r2-20261004/receipt/receipt.md
+
+== git diff --check a6bec4e..HEAD ==
+exit=0
+
+== source sha256 at readback ==
+f4b48062bbf34e16dfa0d334e4f9cf1d8d856485e7408245d32899a99f4cfe98  packages/ui-plugins/main.tsx
+9bf8e517c64e9d77f75946423f89fa5a6c23bb02fd7d03e4521096c40117c701  packages/ui-plugins/consumer-frame.ts
+950f8afeccccbdb12d52d453f036505bc45d8c788e257a431f416b8be411e838  packages/ui-plugins/browser-consumer.tsx
+987810fa0645b7698a94d2012cba1d74351e81d8986273efeacdee8d1caf6142  packages/ui-plugins/ui-contract.test.ts
+
+== consumer-after sha256 at readback ==
+d2e523b00e447c6488d4baa4e8c946754b56bc814d01279931a83a83d56916aa  docs/runs/m1-ui-presentation-receipt-r2-20261004/artifacts/consumer-after/app.js
+4a6aae033b5af29b04cdec27f4cf9d10bb9798f78b2121c36b11f295f0d976f7  docs/runs/m1-ui-presentation-receipt-r2-20261004/artifacts/consumer-after/app.css
+68b664a867eec41a3eb1b16eb4d902b7fe20c63eb04667d9fc4e7105b862a049  docs/runs/m1-ui-presentation-receipt-r2-20261004/artifacts/consumer-after/consumer.js
+2b20f3108851172c48b731d59c72deee867e5ba645f4c7e25855032b6465a816  docs/runs/m1-ui-presentation-receipt-r2-20261004/artifacts/consumer-after/consumer-frame.js
+
+== evidence sha256 at readback ==
+ac0f9bba71e8920a020a1858c38c52d51f2d332dec8f1e67835d8d92886902b1  docs/runs/m1-ui-presentation-receipt-r2-20261004/raw/receipt-before.json
+afed00f250313b91799b9dc0fbd8760a480dbbc3daf70c4ebd007cb27a6f3739  docs/runs/m1-ui-presentation-receipt-r2-20261004/raw/receipt-after.json
+3cdd768cf14c3eed1905de143fd201718ec49631f8405ef3ebeda2022aa24713  docs/runs/m1-ui-presentation-receipt-r2-20261004/raw/verification-after.txt

@@ -12,9 +12,8 @@ architecture review and native/installed acceptance are not claimed).
   `/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004`
 - Product commit: `8c4528419c39806b8280218bfb463c21afdd7287`,
   tree `d043aaa85368df5859ea58e5ea79fba9012c748f`.
-- Final receipt commit: `2d15cfff6aab1e43048dc0a661d19642a7665f91`,
-  tree `baf061d7396724e738bd7375a2d1624663357df9` (candidate plus
-  self-consistent receipt/readback).
+- Final receipt commit SHA/tree: reported in the author handoff after the last
+  docs-only receipt commit.
 
 ## Product changes
 

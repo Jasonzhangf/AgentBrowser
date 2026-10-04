@@ -148,3 +148,23 @@ Input: verified fixed source and evidence tree.
 Environment: owned branch; no remote integration or native install.
 
 Next: author receipt readback and controller handoff.
+
+## Node 6 - final readback
+
+Time: 2026-10-03
+
+Node: final candidate/evidence binding.
+
+Conclusion: Product commit `8c45284` remains the code-identical source of the
+final receipt tree; later commits are docs/evidence-only. `git diff --check
+a6bec4e..HEAD` is exit 0, no forbidden path changed, raw hashes remain bound,
+and the final receipt commit/tree is reported in the handoff to avoid
+self-reference in the receipt file.
+
+Evidence: `raw/final-readback.txt`; final `git status`/`rev-parse` commands.
+
+Input: committed candidate and evidence tree.
+
+Environment: owned branch; no merge/push/install.
+
+Next: handoff to controller for independent review.
