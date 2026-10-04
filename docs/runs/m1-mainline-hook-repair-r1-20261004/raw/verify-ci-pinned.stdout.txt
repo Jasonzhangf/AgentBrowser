@@ -1,0 +1,152 @@
+
+> agentbrowser-probe@0.1.0 verify:ci
+> npm run verify:local && bash scripts/android.sh testDebugUnitTest assembleDebug
+
+
+> agentbrowser-probe@0.1.0 verify:local
+> npm run typecheck && npm test && npm run build:ui
+
+
+> agentbrowser-probe@0.1.0 typecheck
+> tsc --noEmit
+
+
+> agentbrowser-probe@0.1.0 test
+> tsx --test packages/**/*.test.ts
+
+TAP version 13
+# Subtest: account port keeps command plane typed and projection secret-free
+ok 1 - account port keeps command plane typed and projection secret-free
+  ---
+  duration_ms: 1.062833
+  type: 'test'
+  ...
+# Subtest: account projection preserves online, offline, and expired host status
+ok 2 - account projection preserves online, offline, and expired host status
+  ---
+  duration_ms: 0.194416
+  type: 'test'
+  ...
+# Subtest: account projection rejects credential leakage and malformed states
+ok 3 - account projection rejects credential leakage and malformed states
+  ---
+  duration_ms: 0.188125
+  type: 'test'
+  ...
+# Subtest: missing native capability fails explicitly
+ok 4 - missing native capability fails explicitly
+  ---
+  duration_ms: 0.497584
+  type: 'test'
+  ...
+# Subtest: malformed native response cannot become ready
+ok 5 - malformed native response cannot become ready
+  ---
+  duration_ms: 0.106125
+  type: 'test'
+  ...
+# Subtest: only typed local commands cross native bridge
+ok 6 - only typed local commands cross native bridge
+  ---
+  duration_ms: 0.618958
+  type: 'test'
+  ...
+# Subtest: navigation keeps the user URL unchanged across the native port
+ok 7 - navigation keeps the user URL unchanged across the native port
+  ---
+  duration_ms: 0.05475
+  type: 'test'
+  ...
+# Subtest: Cordis injected provider mounts once and disposes subscription once
+ok 8 - Cordis injected provider mounts once and disposes subscription once
+  ---
+  duration_ms: 2.864541
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 290.751541
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+
+> Task :app:buildNative
+   Compiling obscura-host-protocol v0.1.0 (/Volumes/extension/code/obscura/playground/m1-protocol-b0d6eaa-20260919/protocol/browser)
+   Compiling agentbrowser-connection v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-mainline-hook-repair-r1-20261004/packages/client-connection)
+   Compiling agentbrowser-android v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-mainline-hook-repair-r1-20261004/packages/android-bridge)
+    Finished `release` profile [optimized] target(s) in 9.72s
+
+> Task :app:bundleUi
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+
+> Task :app:preBuild
+> Task :app:preDebugBuild
+> Task :app:javaPreCompileDebug
+> Task :app:checkDebugAarMetadata
+> Task :app:processDebugNavigationResources
+> Task :app:generateDebugResValues
+> Task :app:compileDebugNavigationResources
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:mergeDebugResources
+> Task :app:packageDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:preDebugUnitTestBuild
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:processDebugJavaRes NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes NO-SOURCE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:checkDebugDuplicateClasses
+> Task :app:compressDebugAssets
+> Task :app:mergeDebugJavaResource
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeExtDexDebug
+> Task :app:mergeLibDexDebug
+> Task :app:mergeDebugNativeLibs
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:processDebugManifestForPackage
+> Task :app:stripDebugDebugSymbols
+> Task :app:processDebugResources
+> Task :app:compileDebugJavaWithJavac
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:dexBuilderDebug
+> Task :app:compileDebugUnitTestJavaWithJavac
+> Task :app:testDebugUnitTest
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+
+[Incubating] Problems report is available at: file:///Volumes/Intel/playground/agentbrowser/m1-mainline-hook-repair-r1-20261004/apps/android/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 20s
+43 actionable tasks: 43 executed
