@@ -1,0 +1,15 @@
+harness_current_exit=1
+hook=.githooks/pre-push
+fixture_root=docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-20261003
+
+=== scenario: scenario_candidate_to_main ===
+fatal: update_ref failed for ref 'refs/heads/main': cannot update ref 'refs/heads/main': trying to write ref 'refs/heads/main' with nonexistent object 33f8467e23423e77bc115363ac49064086273f3b
+fatal: 'docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/harness-current-20261003/candidate-to-main/remote.git' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+FAIL: remote main changed after rejected candidate push
+RESULT PASS scenario_candidate_to_main
+...
+summary: 6 scenarios, 4 failures

@@ -1,0 +1,2 @@
+Protected mainline push rejected
+error: failed to push some refs to '/Volumes/Intel/playground/agentbrowser/m1-mainline-hook-repair-r1-20261004/docs/runs/m1-mainline-hook-repair-r1-20261004/fixtures/current-public-git-red-20261003/remote.git'

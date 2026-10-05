@@ -1,0 +1,74 @@
+  ...
+# Subtest: account projection preserves online, offline, and expired host status
+ok 2 - account projection preserves online, offline, and expired host status
+  ---
+  duration_ms: 0.195708
+  type: 'test'
+  ...
+# Subtest: account projection rejects credential leakage and malformed states
+ok 3 - account projection rejects credential leakage and malformed states
+  ---
+  duration_ms: 0.193708
+  type: 'test'
+  ...
+# Subtest: missing native capability fails explicitly
+ok 4 - missing native capability fails explicitly
+  ---
+  duration_ms: 0.513375
+  type: 'test'
+  ...
+# Subtest: malformed native response cannot become ready
+ok 5 - malformed native response cannot become ready
+  ---
+  duration_ms: 0.62525
+  type: 'test'
+  ...
+# Subtest: only typed local commands cross native bridge
+ok 6 - only typed local commands cross native bridge
+  ---
+  duration_ms: 0.055
+  type: 'test'
+  ...
+# Subtest: navigation keeps the user URL unchanged across the native port
+ok 7 - navigation keeps the user URL unchanged across the native port
+  ---
+  duration_ms: 2.928625
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 206.627708
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+[codex/m1-mainline-delivery-audit-r1-20261004 58d172e] docs: audit m1 mainline delivery protection
+ 22 files changed, 852 insertions(+)
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/audit.md
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/blackbox-plan.md
+ create mode 100755 docs/runs/m1-mainline-delivery-audit-r1-20261004/harness/pre-push-blackbox.sh
+ create mode 100755 docs/runs/m1-mainline-delivery-audit-r1-20261004/harness/reference-pre-push.sh
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/implementation-contract.md
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/notes.md
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/git-push-main.exit
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/git-push-main.refs.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/git-push-main.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/harness-current-r2.exit
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/harness-current-r2.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/harness-current.exit
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/harness-current.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/harness-reference.exit
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/harness-reference.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/hook-direct-main.exit
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/hook-direct-main.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/npm-ci.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/pre-commit-merge-probe.exit
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/raw/pre-commit-merge-probe.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/repair-design.md
+ create mode 100644 docs/runs/m1-mainline-delivery-audit-r1-20261004/summary.md

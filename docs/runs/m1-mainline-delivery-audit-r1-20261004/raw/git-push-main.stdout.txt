@@ -1,0 +1,2 @@
+Protected mainline push rejected
+error: failed to push some refs to 'docs/runs/m1-mainline-delivery-audit-r1-20261004/fixtures/hook-consumer-remote.git'

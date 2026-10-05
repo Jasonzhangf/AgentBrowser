@@ -1,0 +1,3 @@
+fixture_root_before=7
+fixture_root_exists_after=no
+target=no node_modules=no android_build=no app_build=no
