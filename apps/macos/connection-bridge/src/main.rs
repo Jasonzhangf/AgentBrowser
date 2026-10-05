@@ -6,6 +6,7 @@
 
 use std::{
     io::{self, BufRead, BufReader, BufWriter, Write},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     sync::{mpsc as std_mpsc, Arc},
     thread,
@@ -116,6 +117,7 @@ struct AppState {
     lifecycle: Lifecycle,
     error: Option<String>,
     pairing_available: bool,
+    provisioning_available: bool,
 }
 
 impl AppState {
@@ -127,6 +129,7 @@ impl AppState {
             lifecycle: Lifecycle::Idle,
             error: None,
             pairing_available: pairing_dir().is_some_and(|path| path.is_dir()),
+            provisioning_available: admin_socket_available(),
         }
     }
 }
@@ -501,6 +504,7 @@ async fn dispatch(
         | "account_logout" => account_command(object),
         "status" => {
             fields(object, &["op"], &["op"])?;
+            app.provisioning_available = admin_socket_available();
             refresh_status(app).await;
             Ok(snapshot(app))
         }
@@ -1194,6 +1198,7 @@ fn snapshot(app: &AppState) -> String {
         "controlMode": control_mode,
         "pending": pending,
         "networkConfigured": app.pairing_available,
+        "provisioningAvailable": app.provisioning_available,
         "inputReady": input_ready,
         "epoch": epoch,
         "sessionId": session_id,
@@ -1458,6 +1463,23 @@ fn account_snapshot(state: &str, error: Option<&str>) -> String {
 
 fn pairing_dir() -> Option<PathBuf> {
     std::env::var_os("AGENTBROWSER_MAC_PAIRING").map(PathBuf::from)
+}
+
+/// Real declared local-authority probe for the new local-provisioning
+/// capability. The path is the service-owned `<socket_dir>/host-admin.sock`,
+/// supplied by the native host after it reads the service's typed `status`.
+/// A connectable local control socket is required; file or directory
+/// existence alone never reports available, so a stale socket file, a plain
+/// path, or an absent path stays explicitly unavailable. Existing remote
+/// pairing truth (`pairing_available`) is a separate concern.
+fn admin_socket_available() -> bool {
+    let Some(path) = std::env::var_os("AGENTBROWSER_MAC_ADMIN_SOCKET") else {
+        return false;
+    };
+    if path.is_empty() {
+        return false;
+    }
+    UnixStream::connect(Path::new(&path)).is_ok()
 }
 
 fn load_pairing() -> Result<Pairing, String> {

@@ -35,6 +35,16 @@ cp apps/macos/Info.plist "$app_dir/Contents/Info.plist"
 cp "$target_dir/release/agentbrowser-macos-bridge" "$app_dir/Contents/MacOS/AgentBrowserMacBridge"
 mkdir -p "$app_dir/Contents/Resources/ui"
 cp -R apps/macos/build/ui/. "$app_dir/Contents/Resources/ui/"
+
+# The native provisioning producer invokes the project's existing host-service
+# launcher from the bundle. Shipping the launcher and its module together is
+# the one explicit locator; the app never searches for the service or mirrors
+# its configuration.
+mkdir -p "$app_dir/Contents/Resources/host-service"
+cp scripts/host-service/host-service "$app_dir/Contents/Resources/host-service/host-service"
+cp scripts/host-service/host_service.py "$app_dir/Contents/Resources/host-service/host_service.py"
+chmod 755 "$app_dir/Contents/Resources/host-service/host-service"
+
 xcrun swiftc -O apps/macos/Sources/main.swift \
   -o "$app_dir/Contents/MacOS/AgentBrowserMac" \
   -framework AppKit \
