@@ -294,6 +294,52 @@ they need the real Host catalog membership and endpoint applied receipts from
 their owning modules. The public consumer verifies only malformed-input refusal
 and never fabricates a positive receipt or treats a fixture as a usable bundle.
 
+## Local admin authority and applied endpoint receipt
+
+The service does not write the Host catalog or membership state. The Host
+daemon owns `catalog.json` and exposes one local control resource:
+`<socket_dir>/host-admin.sock` (`host-admin.sock`, one UTF-8 JSON object plus LF
+per request/response, `id` u64, at most 64 KiB). This module provides the typed
+client functions that future native provisioning and command boundaries use:
+
+```python
+admin_catalog_info(socket_path)
+admin_catalog_create(socket_path, display_name, make_default, expected_catalog_revision)
+admin_catalog_select(socket_path, profile_id, expected_catalog_revision)
+admin_membership_set(socket_path, intent, profile_id, owner_device_id, device_id,
+                     members, expected_catalog_revision)
+```
+
+`admin_membership_set` requires `intent` to be exactly `grant` or `remove`; it
+never infers an intent. The client preserves the exact request/attempt identity,
+rejects malformed, oversized, mismatched-id, wrong-schema, and unknown-field
+responses with `ADMIN_FRAME_MALFORMED`, and propagates a Host denial with its
+exact typed code. Transport errors, clean EOF, and partial EOF remain
+`CATALOG_UNAVAILABLE` or `ADMIN_FRAME_MALFORMED`; they are never catalog success.
+
+`wait_endpoint_applied(root, *, generation, timeout_seconds)` consumes exactly
+one declared generation file
+(`<runtime-root>/endpoint-applied/<generation>.json`). The v1 receipt has
+`schema_version`, `endpoint_generation`, `endpoint_pid`, `bound_address`,
+`authorization_revision`, `registry_sha256`, and `projection_sha256`, and no
+`status` field. The method parses those exact bytes and verifies generation,
+live PID, bound address, committed registry revision, and both registered
+registry/projection digests before returning the service-only
+`status: "refreshed"` projection. Missing, partial, stale, corrupt, wrong-PID,
+bind, or material-mismatch files remain explicit `ENDPOINT_*` failures.
+
+`command_trust_export` now obtains the real membership proof from the Host admin
+owner and the verified endpoint result from the declared generation file before
+calling `export_bundle`. It never accepts a guessed, removed, target-omitting,
+or endpoint-file receipt. A missing live producer stays unavailable and refused
+at the existing `PROFILE_CATALOG_UNAVAILABLE`, `ENDPOINT_REFRESH_REQUIRED`,
+`ENDPOINT_NOT_REFRESHED`, or `PROJECTION_MATERIAL_CONFLICT` boundary.
+
+The public consumer adds one-shot local admin transport harnesses and
+`wait_endpoint_applied` fixtures for malformed/mismatched/stale/EOF refusal.
+Those harnesses never yield a positive applied receipt, a successful export, or
+blackbox acceptance.
+
 ## launchd boundary
 
 `install` writes `<launchd-root>/<service-label>.plist` with `RunAtLoad` and

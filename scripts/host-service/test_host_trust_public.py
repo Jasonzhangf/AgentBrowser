@@ -16,10 +16,12 @@ import ipaddress
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -133,6 +135,156 @@ def start_manager(*arguments: str) -> subprocess.Popen[str]:
         stderr=subprocess.PIPE,
         text=True,
     )
+
+
+def admin_error_frame(request_id: object, code: str, message: str = "typed denial") -> bytes:
+    return (
+        json.dumps(
+            {
+                "schema_version": 1,
+                "id": request_id,
+                "state": "error",
+                "error": {"code": code, "message": message},
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+
+def admin_ok_frame(request_id: object, **fields: object) -> bytes:
+    document = {"schema_version": 1, "id": request_id, "state": "ok", **fields}
+    return (json.dumps(document, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def read_request_id(request_bytes: bytes) -> object:
+    return json.loads(request_bytes.split(b"\n", 1)[0].decode("utf-8")).get("id")
+
+
+class AdminOwner:
+    """One-shot task-owned local admin socket used for public refusal checks."""
+
+    def __init__(self, socket_path: Path) -> None:
+        self.socket_path = socket_path
+        self.received: list[bytes] = []
+        self.connected = 0
+        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server.bind(str(socket_path))
+        self._server.listen(1)
+        self._server.settimeout(5.0)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        try:
+            connection, _ = self._server.accept()
+        except OSError:
+            return
+        self.connected += 1
+        with connection:
+            data = bytearray()
+            while b"\n" not in data:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                data.extend(chunk)
+            self.received.append(bytes(data))
+            response = self._response(bytes(data))
+            if response is not None:
+                try:
+                    connection.sendall(response)
+                except OSError:
+                    pass
+
+    def _response(self, request_bytes: bytes) -> bytes | None:
+        return None
+
+    def join(self) -> None:
+        self._thread.join(timeout=10.0)
+        self._server.close()
+        try:
+            self.socket_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class CannedAdminOwner(AdminOwner):
+    def __init__(self, socket_path: Path, response: bytes | None) -> None:
+        self._canned = response
+        super().__init__(socket_path)
+
+    def _response(self, request_bytes: bytes) -> bytes | None:
+        return self._canned
+
+
+class RespondingAdminOwner(AdminOwner):
+    def __init__(self, socket_path: Path, builder) -> None:
+        self._builder = builder
+        super().__init__(socket_path)
+
+    def _response(self, request_bytes: bytes) -> bytes | None:
+        return self._builder(read_request_id(request_bytes))
+
+
+def short_socket_dir(prefix: str = "ab-adm-") -> Path:
+    base = "/private/tmp" if Path("/private/tmp").is_dir() else "/tmp"
+    directory = Path(tempfile.mkdtemp(prefix=prefix, dir=base))
+    directory.chmod(0o700)
+    return directory
+
+
+def build_service_fixture(base: Path, *, endpoint_host: str = "100.64.0.1") -> tuple[Path, Path]:
+    """Create a valid declared service root + runtime root for receipt checks."""
+    root = base / "service-root"
+    root.mkdir(mode=0o700)
+    (root / "run").mkdir(mode=0o700)
+    (root / "logs").mkdir(mode=0o700)
+    runtime = base / "runtime"
+    runtime.mkdir(mode=0o700)
+    binary = Path(sys.executable).resolve()
+    config = {
+        "config_version": 2,
+        "config_id": "r4-source-fixture",
+        "service_label": "com.agentbrowser.obscura-host",
+        "host_binary": str(binary),
+        "binary_sha256": sha256_file(binary),
+        "protocol_version": 11,
+        "profile_id": "default",
+        "profile_mode": "in_memory",
+        "profile_root": None,
+        "allow_private_network": False,
+        "runtime_root": str(runtime),
+    }
+    host_service.write_json(root / "config.json", config)
+    manager_json(
+        "trust", "init", "--root", str(root),
+        "--endpoint-host", endpoint_host, "--endpoint-port", "8443",
+    )
+    return root, runtime
+
+
+def endpoint_receipt_fields(root: Path, *, generation: int = 3, pid: int | None = None) -> dict[str, object]:
+    registry_bytes = (root / "trust" / "registry.json").read_bytes()
+    projection_bytes = (root / "trust" / "authorized-clients.json").read_bytes()
+    registry = json.loads(registry_bytes)
+    return {
+        "schema_version": 1,
+        "endpoint_generation": generation,
+        "endpoint_pid": os.getpid() if pid is None else pid,
+        "bound_address": "100.64.0.1:8443",
+        "authorization_revision": registry["authorization_revision"],
+        "registry_sha256": hashlib.sha256(registry_bytes).hexdigest(),
+        "projection_sha256": hashlib.sha256(projection_bytes).hexdigest(),
+    }
+
+
+def write_endpoint_receipt(runtime: Path, generation: int, fields: dict[str, object]) -> Path:
+    directory = runtime / "endpoint-applied"
+    if not directory.exists():
+        directory.mkdir(mode=0o700)
+    path = directory / f"{generation}.json"
+    host_service.write_bytes(path, (json.dumps(fields, separators=(",", ":")) + "\n").encode("utf-8"), 0o600)
+    return path
 
 
 def assert_export_refused(
@@ -346,9 +498,12 @@ def test_status_owner_and_export_denials(root: Path) -> None:
     projection_sha = host_service.sha256_bytes(projection_bytes)
     revision = json.loads(registry_bytes)["authorization_revision"]
     valid_membership = {
+        "receipt_type": "export_eligible",
         "device_id": device_id,
         "catalog_revision": 1,
         "profile_id": "work",
+        "owner_device_id": "local",
+        "members": ["local", device_id],
     }
     valid_endpoint = {
         "status": "refreshed",
@@ -362,6 +517,19 @@ def test_status_owner_and_export_denials(root: Path) -> None:
     assert_export_refused(
         denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
         membership_receipt={"not": "a receipt"},
+    )
+    # A committed removal, a missing target, and a missing owner are not grants.
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "receipt_type": "removed", "members": ["local"]},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "members": ["local"]},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "members": [device_id]},
     )
     assert_export_refused(
         denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
@@ -482,6 +650,259 @@ def test_ipv6_url_san(root: Path) -> None:
     check(parsed.username is None and parsed.password is None, "IPv6 URL contains userinfo")
     check(host_service.endpoint_ws_url("100.64.0.1", "ip", 8443).startswith("wss://100.64.0.1:8443/"), "IPv4 URL drifted")
     check(host_service.endpoint_ws_url("host.example", "dns", 8443).startswith("wss://host.example:8443/"), "DNS URL drifted")
+
+
+def expect_service_error(call) -> str:
+    try:
+        call()
+    except host_service.ServiceError as error:
+        return error.code or ""
+    raise AssertionError("expected a typed ServiceError")
+
+
+def test_admin_client_public_refusals(root: Path) -> None:
+    """The typed local-admin client refuses malformed/EOF/denied frames.
+
+    The one-shot owners below are task-owned transport harnesses. They return
+    deliberately invalid, denied, or absent frames only; they never produce a
+    valid grant, applied receipt, or usable bundle.
+    """
+    sockets = short_socket_dir()
+    try:
+        # Missing owner socket: declared catalog-unavailable, no side effect.
+        missing = sockets / "absent.sock"
+        code = expect_service_error(lambda: host_service.admin_catalog_info(missing))
+        check(code == "CATALOG_UNAVAILABLE", f"missing socket code was {code}")
+
+        # Invalid intent is rejected before any connection is opened.
+        guard_path = sockets / "guard.sock"
+        guard = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        guard.bind(str(guard_path))
+        guard.listen(1)
+        guard.settimeout(0.3)
+        code = expect_service_error(
+            lambda: host_service.admin_membership_set(
+                guard_path, "banana", "p1", "local", "device", ["local", "device"], None
+            )
+        )
+        check(code == "ADMIN_FRAME_MALFORMED", f"invalid intent code was {code}")
+        try:
+            guard.accept()
+            raise AssertionError("client connected despite a rejected intent")
+        except socket.timeout:
+            pass
+        finally:
+            guard.close()
+            guard_path.unlink()
+
+        # Strict envelope/frame refusals at the public client boundary.
+        malformed_cases = {
+            "wrong-schema": admin_ok_frame(
+                1, catalog_revision=0, default_profile_id=None, profiles=[]
+            ).replace(b'"schema_version":1', b'"schema_version":2'),
+            "unknown-field": admin_ok_frame(
+                1, catalog_revision=0, default_profile_id=None, profiles=[], extra=1
+            ),
+            "missing-field": admin_ok_frame(1, catalog_revision=0, default_profile_id=None),
+            "not-json": b"this is not json\n",
+            "trailing-bytes": admin_ok_frame(
+                1, catalog_revision=0, default_profile_id=None, profiles=[]
+            )
+            + b"extra\n",
+            "malformed-error": b'{"schema_version":1,"id":1,"state":"error","error":{"code":"X"}}\n',
+            "oversized": b'{"x":"' + b"a" * 70000 + b'"}\n',
+        }
+        for label, response in malformed_cases.items():
+            socket_path = sockets / f"{label}.sock"
+            owner = CannedAdminOwner(socket_path, response)
+            try:
+                code = expect_service_error(lambda p=socket_path: host_service.admin_catalog_info(p))
+                check(code == "ADMIN_FRAME_MALFORMED", f"{label} code was {code}")
+            finally:
+                owner.join()
+
+        # A clean EOF before any response is a transport failure, not success.
+        eof_path = sockets / "eof.sock"
+        eof_owner = CannedAdminOwner(eof_path, None)
+        try:
+            code = expect_service_error(lambda: host_service.admin_catalog_info(eof_path))
+            check(code == "CATALOG_UNAVAILABLE", f"clean EOF code was {code}")
+        finally:
+            eof_owner.join()
+
+        # A partial response frame at EOF is a malformed frame.
+        partial_path = sockets / "partial.sock"
+        partial_owner = CannedAdminOwner(partial_path, b'{"schema_version":1,"id":1')
+        try:
+            code = expect_service_error(lambda: host_service.admin_catalog_info(partial_path))
+            check(code == "ADMIN_FRAME_MALFORMED", f"partial frame code was {code}")
+        finally:
+            partial_owner.join()
+
+        # A typed denial from the owner is propagated with its exact code.
+        denied_path = sockets / "denied.sock"
+        denied_owner = RespondingAdminOwner(
+            denied_path, lambda request_id: admin_error_frame(request_id, "MEMBERSHIP_REQUIRED")
+        )
+        try:
+            code = expect_service_error(
+                lambda: host_service.admin_membership_set(
+                    denied_path, "grant", "p1", "local", "device", ["local"], None
+                )
+            )
+            check(code == "MEMBERSHIP_REQUIRED", f"typed denial code was {code}")
+        finally:
+            denied_owner.join()
+
+        # A valid info response is parsed into the declared typed projection.
+        info_path = sockets / "info.sock"
+        info_owner = RespondingAdminOwner(
+            info_path,
+            lambda request_id: admin_ok_frame(
+                request_id,
+                catalog_revision=1,
+                default_profile_id="p1",
+                profiles=[{"profile_id": "p1", "owner_device_id": "local", "members": ["local", "device"]}],
+            ),
+        )
+        try:
+            info = host_service.admin_catalog_info(info_path)
+            check(info["catalog_revision"] == 1, f"info revision: {info}")
+            check(info["default_profile_id"] == "p1", f"info default: {info}")
+            check(info["profiles"][0]["members"] == ["local", "device"], f"info members: {info}")
+        finally:
+            info_owner.join()
+
+        # A valid export_eligible grant frame is parsed and returned verbatim.
+        grant_path = sockets / "grant.sock"
+        grant_owner = RespondingAdminOwner(
+            grant_path,
+            lambda request_id: admin_ok_frame(
+                request_id,
+                membership_receipt={
+                    "receipt_type": "export_eligible",
+                    "catalog_revision": 5,
+                    "profile_id": "p1",
+                    "device_id": "device",
+                    "owner_device_id": "local",
+                    "members": ["local", "device"],
+                },
+            ),
+        )
+        try:
+            grant = host_service.admin_membership_set(
+                grant_path, "grant", "p1", "local", "device", ["local", "device"], 4
+            )
+            check(grant["membership_receipt"]["receipt_type"] == "export_eligible", f"grant: {grant}")
+            check(grant["membership_receipt"]["members"] == ["local", "device"], f"grant members: {grant}")
+        finally:
+            grant_owner.join()
+
+        # A grant frame that omits a required receipt field is malformed.
+        bad_grant_path = sockets / "bad-grant.sock"
+        bad_grant_owner = RespondingAdminOwner(
+            bad_grant_path,
+            lambda request_id: admin_ok_frame(
+                request_id,
+                membership_receipt={
+                    "receipt_type": "export_eligible",
+                    "catalog_revision": 5,
+                    "profile_id": "p1",
+                    "device_id": "device",
+                    "members": ["device"],
+                },
+            ),
+        )
+        try:
+            code = expect_service_error(
+                lambda: host_service.admin_membership_set(
+                    bad_grant_path, "grant", "p1", "local", "device", ["local", "device"], 4
+                )
+            )
+            check(code == "ADMIN_FRAME_MALFORMED", f"owner-omitting grant code was {code}")
+        finally:
+            bad_grant_owner.join()
+    finally:
+        shutil.rmtree(sockets, ignore_errors=True)
+
+
+def test_wait_endpoint_applied_public(root: Path) -> None:
+    """The service verifies the exact v1 endpoint receipt and refuses the rest."""
+    base = root / "endpoint-consumer"
+    base.mkdir(mode=0o700)
+    service_root, runtime = build_service_fixture(base)
+    registry_path = service_root / "trust" / "registry.json"
+    projection_path = service_root / "trust" / "authorized-clients.json"
+    registry_before = sha256_file(registry_path)
+    projection_before = sha256_file(projection_path)
+
+    fields = endpoint_receipt_fields(service_root)
+    write_endpoint_receipt(runtime, 3, fields)
+    refreshed = host_service.wait_endpoint_applied(service_root, generation=3, timeout_seconds=1.0)
+    check(refreshed["status"] == "refreshed", f"refresh status: {refreshed}")
+    check(refreshed["endpoint_pid"] == os.getpid(), f"refresh pid: {refreshed}")
+    check(refreshed["endpoint_generation"] == 3, f"refresh generation: {refreshed}")
+    check(refreshed["bound_address"] == "100.64.0.1:8443", f"refresh address: {refreshed}")
+    check(refreshed["authorization_revision"] == fields["authorization_revision"], "refresh revision drifted")
+    check(refreshed["registry_sha256"] == fields["registry_sha256"], "refresh registry digest drifted")
+    check(refreshed["projection_sha256"] == fields["projection_sha256"], "refresh projection digest drifted")
+
+    def refused(generation: int, expected: str) -> None:
+        code = expect_service_error(
+            lambda: host_service.wait_endpoint_applied(service_root, generation=generation, timeout_seconds=0.3)
+        )
+        check(code == expected, f"generation {generation} code was {code}, expected {expected}")
+
+    # The v1 applied receipt has no status field and no unknown fields.
+    write_endpoint_receipt(runtime, 4, {**endpoint_receipt_fields(service_root, generation=4), "status": "ready"})
+    refused(4, "ENDPOINT_RECEIPT_MALFORMED")
+    missing = endpoint_receipt_fields(service_root, generation=5)
+    del missing["schema_version"]
+    write_endpoint_receipt(runtime, 5, missing)
+    refused(5, "ENDPOINT_RECEIPT_MALFORMED")
+    write_endpoint_receipt(runtime, 6, {**endpoint_receipt_fields(service_root, generation=6), "schema_version": 2})
+    refused(6, "ENDPOINT_RECEIPT_MALFORMED")
+    write_endpoint_receipt(runtime, 7, {**endpoint_receipt_fields(service_root, generation=7), "extra": 1})
+    refused(7, "ENDPOINT_RECEIPT_MALFORMED")
+
+    # A generation mismatch, a dead PID, and a wrong bind address are explicit.
+    write_endpoint_receipt(runtime, 8, endpoint_receipt_fields(service_root, generation=9))
+    refused(8, "ENDPOINT_GENERATION_STALE")
+    write_endpoint_receipt(runtime, 10, endpoint_receipt_fields(service_root, generation=10, pid=1 << 30))
+    refused(10, "ENDPOINT_PID_MISMATCH")
+    write_endpoint_receipt(
+        runtime, 11, {**endpoint_receipt_fields(service_root, generation=11), "bound_address": "100.64.0.9:8443"}
+    )
+    refused(11, "ENDPOINT_BIND_MISMATCH")
+
+    # Revision or material drift is a projection conflict, never a refresh.
+    revision = int(endpoint_receipt_fields(service_root)["authorization_revision"])
+    write_endpoint_receipt(
+        runtime, 12, {**endpoint_receipt_fields(service_root, generation=12), "authorization_revision": revision + 1}
+    )
+    refused(12, "PROJECTION_MATERIAL_CONFLICT")
+    write_endpoint_receipt(
+        runtime, 13, {**endpoint_receipt_fields(service_root, generation=13), "registry_sha256": "0" * 64}
+    )
+    refused(13, "PROJECTION_MATERIAL_CONFLICT")
+    write_endpoint_receipt(
+        runtime, 14, {**endpoint_receipt_fields(service_root, generation=14), "projection_sha256": "0" * 64}
+    )
+    refused(14, "PROJECTION_MATERIAL_CONFLICT")
+
+    # A stale published projection refuses even with matching receipt digests.
+    projection_bytes = projection_path.read_bytes()
+    projection_path.write_bytes(projection_bytes[: len(projection_bytes) - 10])
+    try:
+        refused(3, "PROJECTION_MATERIAL_CONFLICT")
+    finally:
+        projection_path.write_bytes(projection_bytes)
+
+    # A missing generation at timeout is an explicit not-refreshed result.
+    refused(999, "ENDPOINT_NOT_REFRESHED")
+
+    check(sha256_file(registry_path) == registry_before, "endpoint wait mutated the registry")
+    check(sha256_file(projection_path) == projection_before, "endpoint wait mutated the projection")
 
 
 def der_to_pem(der_path: Path, pem_path: Path) -> None:
@@ -760,6 +1181,10 @@ def run(root: Path) -> None:
     test_public_mixed_mutation_no_lost_success(root)
     test_status_owner_and_export_denials(root)
     test_ipv6_url_san(root)
+    # 14. r4 source-preparation: typed local-admin client, strict v1 applied
+    #     receipt consumer, and the removed/omitting membership export gate.
+    test_admin_client_public_refusals(root)
+    test_wait_endpoint_applied_public(root)
 
     # No private material may appear in the emitted receipts.
     for receipt in (initialized, device_a, device_b, revoked, status, partial):

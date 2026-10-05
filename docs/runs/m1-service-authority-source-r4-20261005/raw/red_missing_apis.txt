@@ -1,0 +1,4 @@
+BASE_SHA a082e5f7fd65e568da4d53e2104eca9bf2e8fc2a
+MISSING_PUBLIC_APIS admin_catalog_info,admin_catalog_create,admin_catalog_select,admin_membership_set,wait_endpoint_applied
+MISSING_COUNT 5
+RED_GAP CONFIRMED

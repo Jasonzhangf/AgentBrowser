@@ -7,9 +7,11 @@ import argparse
 import base64
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import signal
@@ -49,6 +51,31 @@ TRUST_SERVER_KEY_NAME = "server-key.der"
 TRUST_ENDPOINT_NAME = "endpoint.json"
 TRUST_REGISTRY_NAME = "registry.json"
 TRUST_PROJECTION_NAME = "authorized-clients.json"
+
+# Host-local administrative resource owned by the running Obscura Host daemon.
+# The service is a typed client only; it never writes catalog.json.
+ADMIN_SOCKET_NAME = "host-admin.sock"
+ADMIN_SCHEMA_VERSION = 1
+ADMIN_FRAME_LIMIT = 64 * 1024
+ADMIN_REQUEST_TIMEOUT_SECONDS = 30.0
+
+# Endpoint applied receipt v1 published by the endpoint after a real bind.
+ENDPOINT_APPLIED_DIR_NAME = "endpoint-applied"
+ENDPOINT_APPLIED_SCHEMA_VERSION = 1
+ENDPOINT_APPLIED_FRAME_LIMIT = 64 * 1024
+ENDPOINT_APPLIED_WAIT_INTERVAL_SECONDS = 0.05
+ENDPOINT_REFRESH_TIMEOUT_SECONDS = 30.0
+ENDPOINT_APPLIED_FIELDS = frozenset(
+    {
+        "schema_version",
+        "endpoint_generation",
+        "endpoint_pid",
+        "bound_address",
+        "authorization_revision",
+        "registry_sha256",
+        "projection_sha256",
+    }
+)
 
 REGISTRY_SCHEMA_VERSION = 2
 PROJECTION_SCHEMA_VERSION = 2
@@ -1964,11 +1991,13 @@ def trust_status(root: Path) -> dict[str, object]:
     """Single public calculation of committed trust state.
 
     Projection publication is a file fact owned here. Endpoint applied
-    authorization is not: it requires the endpoint owner's typed receipt
-    (revision + registry/projection material + PID). That receipt boundary is
-    not implemented in this module, so ``authorization_state`` stays
-    ``not_refreshed`` and no endpoint PID is invented. The declared
-    ``deny_all``/``refreshed`` values remain reserved for the endpoint receipt.
+    authorization is separate: it requires the endpoint owner's typed applied
+    receipt (revision + registry/projection material + PID). This module now
+    owns the strict consumer (:func:`wait_endpoint_applied`), but the status
+    projection itself never waits for or persists a generation, so it keeps
+    ``authorization_state`` at ``not_refreshed`` and invents no endpoint PID.
+    The declared ``deny_all``/``refreshed`` values remain reserved for that
+    verified endpoint receipt.
     """
     registry_path = trust_path(root, TRUST_REGISTRY_NAME)
     if not registry_path.is_file():
@@ -2006,6 +2035,441 @@ def trust_status(root: Path) -> dict[str, object]:
 def command_trust_status(args: argparse.Namespace) -> int:
     emit(trust_status(root_from(args.root)))
     return 0
+
+
+def _admin_error(message: str) -> ServiceError:
+    return ServiceError(message, TRUST_EXIT_CODE, code="ADMIN_FRAME_MALFORMED")
+
+
+def _admin_require_text(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise _admin_error(f"host-admin {field} must be a non-empty string")
+    return value
+
+
+def _admin_require_bool(value: object, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise _admin_error(f"host-admin {field} must be a boolean")
+    return value
+
+
+def _admin_require_revision(value: object, field: str) -> int:
+    if type(value) is not int or value < 0:
+        raise _admin_error(f"host-admin {field} must be a non-negative integer")
+    return value
+
+
+def _admin_require_intent(value: object) -> str:
+    # Intent is required and never inferred from enrollment or target presence.
+    if value not in ("grant", "remove"):
+        raise _admin_error("host-admin membership intent must be exactly grant or remove")
+    return str(value)
+
+
+def _admin_validate_members(value: object, label: str) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise _admin_error(f"host-admin {label} members must be a list of non-empty device ids")
+    return list(value)
+
+
+def _admin_validate_profile(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {"profile_id", "owner_device_id", "members"}:
+        raise _admin_error(f"host-admin {label} profile receipt is malformed")
+    return {
+        "profile_id": _admin_require_text(value["profile_id"], f"{label} profile_id"),
+        "owner_device_id": _admin_require_text(value["owner_device_id"], f"{label} owner_device_id"),
+        "members": _admin_validate_members(value["members"], label),
+    }
+
+
+def _admin_validate_membership_receipt(value: object) -> dict[str, object]:
+    expected = {"receipt_type", "catalog_revision", "profile_id", "device_id", "owner_device_id", "members"}
+    if not isinstance(value, dict) or set(value) != expected:
+        raise _admin_error("host-admin membership receipt is malformed")
+    receipt_type = value["receipt_type"]
+    if receipt_type not in ("export_eligible", "removed"):
+        raise _admin_error("host-admin membership receipt_type must be export_eligible or removed")
+    return {
+        "receipt_type": receipt_type,
+        "catalog_revision": _admin_require_revision(value["catalog_revision"], "membership catalog_revision"),
+        "profile_id": _admin_require_text(value["profile_id"], "membership profile_id"),
+        "device_id": _admin_require_text(value["device_id"], "membership device_id"),
+        "owner_device_id": _admin_require_text(value["owner_device_id"], "membership owner_device_id"),
+        "members": _admin_validate_members(value["members"], "membership"),
+    }
+
+
+def _admin_read_frame(connection: socket.socket) -> bytes:
+    buffer = bytearray()
+    while True:
+        try:
+            chunk = connection.recv(4096)
+        except OSError as error:
+            raise ServiceError(
+                f"host-admin response transport failed: {error}",
+                TRUST_EXIT_CODE,
+                code="CATALOG_UNAVAILABLE",
+            ) from error
+        if not chunk:
+            if not buffer:
+                raise ServiceError(
+                    "host-admin owner closed the connection without a response",
+                    TRUST_EXIT_CODE,
+                    code="CATALOG_UNAVAILABLE",
+                )
+            raise _admin_error("host-admin response frame ended before a newline")
+        buffer.extend(chunk)
+        if b"\n" in buffer:
+            line, _, remainder = bytes(buffer).partition(b"\n")
+            if remainder:
+                raise _admin_error("host-admin response frame has trailing bytes")
+            if len(line) > ADMIN_FRAME_LIMIT:
+                raise _admin_error("host-admin response frame exceeds the size limit")
+            return line
+        if len(buffer) > ADMIN_FRAME_LIMIT:
+            raise _admin_error("host-admin response frame exceeds the size limit")
+
+
+def _admin_exchange(socket_path: Path, payload: bytes) -> bytes:
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        connection.settimeout(ADMIN_REQUEST_TIMEOUT_SECONDS)
+        connection.connect(str(socket_path))
+        connection.sendall(payload)
+        return _admin_read_frame(connection)
+    except ServiceError:
+        raise
+    except OSError as error:
+        raise ServiceError(
+            f"host-admin catalog owner is unavailable: {error}",
+            TRUST_EXIT_CODE,
+            code="CATALOG_UNAVAILABLE",
+        ) from error
+    finally:
+        connection.close()
+
+
+def _admin_call(
+    socket_path: Path,
+    op: str,
+    fields: dict[str, object],
+    ok_keys: frozenset[str],
+) -> dict[str, object]:
+    request_id = secrets.randbits(64)
+    request: dict[str, object] = {"schema_version": ADMIN_SCHEMA_VERSION, "id": request_id, "op": op}
+    request.update(fields)
+    payload = (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > ADMIN_FRAME_LIMIT:
+        raise _admin_error("host-admin request exceeds the frame size limit")
+    raw = _admin_exchange(Path(socket_path), payload)
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _admin_error("host-admin response is not a UTF-8 JSON object") from error
+    if not isinstance(document, dict):
+        raise _admin_error("host-admin response must be a JSON object")
+    if document.get("schema_version") != ADMIN_SCHEMA_VERSION:
+        raise _admin_error("host-admin response schema_version must be 1")
+    if document.get("id") != request_id:
+        raise _admin_error("host-admin response id does not match the request")
+    state = document.get("state")
+    if state == "error":
+        if set(document) != {"schema_version", "id", "state", "error"}:
+            raise _admin_error("host-admin error response has unsupported fields")
+        error = document.get("error")
+        if (
+            not isinstance(error, dict)
+            or set(error) != {"code", "message"}
+            or not isinstance(error["code"], str)
+            or not error["code"]
+            or not isinstance(error["message"], str)
+        ):
+            raise _admin_error("host-admin error response is malformed")
+        raise ServiceError(error["message"], TRUST_EXIT_CODE, code=error["code"])
+    if state != "ok":
+        raise _admin_error("host-admin response state must be ok or error")
+    if set(document) != {"schema_version", "id", "state"} | ok_keys:
+        raise _admin_error("host-admin ok response has unsupported or missing fields")
+    return {key: document[key] for key in ok_keys}
+
+
+def admin_catalog_info(socket_path: Path) -> dict[str, object]:
+    """Read the Host-owned profile catalog through the local admin socket."""
+    result = _admin_call(
+        socket_path,
+        "admin.catalog.info",
+        {},
+        frozenset({"catalog_revision", "default_profile_id", "profiles"}),
+    )
+    default_profile_id = result["default_profile_id"]
+    if default_profile_id is not None:
+        default_profile_id = _admin_require_text(default_profile_id, "default_profile_id")
+    profiles = result["profiles"]
+    if not isinstance(profiles, list):
+        raise _admin_error("host-admin catalog profiles must be a list")
+    return {
+        "catalog_revision": _admin_require_revision(result["catalog_revision"], "catalog_revision"),
+        "default_profile_id": default_profile_id,
+        "profiles": [_admin_validate_profile(entry, "catalog") for entry in profiles],
+    }
+
+
+def _admin_catalog_mutation(socket_path: Path, op: str, fields: dict[str, object]) -> dict[str, object]:
+    result = _admin_call(socket_path, op, fields, frozenset({"catalog_revision", "profile_receipt"}))
+    return {
+        "catalog_revision": _admin_require_revision(result["catalog_revision"], "catalog_revision"),
+        "profile_receipt": _admin_validate_profile(result["profile_receipt"], "catalog"),
+    }
+
+
+def admin_catalog_create(
+    socket_path: Path,
+    display_name: str,
+    make_default: bool,
+    expected_catalog_revision: int | None,
+) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "display_name": _admin_require_text(display_name, "display_name"),
+        "make_default": _admin_require_bool(make_default, "make_default"),
+        "attempt_id": str(uuid.uuid4()),
+    }
+    if expected_catalog_revision is not None:
+        fields["expected_catalog_revision"] = _admin_require_revision(
+            expected_catalog_revision, "expected_catalog_revision"
+        )
+    return _admin_catalog_mutation(socket_path, "admin.catalog.create", fields)
+
+
+def admin_catalog_select(
+    socket_path: Path,
+    profile_id: str,
+    expected_catalog_revision: int | None,
+) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "profile_id": _admin_require_text(profile_id, "profile_id"),
+        "attempt_id": str(uuid.uuid4()),
+    }
+    if expected_catalog_revision is not None:
+        fields["expected_catalog_revision"] = _admin_require_revision(
+            expected_catalog_revision, "expected_catalog_revision"
+        )
+    return _admin_catalog_mutation(socket_path, "admin.catalog.select", fields)
+
+
+def admin_membership_set(
+    socket_path: Path,
+    intent: str,
+    profile_id: str,
+    owner_device_id: str,
+    device_id: str,
+    members: list[str],
+    expected_catalog_revision: int | None,
+) -> dict[str, object]:
+    """Send one typed membership request and return the committed proof."""
+    fields: dict[str, object] = {
+        "intent": _admin_require_intent(intent),
+        "profile_id": _admin_require_text(profile_id, "profile_id"),
+        "owner_device_id": _admin_require_text(owner_device_id, "owner_device_id"),
+        "device_id": _admin_require_text(device_id, "device_id"),
+        "members": _admin_validate_members(members, "membership request"),
+        "attempt_id": str(uuid.uuid4()),
+    }
+    if expected_catalog_revision is not None:
+        fields["expected_catalog_revision"] = _admin_require_revision(
+            expected_catalog_revision, "expected_catalog_revision"
+        )
+    result = _admin_call(socket_path, "admin.membership.set", fields, frozenset({"membership_receipt"}))
+    return {"membership_receipt": _admin_validate_membership_receipt(result["membership_receipt"])}
+
+
+def _endpoint_applied_path(root: Path, generation: int) -> Path:
+    config, _ = load_config(root)
+    runtime_root = runtime_root_from(str(config["runtime_root"]))
+    return runtime_root / ENDPOINT_APPLIED_DIR_NAME / f"{generation}.json"
+
+
+def _parse_bound_address(value: str) -> tuple[str, int] | None:
+    if value.startswith("["):
+        host, separator, tail = value[1:].partition("]:")
+        if not separator or not tail.isdigit():
+            return None
+        return host, int(tail)
+    host, separator, tail = value.rpartition(":")
+    if not separator or not host or not tail.isdigit():
+        return None
+    return host, int(tail)
+
+
+def _bound_address_matches(receipt_address: str, locator: dict[str, object]) -> bool:
+    parsed = _parse_bound_address(receipt_address)
+    if parsed is None:
+        return False
+    host, port = parsed
+    if port != int(locator["endpoint_port"]):
+        return False
+    expected_host = str(locator["endpoint_host"])
+    try:
+        return ipaddress.ip_address(host) == ipaddress.ip_address(expected_host)
+    except ValueError:
+        return host == expected_host
+
+
+def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[str, object]:
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ServiceError(
+            f"cannot read endpoint applied receipt: {error}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+        ) from error
+    if len(raw) > ENDPOINT_APPLIED_FRAME_LIMIT:
+        raise ServiceError(
+            "endpoint applied receipt exceeds the size limit",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_RECEIPT_MALFORMED",
+        )
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ServiceError(
+            "endpoint applied receipt is not a UTF-8 JSON object",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_RECEIPT_MALFORMED",
+        ) from error
+    # The v1 applied receipt has exactly these fields and never a status field.
+    if not isinstance(document, dict) or set(document) != ENDPOINT_APPLIED_FIELDS:
+        raise ServiceError(
+            "endpoint applied receipt has unsupported or missing fields",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_RECEIPT_MALFORMED",
+        )
+    if document["schema_version"] != ENDPOINT_APPLIED_SCHEMA_VERSION:
+        raise ServiceError(
+            "endpoint applied receipt schema_version must be 1",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_RECEIPT_MALFORMED",
+        )
+    for field in ("endpoint_generation", "endpoint_pid", "authorization_revision"):
+        if type(document[field]) is not int or document[field] < 0:
+            raise ServiceError(
+                f"endpoint applied receipt {field} is invalid",
+                TRUST_EXIT_CODE,
+                code="ENDPOINT_RECEIPT_MALFORMED",
+            )
+    if document["endpoint_pid"] <= 0:
+        raise ServiceError(
+            "endpoint applied receipt endpoint_pid is invalid",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_RECEIPT_MALFORMED",
+        )
+    if not isinstance(document["bound_address"], str) or not document["bound_address"]:
+        raise ServiceError(
+            "endpoint applied receipt bound_address is invalid",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_RECEIPT_MALFORMED",
+        )
+    for field in ("registry_sha256", "projection_sha256"):
+        if not isinstance(document[field], str) or not SHA256_PATTERN.fullmatch(document[field]):
+            raise ServiceError(
+                f"endpoint applied receipt {field} is invalid",
+                TRUST_EXIT_CODE,
+                code="ENDPOINT_RECEIPT_MALFORMED",
+            )
+    locator = trust_endpoint(root)
+    if document["endpoint_generation"] != generation:
+        raise ServiceError(
+            "endpoint applied receipt generation does not match the requested generation",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_GENERATION_STALE",
+        )
+    if type(locator.get("endpoint_generation")) is int and locator["endpoint_generation"] != generation:
+        raise ServiceError(
+            "endpoint locator generation is stale",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_GENERATION_STALE",
+        )
+    if not pid_alive(document["endpoint_pid"]):
+        raise ServiceError(
+            "endpoint applied receipt PID is not a live process",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_PID_MISMATCH",
+        )
+    if not _bound_address_matches(document["bound_address"], locator):
+        raise ServiceError(
+            "endpoint applied receipt bound_address does not match the locator",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        )
+    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
+    if not registry_path.is_file():
+        raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
+    registry_bytes = registry_path.read_bytes()
+    registry = parse_trust_registry(registry_bytes)
+    registry_sha = sha256_bytes(registry_bytes)
+    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
+    if not projection_path.is_file():
+        raise ServiceError(
+            "authorized-clients projection is missing",
+            TRUST_EXIT_CODE,
+            code="PROJECTION_MATERIAL_CONFLICT",
+        )
+    projection_bytes = projection_path.read_bytes()
+    projection_sha = sha256_bytes(projection_bytes)
+    expected_projection, _ = refresh_projection(root, registry, registry_bytes)
+    if (
+        projection_bytes != expected_projection
+        or document["authorization_revision"] != registry["authorization_revision"]
+        or document["registry_sha256"] != registry_sha
+        or document["projection_sha256"] != projection_sha
+    ):
+        raise ServiceError(
+            "endpoint applied receipt does not match the committed authorization material",
+            TRUST_EXIT_CODE,
+            code="PROJECTION_MATERIAL_CONFLICT",
+        )
+    return {
+        "status": "refreshed",
+        "endpoint_pid": document["endpoint_pid"],
+        "endpoint_generation": document["endpoint_generation"],
+        "bound_address": document["bound_address"],
+        "authorization_revision": document["authorization_revision"],
+        "registry_sha256": document["registry_sha256"],
+        "projection_sha256": document["projection_sha256"],
+    }
+
+
+def wait_endpoint_applied(
+    root: Path,
+    *,
+    generation: int,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    """Wait for and strictly verify one endpoint applied receipt generation.
+
+    Only the declared generation file is consumed. A missing file at timeout is
+    an explicit failure; endpoint stderr and any other file never substitute.
+    """
+    if type(generation) is not int or generation < 0:
+        raise ServiceError(
+            "endpoint generation must be a non-negative integer",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_GENERATION_STALE",
+        )
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds < 0:
+        raise ServiceError("endpoint wait timeout must be a non-negative number", TRUST_EXIT_CODE)
+    path = _endpoint_applied_path(root, generation)
+    deadline = time.monotonic() + float(timeout_seconds)
+    while True:
+        if path.is_file():
+            return _verify_endpoint_applied(root, path, generation)
+        if time.monotonic() >= deadline:
+            raise ServiceError(
+                "running endpoint has not applied the current authorization",
+                TRUST_EXIT_CODE,
+                code="ENDPOINT_NOT_REFRESHED",
+            )
+        time.sleep(ENDPOINT_APPLIED_WAIT_INTERVAL_SECONDS)
 
 
 def enroll_device(
@@ -2283,13 +2747,22 @@ def export_bundle(
             TRUST_EXIT_CODE,
             code="PROFILE_CATALOG_UNAVAILABLE",
         )
+    # A usable grant is the Host-owned committed proof: export_eligible, bound
+    # to this device and owner, with the target inside the exact applied members.
+    # A removed or target-omitting result is never an eligible grant.
     if (
         not isinstance(membership_receipt, dict)
+        or membership_receipt.get("receipt_type") != "export_eligible"
         or membership_receipt.get("device_id") != device_id
         or type(membership_receipt.get("catalog_revision")) is not int
         or membership_receipt["catalog_revision"] < 0
         or not isinstance(membership_receipt.get("profile_id"), str)
         or not membership_receipt["profile_id"]
+        or not isinstance(membership_receipt.get("owner_device_id"), str)
+        or not membership_receipt["owner_device_id"]
+        or not isinstance(membership_receipt.get("members"), list)
+        or device_id not in membership_receipt["members"]
+        or membership_receipt["owner_device_id"] not in membership_receipt["members"]
     ):
         raise ServiceError(
             "profile membership receipt does not match the enrolled device and profile",
@@ -2379,10 +2852,91 @@ def export_bundle(
     }
 
 
+def _running_socket_dir(root: Path) -> Path | None:
+    state = load_state(root)
+    if state is None or state["launch_mode"] not in {"subprocess", "launchd"}:
+        return None
+    return Path(str(state["socket_dir"]))
+
+
+def _admin_socket_path(root: Path) -> Path | None:
+    socket_dir = _running_socket_dir(root)
+    if socket_dir is None:
+        return None
+    return socket_dir / ADMIN_SOCKET_NAME
+
+
+def _export_membership_receipt(root: Path, device_id: str) -> dict[str, object] | None:
+    """Obtain the real Host-owned export_eligible grant proof for one device.
+
+    Returns ``None`` when no live Host catalog owner can produce a grant, so the
+    export boundary keeps its declared catalog-unavailable refusal. A reachable
+    owner's typed denial is propagated unchanged; no proof is ever fabricated.
+    """
+    socket_path = _admin_socket_path(root)
+    if socket_path is None or not socket_path.exists():
+        return None
+    registry = load_trust_registry(root)
+    device = find_device(registry, device_id)
+    if device is None or device["status"] != "active" or load_device_record(root, device_id) is None:
+        return None
+    selection = device["initial_profile_grant"]["selection"]
+    try:
+        catalog = admin_catalog_info(socket_path)
+    except ServiceError as error:
+        if error.code == "CATALOG_UNAVAILABLE":
+            return None
+        raise
+    profile_id = selection["profile_id"] if isinstance(selection, dict) else catalog["default_profile_id"]
+    if not isinstance(profile_id, str) or not profile_id:
+        raise ServiceError(
+            "Host catalog has no committed profile for the enrolled device",
+            TRUST_EXIT_CODE,
+            code="PROFILE_NOT_FOUND",
+        )
+    profile = next((entry for entry in catalog["profiles"] if entry["profile_id"] == profile_id), None)
+    if profile is None:
+        raise ServiceError(
+            f"Host catalog has no profile {profile_id}",
+            TRUST_EXIT_CODE,
+            code="PROFILE_NOT_FOUND",
+        )
+    result = admin_membership_set(
+        socket_path,
+        "grant",
+        profile_id,
+        str(profile["owner_device_id"]),
+        device_id,
+        list(profile["members"]),
+        catalog["catalog_revision"],
+    )
+    return result["membership_receipt"]
+
+
+def _export_endpoint_receipt(root: Path) -> dict[str, object]:
+    locator = trust_endpoint(root)
+    generation = locator.get("endpoint_generation")
+    if type(generation) is not int or generation < 0:
+        raise ServiceError(
+            "endpoint has not been refreshed with a declared generation",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_REFRESH_REQUIRED",
+        )
+    return wait_endpoint_applied(root, generation=generation, timeout_seconds=ENDPOINT_REFRESH_TIMEOUT_SECONDS)
+
+
 def command_trust_export(args: argparse.Namespace) -> int:
     root = root_from(args.root)
     output_path = normalize_absolute(args.output, "bundle output")
-    result = export_bundle(root, args.device_id, output_path)
+    membership_receipt = _export_membership_receipt(root, args.device_id)
+    endpoint_receipt = _export_endpoint_receipt(root) if membership_receipt is not None else None
+    result = export_bundle(
+        root,
+        args.device_id,
+        output_path,
+        membership_receipt=membership_receipt,
+        endpoint_receipt=endpoint_receipt,
+    )
     # The one-time transfer code is a sensitive in-process value and is never
     # emitted to stdout, argv, the bundle, or the registry.
     result = {key: value for key, value in result.items() if key != "transfer_code"}
