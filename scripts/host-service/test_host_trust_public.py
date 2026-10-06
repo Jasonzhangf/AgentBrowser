@@ -138,13 +138,15 @@ def start_manager(*arguments: str) -> subprocess.Popen[str]:
 
 
 def admin_error_frame(request_id: object, code: str, message: str = "typed denial") -> bytes:
+    # The real Host serializes a flat error object, not a nested `error` field.
     return (
         json.dumps(
             {
                 "schema_version": 1,
                 "id": request_id,
                 "state": "error",
-                "error": {"code": code, "message": message},
+                "code": code,
+                "message": message,
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -285,6 +287,13 @@ def write_endpoint_receipt(runtime: Path, generation: int, fields: dict[str, obj
     path = directory / f"{generation}.json"
     host_service.write_bytes(path, (json.dumps(fields, separators=(",", ":")) + "\n").encode("utf-8"), 0o600)
     return path
+
+
+def set_endpoint_generation(root: Path, generation: int) -> None:
+    """Move the single declared generation in the existing endpoint locator."""
+    locator = host_service.trust_endpoint(root)
+    locator["endpoint_generation"] = generation
+    host_service.write_json(root / "trust" / "endpoint.json", locator)
 
 
 def assert_export_refused(
@@ -762,7 +771,15 @@ def test_admin_client_public_refusals(root: Path) -> None:
                 request_id,
                 catalog_revision=1,
                 default_profile_id="p1",
-                profiles=[{"profile_id": "p1", "owner_device_id": "local", "members": ["local", "device"]}],
+                profiles=[
+                    {
+                        "profile_id": "p1",
+                        "display_name": "Work",
+                        "default": True,
+                        "owner_device_id": "local",
+                        "members": ["local", "device"],
+                    }
+                ],
             ),
         )
         try:
@@ -779,6 +796,7 @@ def test_admin_client_public_refusals(root: Path) -> None:
             grant_path,
             lambda request_id: admin_ok_frame(
                 request_id,
+                catalog_revision=5,
                 membership_receipt={
                     "receipt_type": "export_eligible",
                     "catalog_revision": 5,
@@ -804,6 +822,7 @@ def test_admin_client_public_refusals(root: Path) -> None:
             bad_grant_path,
             lambda request_id: admin_ok_frame(
                 request_id,
+                catalog_revision=5,
                 membership_receipt={
                     "receipt_type": "export_eligible",
                     "catalog_revision": 5,
@@ -831,11 +850,26 @@ def test_wait_endpoint_applied_public(root: Path) -> None:
     base = root / "endpoint-consumer"
     base.mkdir(mode=0o700)
     service_root, runtime = build_service_fixture(base)
+    # `trust init` seeds the service-owned applied-receipt generation in the
+    # existing endpoint locator. There is no second endpoint store, and the
+    # consumer's generation comes only from here (design §3.1).
+    check(
+        host_service.trust_endpoint(service_root).get("endpoint_generation") == 0,
+        "trust init did not seed the endpoint generation",
+    )
     registry_path = service_root / "trust" / "registry.json"
     projection_path = service_root / "trust" / "authorized-clients.json"
     registry_before = sha256_file(registry_path)
     projection_before = sha256_file(projection_path)
 
+    # The wired public consumer reads that declared generation and accepts a
+    # matching real receipt; this is the path `command_trust_export` drives.
+    write_endpoint_receipt(runtime, 0, endpoint_receipt_fields(service_root, generation=0))
+    wired = host_service._export_endpoint_receipt(service_root)
+    check(wired["status"] == "refreshed", f"wired export receipt: {wired}")
+    check(wired["endpoint_generation"] == 0, f"wired export generation: {wired}")
+
+    set_endpoint_generation(service_root, 3)
     fields = endpoint_receipt_fields(service_root)
     write_endpoint_receipt(runtime, 3, fields)
     refreshed = host_service.wait_endpoint_applied(service_root, generation=3, timeout_seconds=1.0)
@@ -848,6 +882,7 @@ def test_wait_endpoint_applied_public(root: Path) -> None:
     check(refreshed["projection_sha256"] == fields["projection_sha256"], "refresh projection digest drifted")
 
     def refused(generation: int, expected: str) -> None:
+        set_endpoint_generation(service_root, generation)
         code = expect_service_error(
             lambda: host_service.wait_endpoint_applied(service_root, generation=generation, timeout_seconds=0.3)
         )
@@ -874,6 +909,16 @@ def test_wait_endpoint_applied_public(root: Path) -> None:
         runtime, 11, {**endpoint_receipt_fields(service_root, generation=11), "bound_address": "100.64.0.9:8443"}
     )
     refused(11, "ENDPOINT_BIND_MISMATCH")
+
+    # A locator that declares a different generation than the request is stale,
+    # even when the receipt bytes match the request (single-generation truth).
+    write_endpoint_receipt(runtime, 20, endpoint_receipt_fields(service_root, generation=20))
+    set_endpoint_generation(service_root, 0)
+    refused_without_sync = expect_service_error(
+        lambda: host_service.wait_endpoint_applied(service_root, generation=20, timeout_seconds=0.3)
+    )
+    check(refused_without_sync == "ENDPOINT_GENERATION_STALE", f"locator mismatch code: {refused_without_sync}")
+    set_endpoint_generation(service_root, 20)
 
     # Revision or material drift is a projection conflict, never a refresh.
     revision = int(endpoint_receipt_fields(service_root)["authorization_revision"])

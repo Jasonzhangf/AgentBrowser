@@ -431,6 +431,13 @@ def load_config(root: Path) -> tuple[dict[str, object], str]:
     # every downstream consumer reads one config identity. The legacy schema
     # never carried a root and cannot enable persistence.
     config["profile_root"] = str(profile_root) if profile_root is not None else None
+    # The Host validates membership targets and remote admission against the
+    # service-owned registry. It is derived here, never stored in config, so a
+    # later `trust init` is picked up without a config rewrite. A service with
+    # no initialized trust authority passes no flag and keeps the declared
+    # catalog/projection refusals.
+    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
+    config["authorization_registry"] = str(registry_path) if registry_path.is_file() else None
     assert_private_directory(root)
     assert_private_directory(root / "run")
     assert_private_directory(root / "logs")
@@ -460,6 +467,7 @@ def validate_state(state: dict[str, object]) -> None:
         "profile_id",
         "profile_mode",
         "profile_root",
+        "authorization_registry",
         "runtime_root",
         "socket_dir",
         "session_id",
@@ -469,7 +477,7 @@ def validate_state(state: dict[str, object]) -> None:
         "started_at_unix",
         "ready_error",
     }
-    missing = sorted(expected - set(state) - {"ready_error", "profile_root"})
+    missing = sorted(expected - set(state) - {"ready_error", "profile_root", "authorization_registry"})
     unknown = sorted(set(state) - expected)
     if missing:
         raise ServiceError(f"service state is missing keys: {', '.join(missing)}")
@@ -537,6 +545,14 @@ def validate_state(state: dict[str, object]) -> None:
         "launchd_rejected",
     }:
         raise ServiceError("service state launch_mode is invalid")
+    state_registry = state.get("authorization_registry")
+    if state_registry is not None:
+        if not isinstance(state_registry, str):
+            raise ServiceError("service state authorization_registry must be a string or null")
+        normalized_registry = Path(state_registry)
+        if not normalized_registry.is_absolute():
+            raise ServiceError("service state authorization_registry must be absolute")
+        validate_process_path(state_registry, "service state authorization registry")
     session_id = state["session_id"]
     ready_error = state.get("ready_error")
     if ready_error is not None and not isinstance(ready_error, str):
@@ -606,6 +622,7 @@ def host_command_matches(
     binary: str,
     socket_dir: str,
     profile_root: str | None,
+    authorization_registry: str | None,
 ) -> bool:
     try:
         argv = shlex.split(snapshot[1])
@@ -614,14 +631,29 @@ def host_command_matches(
     if len(argv) < 3 or argv[:3] != [binary, "--socket-dir", socket_dir]:
         return False
     remainder = argv[3:]
-    if profile_root is None:
-        return remainder in ([], ["--allow-private-network"])
-    if len(remainder) not in {2, 3} or remainder[:2] != ["--profile-root", profile_root]:
-        return False
-    return remainder[2:] in ([], ["--allow-private-network"])
+    # Only the exact declared flags may follow. Each optional flag is present
+    # at most once; the order is fixed by host_command so ownership comparison
+    # stays exact and an unexpected argument is rejected as a foreign PID.
+    if profile_root is not None:
+        if remainder[:2] != ["--profile-root", profile_root]:
+            return False
+        remainder = remainder[2:]
+    if authorization_registry is not None:
+        if remainder[:2] != ["--authorization-registry", authorization_registry]:
+            return False
+        remainder = remainder[2:]
+    if remainder == ["--allow-private-network"]:
+        return True
+    return remainder == []
 
 
-def stop_target_status(pid: int, binary: str, socket_dir: str, profile_root: str | None) -> str:
+def stop_target_status(
+    pid: int,
+    binary: str,
+    socket_dir: str,
+    profile_root: str | None,
+    authorization_registry: str | None,
+) -> str:
     snapshot = process_snapshot(pid)
     if snapshot is None:
         if pid_alive(pid):
@@ -629,13 +661,19 @@ def stop_target_status(pid: int, binary: str, socket_dir: str, profile_root: str
         return "gone"
     if snapshot[0].startswith("Z"):
         return "gone"
-    if not host_command_matches(snapshot, binary, socket_dir, profile_root):
+    if not host_command_matches(snapshot, binary, socket_dir, profile_root, authorization_registry):
         return "changed"
     return "owned"
 
 
-def stop_target_is_verified(pid: int, binary: str, socket_dir: str, profile_root: str | None) -> bool:
-    status = stop_target_status(pid, binary, socket_dir, profile_root)
+def stop_target_is_verified(
+    pid: int,
+    binary: str,
+    socket_dir: str,
+    profile_root: str | None,
+    authorization_registry: str | None,
+) -> bool:
+    status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
     if status == "gone":
         return False
     if status != "owned":
@@ -656,7 +694,14 @@ def state_identity(state: dict[str, object]) -> tuple[bool, str]:
     binary = str(state.get("host_binary", ""))
     socket_dir = str(state.get("socket_dir", ""))
     profile_root = state.get("profile_root")
-    if not host_command_matches(snapshot, binary, socket_dir, profile_root if isinstance(profile_root, str) else None):
+    authorization_registry = state.get("authorization_registry")
+    if not host_command_matches(
+        snapshot,
+        binary,
+        socket_dir,
+        profile_root if isinstance(profile_root, str) else None,
+        authorization_registry if isinstance(authorization_registry, str) else None,
+    ):
         return False, "foreign"
     return True, command
 
@@ -746,8 +791,6 @@ def socket_path_is_safe(socket_dir: Path) -> None:
             raise ServiceError(
                 f"{name} path is too long for Unix sockets: {path}; choose a shorter --runtime-root"
             )
-
-
 def acquire_start_lock(root: Path, *, blocking: bool = False) -> int:
     lock = root / "run" / ".start.lock"
     assert_private_directory(root)
@@ -789,8 +832,13 @@ def release_start_lock(fd: int) -> None:
 
 
 def make_socket_dir(runtime_root: Path) -> Path:
+    # The real Obscura Host binds an additional `session-<36-char-uuid>.sock`
+    # inside this directory, which must stay under the 104-byte macOS Unix
+    # socket bound. Keep the owned directory name short so an ordinary private
+    # runtime root still fits, and let the Host report an explicit error if a
+    # caller supplies a runtime root that cannot.
     for _ in range(5):
-        path = runtime_root / f"host-{uuid.uuid4().hex}"
+        path = runtime_root / f"host-{uuid.uuid4().hex[:8]}"
         if not path.exists():
             socket_path_is_safe(path)
             return path
@@ -816,6 +864,7 @@ def state_for(
         "profile_id": config["profile_id"],
         "profile_mode": config["profile_mode"],
         "profile_root": config["profile_root"],
+        "authorization_registry": config.get("authorization_registry"),
         "runtime_root": config["runtime_root"],
         "socket_dir": str(socket_dir),
         "session_id": session_id,
@@ -851,8 +900,14 @@ def stop_child_process(process: subprocess.Popen[object]) -> None:
         raise ServiceError(f"Host child did not stop after owned termination: {process.pid}") from error
 
 
-def stop_pid(pid: int, binary: str, socket_dir: str, profile_root: str | None) -> None:
-    if not stop_target_is_verified(pid, binary, socket_dir, profile_root):
+def stop_pid(
+    pid: int,
+    binary: str,
+    socket_dir: str,
+    profile_root: str | None,
+    authorization_registry: str | None,
+) -> None:
+    if not stop_target_is_verified(pid, binary, socket_dir, profile_root, authorization_registry):
         return
     try:
         os.kill(pid, signal.SIGTERM)
@@ -860,11 +915,11 @@ def stop_pid(pid: int, binary: str, socket_dir: str, profile_root: str | None) -
         return
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        status = stop_target_status(pid, binary, socket_dir, profile_root)
+        status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
         if status == "gone":
             return
         time.sleep(0.05)
-    term_status = stop_target_status(pid, binary, socket_dir, profile_root)
+    term_status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
     if term_status == "gone":
         return
     if term_status != "owned":
@@ -875,13 +930,13 @@ def stop_pid(pid: int, binary: str, socket_dir: str, profile_root: str | None) -
         return
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        status = stop_target_status(pid, binary, socket_dir, profile_root)
+        status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
         if status == "gone":
             return
         if status != "owned":
             raise ServiceError(f"Host PID identity changed; refusing to signal: {pid}")
         time.sleep(0.05)
-    final_status = stop_target_status(pid, binary, socket_dir, profile_root)
+    final_status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
     if final_status == "owned":
         raise ServiceError(f"Host did not stop after explicit PID termination: {pid}")
     if final_status != "gone":
@@ -911,6 +966,9 @@ def host_command(config: dict[str, object], socket_dir: Path) -> list[str]:
     profile_root = config.get("profile_root")
     if profile_root is not None:
         command.extend(["--profile-root", str(profile_root)])
+    authorization_registry = config.get("authorization_registry")
+    if authorization_registry is not None:
+        command.extend(["--authorization-registry", str(authorization_registry)])
     if config["allow_private_network"]:
         command.append("--allow-private-network")
     return command
@@ -1344,6 +1402,7 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
             str(state.get("host_binary", "")),
             str(state.get("socket_dir", "")),
             str(state["profile_root"]) if state.get("profile_root") is not None else None,
+            str(state["authorization_registry"]) if state.get("authorization_registry") is not None else None,
         )
     cleanup_runtime(state)
     remove_state(root)
@@ -1937,6 +1996,11 @@ def trust_init_locked(args: argparse.Namespace, root: Path) -> int:
             "endpoint_host": san[1],
             "endpoint_host_kind": san[0],
             "endpoint_port": args.endpoint_port,
+            # The applied-receipt generation is a service-owned monotonic stamp
+            # that lives only in this locator. It starts at 0 before any
+            # endpoint bind; the endpoint refresh sequence advances it and the
+            # strict consumer reads it from here, never from a second store.
+            "endpoint_generation": 0,
         },
     )
     registry: dict[str, object] = {
@@ -2073,11 +2137,19 @@ def _admin_validate_members(value: object, label: str) -> list[str]:
 
 
 def _admin_validate_profile(value: object, label: str) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != {"profile_id", "owner_device_id", "members"}:
+    # The real Host serializes the catalog profile receipt as
+    # `profile_id`, `display_name`, `default`, `owner_device_id`, `members`.
+    expected = {"profile_id", "display_name", "default", "owner_device_id", "members"}
+    if not isinstance(value, dict) or set(value) != expected:
         raise _admin_error(f"host-admin {label} profile receipt is malformed")
+    owner = value["owner_device_id"]
+    if owner is not None:
+        owner = _admin_require_text(owner, f"{label} owner_device_id")
     return {
         "profile_id": _admin_require_text(value["profile_id"], f"{label} profile_id"),
-        "owner_device_id": _admin_require_text(value["owner_device_id"], f"{label} owner_device_id"),
+        "display_name": _admin_require_text(value["display_name"], f"{label} display_name"),
+        "default": _admin_require_bool(value["default"], f"{label} default"),
+        "owner_device_id": owner,
         "members": _admin_validate_members(value["members"], label),
     }
 
@@ -2153,8 +2225,11 @@ def _admin_call(
     socket_path: Path,
     op: str,
     fields: dict[str, object],
-    ok_keys: frozenset[str],
+    required_keys: frozenset[str],
+    allowed_keys: frozenset[str] | None = None,
 ) -> dict[str, object]:
+    if allowed_keys is None:
+        allowed_keys = required_keys
     request_id = secrets.randbits(64)
     request: dict[str, object] = {"schema_version": ADMIN_SCHEMA_VERSION, "id": request_id, "op": op}
     request.update(fields)
@@ -2174,23 +2249,21 @@ def _admin_call(
         raise _admin_error("host-admin response id does not match the request")
     state = document.get("state")
     if state == "error":
-        if set(document) != {"schema_version", "id", "state", "error"}:
+        # The real Host serializes a flat `{schema_version,id,state,code,
+        # message}` error object; the code is the single typed refusal.
+        if set(document) != {"schema_version", "id", "state", "code", "message"}:
             raise _admin_error("host-admin error response has unsupported fields")
-        error = document.get("error")
-        if (
-            not isinstance(error, dict)
-            or set(error) != {"code", "message"}
-            or not isinstance(error["code"], str)
-            or not error["code"]
-            or not isinstance(error["message"], str)
-        ):
+        code = document.get("code")
+        message = document.get("message")
+        if not isinstance(code, str) or not code or not isinstance(message, str):
             raise _admin_error("host-admin error response is malformed")
-        raise ServiceError(error["message"], TRUST_EXIT_CODE, code=error["code"])
+        raise ServiceError(message, TRUST_EXIT_CODE, code=code)
     if state != "ok":
         raise _admin_error("host-admin response state must be ok or error")
-    if set(document) != {"schema_version", "id", "state"} | ok_keys:
+    body = set(document) - {"schema_version", "id", "state"}
+    if not required_keys <= body or not body <= allowed_keys:
         raise _admin_error("host-admin ok response has unsupported or missing fields")
-    return {key: document[key] for key in ok_keys}
+    return {key: document[key] for key in body}
 
 
 def admin_catalog_info(socket_path: Path) -> dict[str, object]:
@@ -2215,10 +2288,19 @@ def admin_catalog_info(socket_path: Path) -> dict[str, object]:
 
 
 def _admin_catalog_mutation(socket_path: Path, op: str, fields: dict[str, object]) -> dict[str, object]:
-    result = _admin_call(socket_path, op, fields, frozenset({"catalog_revision", "profile_receipt"}))
+    # `admin.catalog.create` returns `catalog_revision` + `profile`;
+    # `admin.catalog.select` additionally returns `default_profile_id`. Both
+    # real shapes are accepted; a missing `profile` stays malformed.
+    result = _admin_call(
+        socket_path,
+        op,
+        fields,
+        frozenset({"catalog_revision", "profile"}),
+        frozenset({"catalog_revision", "profile", "default_profile_id"}),
+    )
     return {
         "catalog_revision": _admin_require_revision(result["catalog_revision"], "catalog_revision"),
-        "profile_receipt": _admin_validate_profile(result["profile_receipt"], "catalog"),
+        "profile_receipt": _admin_validate_profile(result["profile"], "catalog"),
     }
 
 
@@ -2278,8 +2360,20 @@ def admin_membership_set(
         fields["expected_catalog_revision"] = _admin_require_revision(
             expected_catalog_revision, "expected_catalog_revision"
         )
-    result = _admin_call(socket_path, "admin.membership.set", fields, frozenset({"membership_receipt"}))
-    return {"membership_receipt": _admin_validate_membership_receipt(result["membership_receipt"])}
+    # The real Host returns the committed `catalog_revision` next to the
+    # `membership_receipt`; both must agree so the receipt cannot drift from
+    # the committed catalog state it claims to prove.
+    result = _admin_call(
+        socket_path,
+        "admin.membership.set",
+        fields,
+        frozenset({"catalog_revision", "membership_receipt"}),
+    )
+    receipt = _admin_validate_membership_receipt(result["membership_receipt"])
+    committed_revision = _admin_require_revision(result["catalog_revision"], "membership catalog_revision")
+    if receipt["catalog_revision"] != committed_revision:
+        raise _admin_error("host-admin membership receipt revision does not match the committed catalog")
+    return {"membership_receipt": receipt}
 
 
 def _endpoint_applied_path(root: Path, generation: int) -> Path:

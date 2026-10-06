@@ -9,17 +9,33 @@ the Obscura engine, the direct endpoint, or the Mac UI.
 The service starts the real Obscura Host binary with one fresh socket directory:
 
 ```text
-obscura-host --socket-dir <fresh-private-directory> [--profile-root <canonical-absolute-directory>]
+obscura-host --socket-dir <fresh-private-directory>
+              [--profile-root <canonical-absolute-directory>]
+              [--authorization-registry <canonical-absolute-registry.json>]
+              [--allow-private-network]
 ```
 
 The current Host CLI also accepts the explicit local-test flag
 `--allow-private-network`. The service passes it only when enabled in the typed
 config. The explicit Host11 profile root is passed only when the service was
 installed with `--profile-root`; the service never substitutes a default shared
-root or modifies an existing profile directory. It does not start `obscura
-serve`, create a second Session owner, or replace `obscura-endpoint`. The
-endpoint is a separate transport process that connects to an already-running
-Host.
+root or modifies an existing profile directory. When the service root already
+holds a trust registry (`<root>/trust/registry.json`), the service passes it as
+`--authorization-registry` so the Host validates catalog membership targets and
+remote admission against the service-owned registry. The path is derived at
+launch from the existing trust state, never stored as a second copy in config,
+so a later `trust init` is picked up without a config rewrite; a root with no
+initialized trust authority passes no flag and keeps the declared catalog
+refusals. It does not start `obscura serve`, create a second Session owner, or
+replace `obscura-endpoint`. The endpoint is a separate transport process that
+connects to an already-running Host.
+
+The socket directory name is short (`host-<8 hex>`). The real Host binds an
+additional `session-<36-char-uuid>.sock` inside that directory, and the
+combined path must stay under the 104-byte macOS Unix-socket bound. The service
+keeps its owned directory name short so an ordinary private runtime root still
+fits, and it lets the Host report an explicit error when a caller supplies a
+runtime root that cannot.
 
 Reinstalling without `--profile-root` reuses the canonical root already stored
 in a v2 config. It never silently drops that root or modifies the existing
@@ -317,6 +333,19 @@ responses with `ADMIN_FRAME_MALFORMED`, and propagates a Host denial with its
 exact typed code. Transport errors, clean EOF, and partial EOF remain
 `CATALOG_UNAVAILABLE` or `ADMIN_FRAME_MALFORMED`; they are never catalog success.
 
+The client matches the real Host wire. `admin.catalog.create` and
+`admin.catalog.select` answer with `catalog_revision` plus a `profile` object
+(`profile_id`, `display_name`, `default`, `owner_device_id`, `members`);
+`admin.catalog.select` may additionally carry `default_profile_id`.
+`admin.membership.set` answers with the committed top-level `catalog_revision`
+next to `membership_receipt`, and the client refuses a receipt whose revision
+does not match that committed value. A Host denial is a flat
+`{schema_version,id,state:"error",code,message}` object; the client raises the
+exact `code` and never wraps a denial as success. Client cancellation after an
+accepted mutating request does not undo the committed write: the response may
+be undelivered, but the next `admin.catalog.info` reports the committed
+revision.
+
 `wait_endpoint_applied(root, *, generation, timeout_seconds)` consumes exactly
 one declared generation file
 (`<runtime-root>/endpoint-applied/<generation>.json`). The v1 receipt has
@@ -327,6 +356,9 @@ live PID, bound address, committed registry revision, and both registered
 registry/projection digests before returning the service-only
 `status: "refreshed"` projection. Missing, partial, stale, corrupt, wrong-PID,
 bind, or material-mismatch files remain explicit `ENDPOINT_*` failures.
+`trust init` seeds the single service-owned `endpoint_generation: 0` stamp in
+the existing `trust/endpoint.json` locator; the consumer reads the requested
+generation only from that declared locator, never from a second store.
 
 `command_trust_export` now obtains the real membership proof from the Host admin
 owner and the verified endpoint result from the declared generation file before
@@ -381,6 +413,28 @@ OBSCURA_HOST_BINARY="$OBSCURA_TARGET/release/obscura-host" \
 OBSCURA_HOST_PROTOCOL_VERSION=11 \
   scripts/host-service/verify-host-service
 ```
+
+The real admin and export E2E drives the same real Host and the real
+`obscura-endpoint` beside it through the public `host-service` CLI and the
+public module functions, with private `/tmp` roots and only its own
+explicit-PID children:
+
+```sh
+OBSCURA_HOST_BINARY="$OBSCURA_TARGET/release/obscura-host" \
+OBSCURA_HOST_PROTOCOL_VERSION=11 \
+  python3 docs/runs/m1-service-real-admin-e2e-r5-20261005/real_e2e.py
+```
+
+It records the real `admin.catalog.info/create/select/membership.set` successes,
+the exact typed refusals (`ADMIN_FRAME_MALFORMED`, `CATALOG_REVISION_CONFLICT`,
+`PROFILE_NOT_FOUND`, `MEMBERSHIP_REQUIRED`, `DEVICE_NOT_REGISTERED`,
+`DEVICE_REVOKED`, `DEVICE_GRANT_STALE`), the real v1 endpoint applied receipt
+(bound to the exact generation and PID, written atomically after bind), the real
+IPv6 export bundle with an export-eligible receipt and the refused guessed,
+removed, target-omitting, and endpoint-file receipts, and the wrong-identity,
+expired, revoked, and cancel paths. A mock can never promote one of these real
+cases; the harness exits non-zero on any failed case and prints
+`REAL_E2E_PASS` only when all pass.
 
 The test uses the actual binary and checks: missing executable, invalid profile
 config, missing/invalid protocol version, configured ready/session identity,
