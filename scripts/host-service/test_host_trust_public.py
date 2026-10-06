@@ -967,6 +967,92 @@ def der_to_pem(der_path: Path, pem_path: Path) -> None:
     openssl("x509", "-inform", "DER", "-in", str(der_path), "-out", str(pem_path))
 
 
+def test_endpoint_bind_basis_public(root: Path) -> None:
+    """The public DNS locator maps to one numeric bind basis for start+verify."""
+    dns_root = root / "bind-basis"
+    dns_root.mkdir(mode=0o700)
+    manager_json(
+        "trust", "init", "--root", str(dns_root),
+        "--endpoint-host", "localhost", "--endpoint-port", "8443",
+    )
+    locator = host_service.trust_endpoint(dns_root)
+    check(locator["endpoint_host"] == "localhost", "DNS locator host drifted")
+    check(locator["endpoint_host_kind"] == "dns", "DNS locator kind drifted")
+    numeric_host, numeric_port = host_service.endpoint_bind_address(locator)
+    check(ipaddress.ip_address(numeric_host), "bind basis is not numeric")
+    check(numeric_port == 8443, f"bind basis port drifted: {numeric_port}")
+    listen = host_service.endpoint_listen_address(locator)
+    check("localhost" not in listen, f"raw DNS leaked into --listen: {listen}")
+    # The applied-receipt verifier compares against the same numeric basis.
+    check(
+        host_service._bound_address_matches(f"[{numeric_host}]:8443", locator)
+        if ":" in numeric_host
+        else host_service._bound_address_matches(f"{numeric_host}:8443", locator),
+        "bound-address verifier did not use the shared bind basis",
+    )
+    check(
+        not host_service._bound_address_matches("localhost:8443", locator),
+        "bound-address verifier accepted the public DNS spelling as a bind",
+    )
+    # The public WSS URL and SAN semantics keep the DNS locator.
+    url = host_service.endpoint_ws_url(
+        str(locator["endpoint_host"]), str(locator["endpoint_host_kind"]), int(locator["endpoint_port"])
+    )
+    check(url == "wss://localhost:8443/", f"DNS URL drifted: {url}")
+
+
+def test_refresh_missing_binary_typed_failure(root: Path) -> None:
+    """A refresh that fails after a side effect returns typed partial facts.
+
+    A private Host copy with no sibling ``obscura-endpoint`` binary drives the
+    real public ``refresh_endpoint`` entry: the generation advances, the old
+    receipt is cleared, and the missing binary must surface as
+    ``ENDPOINT_NOT_REFRESHED`` with ``authorization_state: not_refreshed``,
+    ``last_step: start_endpoint`` and the advanced generation.
+    """
+    base = root / "missing-binary"
+    base.mkdir(mode=0o700)
+    service_root, _runtime = build_service_fixture(base, endpoint_host="127.0.0.1")
+    private_bin = base / "bin"
+    private_bin.mkdir(mode=0o700)
+    private_host = (private_bin / "obscura-host").resolve()
+    shutil.copyfile(Path(sys.executable).resolve(), private_host)
+    private_host.chmod(0o755)
+    config = host_service.load_json(service_root / "config.json", "service config")
+    config["host_binary"] = str(private_host)
+    config["binary_sha256"] = sha256_file(private_host)
+    # Keep the runtime root on a short path so the real Host session socket
+    # stays inside the Unix-socket bound.
+    short_runtime = Path(tempfile.mkdtemp(prefix="r2mb-", dir="/private/tmp"))
+    short_runtime.chmod(0o700)
+    config["runtime_root"] = str(short_runtime)
+    host_service.write_json(service_root / "config.json", config)
+    # A running Host socket directory is required to pass the precondition.
+    runtime_root = host_service.runtime_root_from(str(config["runtime_root"]))
+    socket_dir = host_service.make_socket_dir(runtime_root)
+    socket_dir.mkdir(mode=0o700)
+    started_at = int(time.time())
+    state = host_service.state_for(
+        config, "0" * 64, os.getpid(), socket_dir, "subprocess", "fixture", None
+    )
+    state["started_at_unix"] = started_at
+    host_service.write_json(service_root / "run" / "state.json", state)
+    try:
+        host_service.refresh_endpoint(service_root, timeout_seconds=1.0)
+    except host_service.ServiceError as error:
+        check(error.code == "ENDPOINT_NOT_REFRESHED", f"missing-binary code was {error.code}")
+        facts = error.facts or {}
+        check(facts.get("authorization_state") == "not_refreshed", f"missing-binary facts: {facts}")
+        check(facts.get("last_step") == "start_endpoint", f"missing-binary step: {facts}")
+        check(facts.get("endpoint_generation") == 1, f"missing-binary generation: {facts}")
+    else:
+        raise AssertionError("refresh with no sibling endpoint binary must refuse")
+    check(
+        host_service.trust_endpoint(service_root)["endpoint_generation"] == 1,
+        "missing-binary refresh did not record the advanced generation",
+    )
+
+
 def test_refresh_sequence_public(root: Path) -> None:
     """The declared service entry owns the sequence; failures carry typed facts.
 
@@ -1292,6 +1378,10 @@ def run(root: Path) -> None:
     # 15. The declared service entry owns the nine-step refresh sequence and
     #     exposes typed not-refreshed partial facts on failure.
     test_refresh_sequence_public(root)
+    # 16. r2 review repairs: the DNS locator resolves to one shared numeric
+    #     bind basis, and a post-side-effect failure stays typed.
+    test_endpoint_bind_basis_public(root)
+    test_refresh_missing_binary_typed_failure(root)
 
     # No private material may appear in the emitted receipts.
     for receipt in (initialized, device_a, device_b, revoked, status, partial):

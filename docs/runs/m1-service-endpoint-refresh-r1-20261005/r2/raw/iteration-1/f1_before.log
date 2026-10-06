@@ -1,0 +1,6 @@
+{"base": "/private/tmp/m1r2-f1-before", "finding": "f1", "expect": "before"}
+{"case": "f1.endpoint_refreshed", "ok": true, "expected": "refreshed", "actual": "refreshed"}
+{"case": "f1.export_after_remove", "ok": true, "expected": "old caller re-grants: export succeeds and catalog members/revision change", "actual": {"rc": 0, "before": {"revision": 3, "members": ["local"], "owner": "local"}, "after": {"revision": 4, "members": ["c472dd72-4b0f-4d1d-8817-cca474c4bb83", "local"], "owner": "local"}, "bundle": true}}
+{"case": "f1.target_omitting_grant_denied", "ok": true, "expected": {"code": "MEMBERSHIP_REQUIRED", "catalog_unchanged": true}, "actual": {"code": "MEMBERSHIP_REQUIRED", "before": {"revision": 5, "members": ["local"], "owner": "local"}, "after": {"revision": 5, "members": ["local"], "owner": "local"}}}
+{"case": "f1.export_after_target_omitting_grant", "ok": true, "expected": "old caller re-grants: export succeeds and catalog members/revision change", "actual": {"rc": 0, "before": {"revision": 5, "members": ["local"], "owner": "local"}, "after": {"revision": 6, "members": ["c472dd72-4b0f-4d1d-8817-cca474c4bb83", "local"], "owner": "local"}, "bundle": true}}
+FINDINGS_HARNESS_PASS

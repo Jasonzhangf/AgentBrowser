@@ -1,0 +1,58 @@
+{
+  "node": "m1-service-endpoint-refresh-r2-20261005",
+  "role": "gcm-author",
+  "status": "AUTHOR_COMPLETE",
+  "review_closed": "m1-service-endpoint-refresh-r1-20261005-r1",
+  "base_candidate": "8cd4315459cd47b12bfdb091a94543f5c3e35dbb",
+  "source_tree": "cb8606e65b0502911397bb917f0f91ab7eab110a",
+  "branch": "codex/m1-service-endpoint-refresh-r1-20261005",
+  "findings_closed": [
+    {"id": "F1", "title": "export re-grants a removed membership", "result": "closed"},
+    {"id": "F2", "title": "DNS locator projected into a numeric listen flag", "result": "closed"},
+    {"id": "F3", "title": "endpoint start boundary not closed", "result": "closed"},
+    {"id": "F4", "title": "failed step does not always expose typed partial facts", "result": "closed"},
+    {"id": "F5", "title": "cancel case performs no cancel", "result": "closed"}
+  ],
+  "delta_sha256": {
+    "scripts/host-service/host_service.py": "c678ab15f929e5c73c29123b34f92edac13592341a00412ac3a493348f8ce342",
+    "scripts/host-service/test_host_trust_public.py": "05f0c2d076c830482218ec33f8f9da218b5e2ba6daf78862b4c218f592539239",
+    "docs/host-service.md": "b4b626af3d998ea61ba6fa38ccd625862b120aaf5e6bd9b1df9e97b3938d18a3",
+    "docs/runs/m1-service-endpoint-refresh-r1-20261005/real_refresh_e2e.py": "88e8b52e81e47b2f60062a5574cd0f43f47cbc97c4ef74304320057f3f9a8a8c",
+    "docs/runs/m1-service-endpoint-refresh-r1-20261005/r2/findings_harness.py": "1d37e8699c335893f6d223f8bd3a3da188778ba2bee7ccc8906e0ab9fa896d95",
+    "docs/runs/m1-service-endpoint-refresh-r1-20261005/r2/run.sh": "d89fa4879664072ef2bd7332d741b705e3576a78d565fde443f86e27693949e0"
+  },
+  "binaries": {
+    "obscura-host": "6335a174287c917f7947f080a6087f7dcb8f613de361baf11db325cb59b23dab",
+    "obscura-endpoint": "4c281713e6dae8918cbdafd255f527b2e3c02bc01bd7c42b232f0c0eee0f9318",
+    "obscura-media": "2ee0166fa4b45b634bce9dc6d51ea132da5b3e7d902e00fd3980e4cfeea9af80"
+  },
+  "protocol_version": 11,
+  "commands": {
+    "public_consumer": 0,
+    "dev_fixture_matrix": 0,
+    "real_subprocess_matrix": 0,
+    "npm_verify_local": 0,
+    "git_diff_check": 0,
+    "real_refresh_e2e": 0,
+    "f1_before": 0, "f1_after": 0,
+    "f2_before": 0, "f2_after": 0,
+    "f3_before": 0, "f3_after": 0,
+    "f4_before": 0, "f4_after": 0,
+    "f5_before": 0, "f5_after": 0,
+    "git_diff_check_badpath": 129
+  },
+  "not_executed": [
+    "installation",
+    "daemon restart",
+    "OTA",
+    "merge",
+    "push",
+    "remote receipt",
+    "independent architecture review",
+    "downstream service real admin E2E fix node",
+    "Mac",
+    "Android",
+    "first-user delivery"
+  ],
+  "controller_next_action": "fetch latest origin/main, run independent architecture review on this candidate, then on PASS commit/merge/push and verify remote receipt"
+}

@@ -1,0 +1,33 @@
+{
+  "binary": "/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-endpoint",
+  "binary_sha256": "4c281713e6dae8918cbdafd255f527b2e3c02bc01bd7c42b232f0c0eee0f9318",
+  "command": [
+    "/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-endpoint",
+    "--listen",
+    "[::1]:57846",
+    "--host-dir",
+    "/private/tmp/m1refresh-cqq83Q/root/rt/host-8a95c348",
+    "--socket-dir",
+    "/private/tmp/m1refresh-cqq83Q/root/rt/endpoint-5c3fb19a",
+    "--server-cert",
+    "/private/tmp/m1refresh-cqq83Q/root/trust/server.der",
+    "--server-key",
+    "/private/tmp/m1refresh-cqq83Q/root/trust/server-key.der",
+    "--client-ca",
+    "/private/tmp/m1refresh-cqq83Q/root/trust/ca.der",
+    "--authorized-clients",
+    "/private/tmp/m1refresh-cqq83Q/root/trust/authorized-clients.json",
+    "--media-bin",
+    "/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-media",
+    "--ffmpeg",
+    "ffmpeg",
+    "--applied-receipt-path",
+    "/private/tmp/m1refresh-cqq83Q/root/rt/endpoint-applied/1.json",
+    "--endpoint-generation",
+    "1"
+  ],
+  "pid": 24549,
+  "process_version": 1,
+  "runtime_root": "/private/tmp/m1refresh-cqq83Q/root/rt",
+  "socket_dir": "/private/tmp/m1refresh-cqq83Q/root/rt/endpoint-5c3fb19a"
+}

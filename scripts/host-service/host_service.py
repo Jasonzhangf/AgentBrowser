@@ -2428,18 +2428,103 @@ def _parse_bound_address(value: str) -> tuple[str, int] | None:
     return host, int(tail)
 
 
+def endpoint_bind_address(locator: dict[str, object]) -> tuple[str, int]:
+    """Resolve the public locator into the numeric address the endpoint binds.
+
+    The locator keeps the accepted public host (DNS name or IP literal) because
+    that is what the certificate SAN and the exported WSS URL must carry. The
+    endpoint producer only accepts a numeric ``SocketAddr`` on ``--listen``, so
+    the service resolves a DNS locator to the same numeric binding basis that
+    the applied-receipt verifier compares against. Both the start path and the
+    verifier call this one function; no second bind truth is stored.
+    """
+    host = locator.get("endpoint_host")
+    host_kind = locator.get("endpoint_host_kind")
+    port = locator.get("endpoint_port")
+    if not isinstance(host, str) or not host or host_kind not in ("dns", "ip"):
+        raise ServiceError(
+            "endpoint locator has no declared host",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        )
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ServiceError(
+            "endpoint locator has no usable port",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        )
+    if host_kind == "ip":
+        try:
+            return str(ipaddress.ip_address(host)), port
+        except ValueError as error:
+            raise ServiceError(
+                f"endpoint locator host is not a valid IP address: {host}",
+                TRUST_EXIT_CODE,
+                code="ENDPOINT_BIND_MISMATCH",
+            ) from error
+    try:
+        infos = socket.getaddrinfo(
+            host,
+            port,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except (socket.gaierror, OSError, ValueError, OverflowError) as error:
+        raise ServiceError(
+            f"endpoint locator host does not resolve to a numeric bind address: {host}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        ) from error
+    if not infos:
+        raise ServiceError(
+            f"endpoint locator host has no numeric bind address: {host}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        )
+    return str(infos[0][4][0]), port
+
+
+def validate_endpoint_bind_address(locator: dict[str, object]) -> tuple[str, int]:
+    """Confirm the resolved numeric address is locally assignable.
+
+    This runs before the refresh advances the generation or stops the old
+    endpoint. It binds an ephemeral port on the exact address the endpoint will
+    use, so a locator that cannot become a local listener is refused without a
+    side effect. The real endpoint port is not probed because the old endpoint
+    may still own it at this point.
+    """
+    host, port = endpoint_bind_address(locator)
+    address = ipaddress.ip_address(host)
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    probe = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, 0))
+    except OSError as error:
+        raise ServiceError(
+            f"endpoint bind address is not locally assignable: {host}: {error}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        ) from error
+    finally:
+        probe.close()
+    return host, port
+
+
 def _bound_address_matches(receipt_address: str, locator: dict[str, object]) -> bool:
     parsed = _parse_bound_address(receipt_address)
     if parsed is None:
         return False
     host, port = parsed
-    if port != int(locator["endpoint_port"]):
-        return False
-    expected_host = str(locator["endpoint_host"])
     try:
-        return ipaddress.ip_address(host) == ipaddress.ip_address(expected_host)
+        bind_host, bind_port = endpoint_bind_address(locator)
+    except ServiceError:
+        return False
+    if port != bind_port:
+        return False
+    try:
+        return ipaddress.ip_address(host) == ipaddress.ip_address(bind_host)
     except ValueError:
-        return host == expected_host
+        return False
 
 
 def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[str, object]:
@@ -2631,10 +2716,11 @@ def endpoint_ffmpeg_from(config: dict[str, object]) -> str:
 
 
 def endpoint_listen_address(locator: dict[str, object]) -> str:
-    host = str(locator["endpoint_host"])
-    host_kind = str(locator["endpoint_host_kind"])
-    port = int(locator["endpoint_port"])
-    if host_kind == "ip" and crypto_modules().ipaddress.ip_address(host).version == 6:
+    # The producer's --listen is a numeric SocketAddr, never the public DNS
+    # locator. endpoint_bind_address is the single binding basis shared with
+    # the applied-receipt verifier.
+    host, port = endpoint_bind_address(locator)
+    if ipaddress.ip_address(host).version == 6:
         host = f"[{host}]"
     return f"{host}:{port}"
 
@@ -2862,6 +2948,69 @@ def _endpoint_partial_facts(
     }
 
 
+def _endpoint_refresh_failure(
+    error: BaseException,
+    *,
+    step: str,
+    generation: int | None,
+    endpoint_pid: int | None = None,
+    cause: str | None = None,
+    code: str | None = None,
+    message: str | None = None,
+) -> ServiceError:
+    """Wrap one refresh step's failure with typed partial facts.
+
+    An existing typed code and the original exception chain are preserved. A
+    failure that has no declared code becomes ``ENDPOINT_NOT_REFRESHED``.
+    """
+    original_code = error.code if isinstance(error, ServiceError) else None
+    resolved_code = code or original_code or "ENDPOINT_NOT_REFRESHED"
+    resolved_cause = cause or original_code or step
+    return ServiceError(
+        message or str(error),
+        TRUST_EXIT_CODE,
+        code=resolved_code,
+        facts=_endpoint_partial_facts(
+            step=step,
+            code=resolved_code,
+            cause=resolved_cause,
+            generation=generation,
+            endpoint_pid=endpoint_pid,
+        ),
+    )
+
+
+def _reclaim_failed_endpoint_child(
+    process: subprocess.Popen[object] | None,
+    socket_dir: Path | None,
+    runtime_root: Path,
+    root: Path,
+) -> str | None:
+    """Stop a just-started endpoint and remove only its own runtime.
+
+    Used only in the interval between a successful ``Popen`` and a persisted
+    process record. After the record exists the declared lifecycle owns the
+    child. Cleanup problems are returned so the primary failure can report
+    them instead of silently claiming a clean reclaim.
+    """
+    problems: list[str] = []
+    if process is not None:
+        try:
+            stop_child_process(process)
+        except BaseException as error:  # noqa: BLE001 - report, never mask the primary failure
+            problems.append(f"could not stop endpoint pid {process.pid}: {error}")
+    if socket_dir is not None:
+        try:
+            remove_owned_endpoint_runtime(socket_dir, runtime_root)
+        except BaseException as error:  # noqa: BLE001 - report, never mask the primary failure
+            problems.append(f"could not remove endpoint runtime {socket_dir}: {error}")
+    try:
+        remove_endpoint_process_record(root)
+    except OSError as error:
+        problems.append(f"could not remove endpoint process record: {error}")
+    return "; ".join(problems) if problems else None
+
+
 def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]:
     """Own the declared nine-step endpoint refresh sequence.
 
@@ -2880,8 +3029,11 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
             TRUST_EXIT_CODE,
             code="ENDPOINT_NOT_REFRESHED",
         )
-    config, _ = load_config(root)
-    runtime_root = runtime_root_from(str(config["runtime_root"]))
+    try:
+        config, _ = load_config(root)
+        runtime_root = runtime_root_from(str(config["runtime_root"]))
+    except ServiceError as error:
+        raise _endpoint_refresh_failure(error, step="load_config", generation=None) from error
     host_socket_dir = _running_socket_dir(root)
     if host_socket_dir is None or not host_socket_dir.is_dir():
         raise ServiceError(
@@ -2893,21 +3045,31 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
             ),
         )
     # Step 1: read the committed registry and publish the matching projection.
-    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
-    if not registry_path.is_file():
-        raise ServiceError(
-            "trust authority is not initialized",
-            TRUST_EXIT_CODE,
-            code="TRUST_NOT_INITIALIZED",
-        )
-    registry_bytes = registry_path.read_bytes()
-    registry = parse_trust_registry(registry_bytes)
-    expected_projection, _ = refresh_projection(root, registry, registry_bytes)
-    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-    if not projection_path.is_file() or projection_path.read_bytes() != expected_projection:
-        write_projection(root, expected_projection)
+    try:
+        registry_path = trust_path(root, TRUST_REGISTRY_NAME)
+        if not registry_path.is_file():
+            raise ServiceError(
+                "trust authority is not initialized",
+                TRUST_EXIT_CODE,
+                code="TRUST_NOT_INITIALIZED",
+            )
+        registry_bytes = registry_path.read_bytes()
+        registry = parse_trust_registry(registry_bytes)
+        expected_projection, _ = refresh_projection(root, registry, registry_bytes)
+        projection_path = trust_path(root, TRUST_PROJECTION_NAME)
+        if not projection_path.is_file() or projection_path.read_bytes() != expected_projection:
+            write_projection(root, expected_projection)
+    except (ServiceError, OSError) as error:
+        raise _endpoint_refresh_failure(error, step="publish_projection", generation=None) from error
+    # Preflight: resolve the public locator into the numeric local bind and
+    # confirm it is assignable before the generation changes or the old
+    # endpoint stops. A rejected bind must not advance the generation.
+    try:
+        locator = trust_endpoint(root)
+        validate_endpoint_bind_address(locator)
+    except ServiceError as error:
+        raise _endpoint_refresh_failure(error, step="resolve_bind_address", generation=None) from error
     # Step 2: allocate the next service-owned generation in the locator.
-    locator = trust_endpoint(root)
     current = locator.get("endpoint_generation")
     if type(current) is not int or current < 0:
         raise ServiceError(
@@ -2921,42 +3083,59 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
     previous_generation = current
     generation = current + 1
     locator["endpoint_generation"] = generation
-    write_json(trust_path(root, TRUST_ENDPOINT_NAME), locator)
-    # Step 3: stop the old endpoint through the declared lifecycle.
-    record = load_endpoint_process_record(root)
-    if record is not None:
-        try:
-            stop_endpoint_process(root, record)
-        except ServiceError as error:
-            raise ServiceError(
-                str(error),
-                TRUST_EXIT_CODE,
-                code="ENDPOINT_NOT_REFRESHED",
-                facts=_endpoint_partial_facts(
-                    step="stop_old_endpoint",
-                    code="ENDPOINT_NOT_REFRESHED",
-                    cause=error.code or "endpoint_stop_failed",
-                    generation=generation,
-                ),
-            ) from error
-        remove_owned_endpoint_runtime(Path(str(record["socket_dir"])), runtime_root)
-        remove_endpoint_process_record(root)
-    # Step 4: remove the superseded generation receipt file.
-    applied_dir = runtime_root / ENDPOINT_APPLIED_DIR_NAME
-    if not applied_dir.exists():
-        applied_dir.mkdir(mode=0o700)
-    old_receipt = _endpoint_applied_path(root, previous_generation)
     try:
-        old_receipt.unlink()
-    except FileNotFoundError:
-        pass
-    receipt_path = _endpoint_applied_path(root, generation)
-    receipt_path.unlink(missing_ok=True)
-    # Step 5: start the endpoint with the new generation receipt path.
-    socket_dir = make_endpoint_socket_dir(runtime_root)
-    command = endpoint_command(config, locator, host_socket_dir, socket_dir, receipt_path, generation, root)
-    log_handle = (root / "logs" / "endpoint.log").open("ab")
-    process: subprocess.Popen[object] | None = None
+        write_json(trust_path(root, TRUST_ENDPOINT_NAME), locator)
+    except (ServiceError, OSError) as error:
+        raise _endpoint_refresh_failure(error, step="allocate_generation", generation=generation) from error
+    # Step 3: stop the old endpoint through the declared lifecycle.
+    old_pid: int | None = None
+    try:
+        record = load_endpoint_process_record(root)
+        if record is not None:
+            old_pid = int(record["pid"])
+            stop_endpoint_process(root, record)
+            remove_owned_endpoint_runtime(Path(str(record["socket_dir"])), runtime_root)
+            remove_endpoint_process_record(root)
+    except (ServiceError, OSError, KeyError, ValueError, TypeError) as error:
+        raise _endpoint_refresh_failure(
+            error, step="stop_old_endpoint", generation=generation, endpoint_pid=old_pid
+        ) from error
+    # Step 4: remove the superseded generation receipt file.
+    try:
+        applied_dir = runtime_root / ENDPOINT_APPLIED_DIR_NAME
+        if not applied_dir.exists():
+            applied_dir.mkdir(mode=0o700)
+        old_receipt = _endpoint_applied_path(root, previous_generation)
+        try:
+            old_receipt.unlink()
+        except FileNotFoundError:
+            pass
+        receipt_path = _endpoint_applied_path(root, generation)
+        receipt_path.unlink(missing_ok=True)
+    except (ServiceError, OSError) as error:
+        raise _endpoint_refresh_failure(error, step="clear_superseded_receipt", generation=generation) from error
+    # Step 5: precompute the binary identity and exact argv, then start the
+    # endpoint with the new generation receipt path.
+    socket_dir: Path | None = None
+    try:
+        socket_dir = make_endpoint_socket_dir(runtime_root)
+        endpoint_binary = endpoint_binary_from(config)
+        binary_sha256 = sha256_file(endpoint_binary)
+        command = endpoint_command(config, locator, host_socket_dir, socket_dir, receipt_path, generation, root)
+    except (ServiceError, OSError) as error:
+        cleanup = _reclaim_failed_endpoint_child(None, socket_dir, runtime_root, root)
+        message = str(error) if not cleanup else f"{error}; endpoint cleanup failed: {cleanup}"
+        raise _endpoint_refresh_failure(
+            error, step="start_endpoint", generation=generation, cause="endpoint_start_failed", message=message
+        ) from error
+    try:
+        log_handle = (root / "logs" / "endpoint.log").open("ab")
+    except OSError as error:
+        cleanup = _reclaim_failed_endpoint_child(None, socket_dir, runtime_root, root)
+        message = str(error) if not cleanup else f"{error}; endpoint cleanup failed: {cleanup}"
+        raise _endpoint_refresh_failure(
+            error, step="start_endpoint", generation=generation, cause="endpoint_log_open_failed", message=message
+        ) from error
     try:
         process = subprocess.Popen(
             command,
@@ -2968,31 +3147,43 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
         )
     except OSError as error:
         log_handle.close()
-        raise ServiceError(
-            f"cannot start endpoint process: {error}",
-            TRUST_EXIT_CODE,
-            code="ENDPOINT_NOT_REFRESHED",
-            facts=_endpoint_partial_facts(
-                step="start_endpoint", code="ENDPOINT_NOT_REFRESHED", cause="endpoint_start_failed",
-                generation=generation,
-            ),
+        cleanup = _reclaim_failed_endpoint_child(None, socket_dir, runtime_root, root)
+        message = str(error) if not cleanup else f"{error}; endpoint cleanup failed: {cleanup}"
+        raise _endpoint_refresh_failure(
+            error, step="start_endpoint", generation=generation, cause="endpoint_start_failed", message=message
         ) from error
-    finally:
+    endpoint_pid = process.pid
+    try:
+        write_json(
+            endpoint_process_record_path(root),
+            {
+                "process_version": ENDPOINT_PROCESS_RECORD_VERSION,
+                "pid": endpoint_pid,
+                "binary": str(endpoint_binary),
+                "binary_sha256": binary_sha256,
+                "socket_dir": str(socket_dir),
+                "runtime_root": str(runtime_root),
+                "command": command,
+            },
+        )
+    except BaseException as error:
+        cleanup = _reclaim_failed_endpoint_child(process, socket_dir, runtime_root, root)
         log_handle.close()
-    assert process is not None
-    write_json(
-        endpoint_process_record_path(root),
-        {
-            "process_version": ENDPOINT_PROCESS_RECORD_VERSION,
-            "pid": process.pid,
-            "binary": str(endpoint_binary_from(config)),
-            "binary_sha256": sha256_file(endpoint_binary_from(config)),
-            "socket_dir": str(socket_dir),
-            "runtime_root": str(runtime_root),
-            "command": command,
-        },
-    )
+        if isinstance(error, (ServiceError, OSError)):
+            message = str(error) if not cleanup else f"{error}; endpoint cleanup failed: {cleanup}"
+            raise _endpoint_refresh_failure(
+                error,
+                step="persist_endpoint_record",
+                generation=generation,
+                endpoint_pid=endpoint_pid,
+                cause="endpoint_record_write_failed",
+                message=message,
+            ) from error
+        raise
+    log_handle.close()
     # Step 6/7: bounded-wait for the exact receipt, then strict verification.
+    # The record now exists, so cancellation here releases only the waiter and
+    # never stops or cleans up the endpoint.
     try:
         verified = wait_endpoint_applied(root, generation=generation, timeout_seconds=float(timeout_seconds))
     except ServiceError as error:
@@ -3466,20 +3657,28 @@ def _export_membership_receipt(root: Path, device_id: str) -> dict[str, object] 
             TRUST_EXIT_CODE,
             code="PROFILE_NOT_FOUND",
         )
-    # An export-eligible grant must name the target device and the owner inside
-    # the applied members. The Host refuses a target-omitting grant with
-    # MEMBERSHIP_REQUIRED, so the consumer builds the committed member set from
-    # the profile owner/members plus the exact enrolled device. No membership
-    # state is invented here; the Host owns the committed result.
+    # Export consumes the committed membership exactly as the Host reports it.
+    # Only an explicit authorized grant entry point may submit a member set
+    # that adds the target; export must never re-authorize a removed or
+    # target-omitting membership by inserting the target here.
+    owner_device_id = profile["owner_device_id"]
     members = list(profile["members"])
-    for required in (str(profile["owner_device_id"]), device_id):
-        if required not in members:
-            members.append(required)
+    if (
+        not isinstance(owner_device_id, str)
+        or not owner_device_id
+        or owner_device_id not in members
+        or device_id not in members
+    ):
+        raise ServiceError(
+            "profile membership does not include the enrolled device; export refuses without re-granting",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_WRITE_FAILED",
+        )
     result = admin_membership_set(
         socket_path,
         "grant",
         profile_id,
-        str(profile["owner_device_id"]),
+        owner_device_id,
         device_id,
         members,
         catalog["catalog_revision"],

@@ -323,6 +323,25 @@ def main() -> int:
             },
         )
 
+        # CASE 5: enrollment alone is not a grant. The explicit authorized grant
+        # entry point adds the enrolled target to the committed member set; only
+        # this path submits a member set that contains the target. `trust export`
+        # consumes the committed membership and never re-grants it.
+        admin_socket = socket_dir / "host-admin.sock"
+        granted = host_service.admin_membership_set(
+            admin_socket, "grant", "default", "local", device_id, ["local", device_id], None
+        )
+        grant_receipt = granted["membership_receipt"]
+        record(
+            "case5.membership_grant",
+            grant_receipt["receipt_type"] == "export_eligible"
+            and grant_receipt["device_id"] == device_id
+            and device_id in grant_receipt["members"]
+            and "local" in grant_receipt["members"],
+            {"receipt_type": "export_eligible", "members": ["local", device_id]},
+            grant_receipt,
+        )
+
         # CASE 5: trust export writes a real bundle gated by the real endpoint
         # receipt. The `agentbrowser.connection@1` bundle schema does not carry
         # an `endpoint_receipt` field; the receipt is the export gate, so the
@@ -359,11 +378,9 @@ def main() -> int:
         preserve_evidence(evidence, bundle_path, "device.abconnection")
 
         # CASE 5b: a guessed, removed, target-omitting, or endpoint-file receipt
-        # is refused by the real export boundary.
-        admin_socket = socket_dir / "host-admin.sock"
-        good_membership = host_service.admin_membership_set(
-            admin_socket, "grant", "default", "local", device_id, ["local", device_id], None
-        )["membership_receipt"]
+        # is refused by the real export boundary. `good_membership` is the
+        # committed grant proof from the explicit authorized grant above.
+        good_membership = grant_receipt
         refused_path = base / "refused.abconnection"
         unknown_device = "00000000-0000-4000-8000-000000000000"
         expect_code(
@@ -386,6 +403,26 @@ def main() -> int:
             lambda: host_service.export_bundle(
                 root, device_id, refused_path, membership_receipt=removed, endpoint_receipt=verified_receipt
             ),
+        )
+        # The public CLI export must refuse after the removal and must not
+        # re-authorize the committed catalog: enrollment alone is not a grant.
+        catalog_before_cli = host_service.admin_catalog_info(admin_socket)
+        removed_cli = manager(
+            root, "trust", "export", "--device-id", device_id, "--output", str(refused_path), check=False
+        )
+        catalog_after_cli = host_service.admin_catalog_info(admin_socket)
+        record(
+            "case5b.removed_cli_refused",
+            removed_cli.returncode != 0
+            and "PROFILE_ACCESS_WRITE_FAILED" in removed_cli.stderr
+            and catalog_after_cli == catalog_before_cli
+            and not refused_path.exists(),
+            {"code": "PROFILE_ACCESS_WRITE_FAILED", "catalog_unchanged": True},
+            {
+                "rc": removed_cli.returncode,
+                "stderr": removed_cli.stderr[-200:],
+                "catalog_unchanged": catalog_after_cli == catalog_before_cli,
+            },
         )
         expect_code(
             "case5b.target_omitting_refused",
@@ -467,15 +504,73 @@ def main() -> int:
             lambda: host_service.wait_endpoint_applied(root, generation=generation + 1, timeout_seconds=0.5),
         )
 
-        # CASE 9: cancelling the wait releases only the waiter.
-        record(
-            "case9.cancel_keeps_endpoint",
-            pid_alive(endpoint_pid)
-            and process_record_path.is_file()
-            and json.loads(process_record_path.read_bytes())["pid"] == endpoint_pid,
-            "endpoint still live and recorded after the wait released",
-            {"endpoint_pid": endpoint_pid, "alive": pid_alive(endpoint_pid)},
-        )
+        # CASE 9: actually cancel a public waiter that is still waiting for the
+        # receipt, then prove the cancel released only the waiter. The current
+        # generation receipt is hidden so the wait does not resolve early.
+        backup_receipt = receipt_path.with_suffix(".json.case9")
+        receipt_path.rename(backup_receipt)
+        waiter: subprocess.Popen[str] | None = None
+        try:
+            waiter_driver = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                f"sys.path.insert(0, {str(SCRIPT_DIR)!r})\n"
+                "import host_service\n"
+                f"root = Path({str(root)!r})\n"
+                "lock = host_service.acquire_start_lock(root)\n"
+                "try:\n"
+                f"    host_service.wait_endpoint_applied(root, generation={generation}, timeout_seconds=120)\n"
+                "finally:\n"
+                "    host_service.release_start_lock(lock)\n"
+            )
+            waiter = subprocess.Popen(
+                [sys.executable, "-c", waiter_driver],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            time.sleep(1.0)
+            waiter_was_waiting = waiter.poll() is None
+            os.kill(waiter.pid, signal.SIGINT)
+            waiter.wait(timeout=10)
+            waiter_exited = waiter.poll() is not None
+            record_pid = json.loads(process_record_path.read_bytes())["pid"] if process_record_path.is_file() else None
+            socket_dir_path = Path(str(process_record["socket_dir"]))
+            lock_holder = host_service.acquire_start_lock(root)
+            host_service.release_start_lock(lock_holder)
+            record(
+                "case9.cancel_keeps_endpoint",
+                waiter_was_waiting
+                and waiter_exited
+                and waiter.returncode != 0
+                and pid_alive(endpoint_pid)
+                and record_pid == endpoint_pid
+                and socket_dir_path.is_dir(),
+                {
+                    "cancel_observed": True,
+                    "waiter_exited": True,
+                    "endpoint_pid_alive": True,
+                    "record_pid": endpoint_pid,
+                    "runtime_survived": True,
+                    "lock_released": True,
+                },
+                {
+                    "cancel_observed": True,
+                    "waiter_exited": waiter_exited,
+                    "waiter_returncode": waiter.returncode,
+                    "endpoint_pid_alive": pid_alive(endpoint_pid),
+                    "record_pid": record_pid,
+                    "runtime_survived": socket_dir_path.is_dir(),
+                    "lock_released": True,
+                },
+            )
+            preserve_evidence(evidence, process_record_path, "endpoint-process-after-cancel.json")
+        finally:
+            if waiter is not None and waiter.poll() is None:
+                waiter.kill()
+                waiter.wait(timeout=5)
+            if backup_receipt.exists() and not receipt_path.exists():
+                backup_receipt.rename(receipt_path)
 
         # CASE 10: a second refresh stops the old endpoint and advances the generation.
         old_pid = endpoint_pid

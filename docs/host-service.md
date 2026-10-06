@@ -393,15 +393,38 @@ receipt, so an old generation's receipt can never satisfy a new generation.
 directory; a changed or foreign endpoint PID is reported, never silently
 signaled or deleted.
 
+The public locator keeps the accepted DNS name or IP literal because that is
+what the certificate SAN and the exported WSS URL must carry, but the endpoint
+producer only accepts a numeric `SocketAddr` on `--listen`. `endpoint_bind_address`
+resolves the locator to one numeric binding basis, and `validate_endpoint_bind_address`
+confirms it is locally assignable before the refresh advances the generation or
+stops the old endpoint. The start command and the applied-receipt bound-address
+verifier both call that one basis; no second bind truth is stored. A locator that
+cannot become a local listener fails as `ENDPOINT_BIND_MISMATCH` with no side
+effect, so the accepted DNS configuration reaches the real producer instead of
+projecting a DNS string into `--listen`.
+
+The endpoint binary identity and exact argv are computed before the start. The
+interval between a successful `Popen` and a persisted process record is guarded:
+if the record write fails, the just-started child is stopped by its known PID and
+argv, its own runtime directory is removed, and the entry returns the typed
+failure. After the record is persisted the declared lifecycle owns the child, so
+cancelling the bounded wait releases only the waiter and never stops or cleans up
+the endpoint.
+
 `command_trust_export` now obtains the real membership proof from the Host admin
 owner and the verified endpoint result from the declared generation file before
 calling `export_bundle`. It never accepts a guessed, removed, target-omitting,
 or endpoint-file receipt. A missing live producer stays unavailable and refused
 at the existing `PROFILE_CATALOG_UNAVAILABLE`, `ENDPOINT_REFRESH_REQUIRED`,
 `ENDPOINT_NOT_REFRESHED`, or `PROJECTION_MATERIAL_CONFLICT` boundary.
-The export-eligible grant request names the enrolled target device and the
-profile owner inside the committed member set, so a fresh enrollment can reach
-the Host-owned `assign_access` result without inventing membership state.
+`_export_membership_receipt` consumes the committed member set exactly as the
+Host reports it and refuses with `PROFILE_ACCESS_WRITE_FAILED` when the enrolled
+target is not already a committed member; it never inserts the target back to
+reach an eligible grant. Only an explicit authorized grant entry point submits a
+member set that contains the target, so a fresh enrollment can reach the
+Host-owned `assign_access` result without the export path re-authorizing a
+removed or target-omitting membership.
 
 The public consumer adds one-shot local admin transport harnesses and
 `wait_endpoint_applied` fixtures for malformed/mismatched/stale/EOF refusal.
