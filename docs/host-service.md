@@ -249,6 +249,7 @@ scripts/host-service/host-service trust provision --root "$ROOT" \
 scripts/host-service/host-service trust revoke --root "$ROOT" --device-id "<uuid>"
 scripts/host-service/host-service trust export --root "$ROOT" \
   --device-id "<uuid>" --output "<path.abconnection>"
+scripts/host-service/host-service trust endpoint-refresh --root "$ROOT" --timeout 30
 ```
 
 `trust init` generates the CA, the server certificate with the requested SAN,
@@ -360,12 +361,47 @@ bind, or material-mismatch files remain explicit `ENDPOINT_*` failures.
 the existing `trust/endpoint.json` locator; the consumer reads the requested
 generation only from that declared locator, never from a second store.
 
+The service owns the endpoint process lifecycle and the refresh sequence in
+`repair-design.md` §4.3. One declared entry implements it exactly once:
+
+```sh
+scripts/host-service/host-service trust endpoint-refresh --root "$ROOT" --timeout 30
+```
+
+`refresh_endpoint` reads the committed registry and republishes a matching
+projection, allocates the next generation in the existing
+`trust/endpoint.json` locator, stops the previously recorded endpoint through
+the same verified-PID lifecycle the Host uses, removes the superseded
+`<previous>.json` receipt, starts `obscura-endpoint` with the new
+`<runtime-root>/endpoint-applied/<generation>.json` path, bounded-waits for that
+exact file, and only then exposes `authorization_state: "refreshed"` with the
+endpoint PID and generation. The endpoint binary and `obscura-media` are
+resolved beside the bound Host binary; the generation never appears in the
+receipt or any second store. The started endpoint is recorded in the typed
+`run/endpoint-process.json` process record (PID plus exact argv) so the next
+refresh and `stop` can stop only the owned process. On any failure the entry
+exposes `authorization_state: "not_refreshed"` with typed partial facts
+(`last_step`, `cause`, and the generation/PID/address observed so far); the
+typed `ENDPOINT_NOT_REFRESHED`, `ENDPOINT_RECEIPT_MALFORMED`,
+`ENDPOINT_GENERATION_STALE`, `ENDPOINT_PID_MISMATCH`, `ENDPOINT_BIND_MISMATCH`,
+and `PROJECTION_MATERIAL_CONFLICT` identities are preserved and never become a
+synthetic ready receipt. Cancelling the bounded wait releases only the waiter;
+it never stops or cleans up the endpoint process. A second refresh advances the
+generation again, stops the previous endpoint PID, and removes the superseded
+receipt, so an old generation's receipt can never satisfy a new generation.
+`stop` also stops the owned endpoint and removes its process record and socket
+directory; a changed or foreign endpoint PID is reported, never silently
+signaled or deleted.
+
 `command_trust_export` now obtains the real membership proof from the Host admin
 owner and the verified endpoint result from the declared generation file before
 calling `export_bundle`. It never accepts a guessed, removed, target-omitting,
 or endpoint-file receipt. A missing live producer stays unavailable and refused
 at the existing `PROFILE_CATALOG_UNAVAILABLE`, `ENDPOINT_REFRESH_REQUIRED`,
 `ENDPOINT_NOT_REFRESHED`, or `PROJECTION_MATERIAL_CONFLICT` boundary.
+The export-eligible grant request names the enrolled target device and the
+profile owner inside the committed member set, so a fresh enrollment can reach
+the Host-owned `assign_access` result without inventing membership state.
 
 The public consumer adds one-shot local admin transport harnesses and
 `wait_endpoint_applied` fixtures for malformed/mismatched/stale/EOF refusal.
@@ -435,6 +471,30 @@ removed, target-omitting, and endpoint-file receipts, and the wrong-identity,
 expired, revoked, and cancel paths. A mock can never promote one of these real
 cases; the harness exits non-zero on any failed case and prints
 `REAL_E2E_PASS` only when all pass.
+
+The service-owned endpoint refresh sequence has its own real-producer harness,
+which drives `trust init`, `trust provision`, `install`, `start`,
+`trust endpoint-refresh`, `trust export`, and the written bundle/receipt with
+the real Host and endpoint binaries:
+
+```sh
+OBSCURA_HOST_BINARY="$OBSCURA_TARGET/release/obscura-host" \
+OBSCURA_ENDPOINT_BINARY="$OBSCURA_TARGET/release/obscura-endpoint" \
+OBSCURA_HOST_PROTOCOL_VERSION=11 \
+  python3 docs/runs/m1-service-endpoint-refresh-r1-20261005/real_refresh_e2e.py
+```
+
+It records the seeded generation, the refreshed generation/PID/bound address,
+the exact v1 receipt bytes and mode, the typed process record, the projected
+`refreshed` status, the real IPv6 export bundle written only because a live
+endpoint bound a listener, the typed refusals (`ENDPOINT_RECEIPT_MALFORMED` for
+a real `status: "ready"` file without `schema_version`,
+`PROJECTION_MATERIAL_CONFLICT` for mismatched revision/registry/projection
+material, `ENDPOINT_NOT_REFRESHED` for an old generation), the cancel that
+keeps the endpoint live, a second refresh that stops the old PID and removes
+the old receipt, and `stop` that stops the owned endpoint. A mock can never
+promote one of these real cases; the harness exits non-zero on any failed case
+and prints `REAL_REFRESH_E2E_PASS` only when all pass.
 
 The test uses the actual binary and checks: missing executable, invalid profile
 config, missing/invalid protocol version, configured ready/session identity,

@@ -65,6 +65,12 @@ ENDPOINT_APPLIED_SCHEMA_VERSION = 1
 ENDPOINT_APPLIED_FRAME_LIMIT = 64 * 1024
 ENDPOINT_APPLIED_WAIT_INTERVAL_SECONDS = 0.05
 ENDPOINT_REFRESH_TIMEOUT_SECONDS = 30.0
+# Declared service-owned endpoint process record. It carries only process
+# identity (PID + exact argv) so the service can stop the endpoint it started
+# through the same verified-PID lifecycle it uses for the Host. The endpoint
+# generation is never duplicated here; it lives only in the trust locator.
+ENDPOINT_PROCESS_RECORD_NAME = "endpoint-process.json"
+ENDPOINT_PROCESS_RECORD_VERSION = 1
 ENDPOINT_APPLIED_FIELDS = frozenset(
     {
         "schema_version",
@@ -112,10 +118,20 @@ TRUST_EXIT_CODE = 3
 class ServiceError(Exception):
     """A user-facing service error with a stable non-zero result."""
 
-    def __init__(self, message: str, exit_code: int = 2, code: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        exit_code: int = 2,
+        code: str | None = None,
+        facts: dict[str, object] | None = None,
+    ):
         super().__init__(message)
         self.exit_code = exit_code
         self.code = code
+        # Typed partial facts for a multi-step operation that failed partway
+        # through (for example the endpoint refresh sequence). They are emitted
+        # next to the error code and never mutate the committed state truth.
+        self.facts = facts
 
 
 class ReadyRejected(ServiceError):
@@ -242,6 +258,14 @@ def executable_path(value: str) -> Path:
     validate_process_path(str(path), "host binary")
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ServiceError(f"host binary is not executable: {path}")
+    return path
+
+
+def executable_file(value: str, field: str) -> Path:
+    path = normalize_absolute(value, field)
+    validate_process_path(str(path), field)
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise ServiceError(f"{field} is not executable: {path}")
     return path
 
 
@@ -1390,6 +1414,9 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
     if state.get("launch_mode") == "launchd_rejected":
         if alive:
             raise ServiceError("rejected launchd state still has a live PID; refusing cleanup")
+        if config_path(root).is_file():
+            config, _ = load_config(root)
+            cleanup_endpoint_lifecycle(root, config)
         cleanup_runtime(state)
         remove_state(root)
         return
@@ -1404,6 +1431,12 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
             str(state["profile_root"]) if state.get("profile_root") is not None else None,
             str(state["authorization_registry"]) if state.get("authorization_registry") is not None else None,
         )
+    # An owned endpoint is part of this service's lifecycle: stop it through the
+    # same declared verified-PID path before removing the Host runtime. A
+    # foreign endpoint PID is reported, never silently signaled or deleted.
+    if config_path(root).is_file():
+        config, _ = load_config(root)
+        cleanup_endpoint_lifecycle(root, config)
     cleanup_runtime(state)
     remove_state(root)
 
@@ -2056,12 +2089,11 @@ def trust_status(root: Path) -> dict[str, object]:
 
     Projection publication is a file fact owned here. Endpoint applied
     authorization is separate: it requires the endpoint owner's typed applied
-    receipt (revision + registry/projection material + PID). This module now
-    owns the strict consumer (:func:`wait_endpoint_applied`), but the status
-    projection itself never waits for or persists a generation, so it keeps
-    ``authorization_state`` at ``not_refreshed`` and invents no endpoint PID.
-    The declared ``deny_all``/``refreshed`` values remain reserved for that
-    verified endpoint receipt.
+    receipt (revision + registry/projection material + PID). Status now
+    consumes the declared locator generation through the same strict verifier
+    the refresh sequence and export gate use, so ``authorization_state`` is
+    ``refreshed`` exactly when one committed endpoint receipt verifies; it
+    never waits for or persists a generation, and it invents no endpoint PID.
     """
     registry_path = trust_path(root, TRUST_REGISTRY_NAME)
     if not registry_path.is_file():
@@ -2071,6 +2103,7 @@ def trust_status(root: Path) -> dict[str, object]:
     registry_sha = sha256_bytes(registry_bytes)
     projection_state, projection_sha = projection_publication_state(root, registry, registry_bytes)
     active_devices = [device for device in registry["devices"] if device["status"] == "active"]
+    authorization = _endpoint_authorization_state(root)
     return {
         "state": "trust",
         "host_id": registry["host_id"],
@@ -2078,8 +2111,9 @@ def trust_status(root: Path) -> dict[str, object]:
         "registry_sha256": registry_sha,
         "projection_sha256": projection_sha,
         "projection_state": projection_state,
-        "authorization_state": "not_refreshed",
-        "endpoint_pid": None,
+        "authorization_state": authorization["authorization_state"],
+        "endpoint_pid": authorization["endpoint_pid"],
+        "endpoint_generation": authorization["endpoint_generation"],
         "active_clients": len(active_devices),
         "devices": [
             {
@@ -2566,6 +2600,443 @@ def wait_endpoint_applied(
         time.sleep(ENDPOINT_APPLIED_WAIT_INTERVAL_SECONDS)
 
 
+# --- Endpoint process lifecycle (declared service-owned refresh sequence) -----
+
+
+def endpoint_process_record_path(root: Path) -> Path:
+    return root / "run" / ENDPOINT_PROCESS_RECORD_NAME
+
+
+def endpoint_binary_from(config: dict[str, object]) -> Path:
+    """Resolve the endpoint binary beside the bound Host binary.
+
+    The endpoint producer ships next to the Host binary in the same release
+    directory. Resolving from the typed ``host_binary`` config path keeps the
+    producer identity declared; it is never discovered from a log, a payload,
+    or a health probe.
+    """
+    value = str(Path(str(config["host_binary"])).with_name("obscura-endpoint"))
+    return executable_file(value, "endpoint binary")
+
+
+def endpoint_media_binary_from(config: dict[str, object]) -> Path:
+    value = str(Path(str(config["host_binary"])).with_name("obscura-media"))
+    return executable_file(value, "endpoint media binary")
+
+
+def endpoint_ffmpeg_from(config: dict[str, object]) -> str:
+    # The endpoint's declared default is the PATH-resolved `ffmpeg`; the
+    # service passes it explicitly and never invents an absolute path.
+    return "ffmpeg"
+
+
+def endpoint_listen_address(locator: dict[str, object]) -> str:
+    host = str(locator["endpoint_host"])
+    host_kind = str(locator["endpoint_host_kind"])
+    port = int(locator["endpoint_port"])
+    if host_kind == "ip" and crypto_modules().ipaddress.ip_address(host).version == 6:
+        host = f"[{host}]"
+    return f"{host}:{port}"
+
+
+def make_endpoint_socket_dir(runtime_root: Path) -> Path:
+    for _ in range(5):
+        path = runtime_root / f"endpoint-{uuid.uuid4().hex[:8]}"
+        if not path.exists():
+            socket_path_is_safe(path)
+            return path
+    raise ServiceError("could not allocate a fresh endpoint socket directory")
+
+
+def endpoint_runtime_dir_is_owned(path: Path, runtime_root: Path) -> bool:
+    return (
+        path.is_absolute()
+        and not path.is_symlink()
+        and path.parent == runtime_root
+        and path.name.startswith("endpoint-")
+    )
+
+
+def remove_owned_endpoint_runtime(socket_dir: Path, runtime_root: Path) -> None:
+    if not endpoint_runtime_dir_is_owned(socket_dir, runtime_root):
+        raise ServiceError(f"refusing to remove unowned endpoint runtime path: {socket_dir}")
+    if socket_dir.exists():
+        if socket_dir.is_symlink() or not socket_dir.is_dir():
+            raise ServiceError(f"refusing to remove non-directory endpoint runtime path: {socket_dir}")
+        shutil.rmtree(socket_dir)
+
+
+def endpoint_command(
+    config: dict[str, object],
+    locator: dict[str, object],
+    host_socket_dir: Path,
+    socket_dir: Path,
+    receipt_path: Path,
+    generation: int,
+    root: Path,
+) -> list[str]:
+    endpoint_binary = endpoint_binary_from(config)
+    media_binary = endpoint_media_binary_from(config)
+    trust = trust_root(root)
+    return [
+        str(endpoint_binary),
+        "--listen",
+        endpoint_listen_address(locator),
+        "--host-dir",
+        str(host_socket_dir),
+        "--socket-dir",
+        str(socket_dir),
+        "--server-cert",
+        str(trust / TRUST_SERVER_CERT_NAME),
+        "--server-key",
+        str(trust / TRUST_SERVER_KEY_NAME),
+        "--client-ca",
+        str(trust / TRUST_CA_CERT_NAME),
+        "--authorized-clients",
+        str(trust / TRUST_PROJECTION_NAME),
+        "--media-bin",
+        str(media_binary),
+        "--ffmpeg",
+        endpoint_ffmpeg_from(config),
+        "--applied-receipt-path",
+        str(receipt_path),
+        "--endpoint-generation",
+        str(generation),
+    ]
+
+
+def endpoint_command_matches(snapshot_command: str, expected_argv: list[str]) -> bool:
+    try:
+        argv = shlex.split(snapshot_command)
+    except ValueError:
+        return False
+    return argv == expected_argv
+
+
+def load_endpoint_process_record(root: Path) -> dict[str, object] | None:
+    path = endpoint_process_record_path(root)
+    if not path.exists():
+        return None
+    if mode(path) != 0o600:
+        raise ServiceError(f"endpoint process record permissions must be 0600: {path}")
+    record = load_json(path, "endpoint process record")
+    expected = {"process_version", "pid", "binary", "binary_sha256", "socket_dir", "runtime_root", "command"}
+    if set(record) != expected:
+        raise ServiceError("endpoint process record has unsupported or missing fields")
+    if type(record["process_version"]) is not int or record["process_version"] != ENDPOINT_PROCESS_RECORD_VERSION:
+        raise ServiceError("unsupported endpoint process record version")
+    if type(record["pid"]) is not int or record["pid"] <= 0:
+        raise ServiceError("endpoint process record has invalid pid")
+    for field in ("binary", "socket_dir", "runtime_root"):
+        if not isinstance(record[field], str):
+            raise ServiceError(f"endpoint process record {field} must be a string")
+    if not isinstance(record["binary_sha256"], str) or not SHA256_PATTERN.fullmatch(record["binary_sha256"]):
+        raise ServiceError("endpoint process record binary_sha256 is invalid")
+    if not isinstance(record["command"], list) or any(not isinstance(item, str) for item in record["command"]):
+        raise ServiceError("endpoint process record command must be a list of strings")
+    return record
+
+
+def remove_endpoint_process_record(root: Path) -> None:
+    try:
+        endpoint_process_record_path(root).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def endpoint_process_status(record: dict[str, object]) -> str:
+    pid = int(record["pid"])
+    snapshot = process_snapshot(pid)
+    if snapshot is None:
+        return "gone" if not pid_alive(pid) else "unknown"
+    if snapshot[0].startswith("Z"):
+        return "gone"
+    if not endpoint_command_matches(snapshot[1], [str(item) for item in record["command"]]):
+        return "changed"
+    return "owned"
+
+
+def stop_endpoint_process(root: Path, record: dict[str, object]) -> None:
+    """Stop one previously started endpoint through the declared lifecycle.
+
+    Only the exact recorded PID and argv may be signaled. A changed or unknown
+    identity raises explicitly; a dead PID is a no-op.
+    """
+    status = endpoint_process_status(record)
+    if status == "gone":
+        return
+    if status != "owned":
+        raise ServiceError(f"endpoint PID identity changed; refusing to signal: {record.get('pid')}")
+    pid = int(record["pid"])
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if endpoint_process_status(record) == "gone":
+            return
+        time.sleep(0.05)
+    if endpoint_process_status(record) == "gone":
+        return
+    if endpoint_process_status(record) != "owned":
+        raise ServiceError(f"endpoint PID identity changed; refusing to signal: {pid}")
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        status = endpoint_process_status(record)
+        if status == "gone":
+            return
+        if status != "owned":
+            raise ServiceError(f"endpoint PID identity changed; refusing to signal: {pid}")
+        time.sleep(0.05)
+    raise ServiceError(f"endpoint did not stop after explicit PID termination: {pid}")
+
+
+def cleanup_endpoint_lifecycle(root: Path, config: dict[str, object]) -> None:
+    """Stop the recorded endpoint and remove its owned runtime/process record.
+
+    Used by Host `stop` so no owned endpoint survives a service shutdown. A
+    foreign or changed PID is reported, never silently signaled or deleted.
+    """
+    runtime_root = runtime_root_from(str(config["runtime_root"]))
+    record = load_endpoint_process_record(root)
+    if record is not None:
+        stop_endpoint_process(root, record)
+        socket_dir = Path(str(record["socket_dir"]))
+        remove_owned_endpoint_runtime(socket_dir, runtime_root)
+    remove_endpoint_process_record(root)
+
+
+def _endpoint_authorization_state(root: Path) -> dict[str, object]:
+    """Compute the single public endpoint authorization projection.
+
+    Reads the declared locator generation, then strictly verifies the exact
+    ``<generation>.json`` endpoint receipt. A verified receipt yields
+    ``refreshed`` with its PID and generation; anything else stays
+    ``not_refreshed`` with no invented endpoint PID.
+    """
+    locator = trust_endpoint(root)
+    generation = locator.get("endpoint_generation")
+    if type(generation) is not int or generation < 0:
+        return {
+            "authorization_state": "not_refreshed",
+            "endpoint_pid": None,
+            "endpoint_generation": None,
+        }
+    try:
+        verified = wait_endpoint_applied(root, generation=generation, timeout_seconds=0.0)
+    except ServiceError:
+        return {
+            "authorization_state": "not_refreshed",
+            "endpoint_pid": None,
+            "endpoint_generation": generation,
+        }
+    return {
+        "authorization_state": "refreshed",
+        "endpoint_pid": verified["endpoint_pid"],
+        "endpoint_generation": verified["endpoint_generation"],
+    }
+
+
+def _endpoint_partial_facts(
+    *,
+    step: str,
+    code: str,
+    cause: str,
+    generation: int | None = None,
+    endpoint_pid: int | None = None,
+    bound_address: str | None = None,
+) -> dict[str, object]:
+    return {
+        "authorization_state": "not_refreshed",
+        "error": code,
+        "cause": cause,
+        "last_step": step,
+        "endpoint_generation": generation,
+        "endpoint_pid": endpoint_pid,
+        "bound_address": bound_address,
+    }
+
+
+def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]:
+    """Own the declared nine-step endpoint refresh sequence.
+
+    Steps (repair-design §4.3): publish the matching projection; allocate the
+    next service-owned generation in the existing locator; stop the old
+    endpoint through the declared lifecycle; remove the old generation receipt
+    file; start the endpoint with the new generation receipt path; bounded-wait
+    for that exact file; verify JSON/generation/PID/address/revision/digests;
+    expose ``refreshed`` with PID and generation; otherwise expose
+    ``not_refreshed`` with typed partial facts. Cancel of the bounded wait
+    releases only the waiter and never stops or cleans up the endpoint.
+    """
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds < 0:
+        raise ServiceError(
+            "endpoint refresh timeout must be a non-negative number",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+        )
+    config, _ = load_config(root)
+    runtime_root = runtime_root_from(str(config["runtime_root"]))
+    host_socket_dir = _running_socket_dir(root)
+    if host_socket_dir is None or not host_socket_dir.is_dir():
+        raise ServiceError(
+            "Host must be running before the endpoint refresh sequence",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+            facts=_endpoint_partial_facts(
+                step="host_required", code="ENDPOINT_NOT_REFRESHED", cause="host_not_running"
+            ),
+        )
+    # Step 1: read the committed registry and publish the matching projection.
+    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
+    if not registry_path.is_file():
+        raise ServiceError(
+            "trust authority is not initialized",
+            TRUST_EXIT_CODE,
+            code="TRUST_NOT_INITIALIZED",
+        )
+    registry_bytes = registry_path.read_bytes()
+    registry = parse_trust_registry(registry_bytes)
+    expected_projection, _ = refresh_projection(root, registry, registry_bytes)
+    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
+    if not projection_path.is_file() or projection_path.read_bytes() != expected_projection:
+        write_projection(root, expected_projection)
+    # Step 2: allocate the next service-owned generation in the locator.
+    locator = trust_endpoint(root)
+    current = locator.get("endpoint_generation")
+    if type(current) is not int or current < 0:
+        raise ServiceError(
+            "endpoint locator has no declared generation",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_GENERATION_STALE",
+            facts=_endpoint_partial_facts(
+                step="allocate_generation", code="ENDPOINT_GENERATION_STALE", cause="locator_generation_invalid"
+            ),
+        )
+    previous_generation = current
+    generation = current + 1
+    locator["endpoint_generation"] = generation
+    write_json(trust_path(root, TRUST_ENDPOINT_NAME), locator)
+    # Step 3: stop the old endpoint through the declared lifecycle.
+    record = load_endpoint_process_record(root)
+    if record is not None:
+        try:
+            stop_endpoint_process(root, record)
+        except ServiceError as error:
+            raise ServiceError(
+                str(error),
+                TRUST_EXIT_CODE,
+                code="ENDPOINT_NOT_REFRESHED",
+                facts=_endpoint_partial_facts(
+                    step="stop_old_endpoint",
+                    code="ENDPOINT_NOT_REFRESHED",
+                    cause=error.code or "endpoint_stop_failed",
+                    generation=generation,
+                ),
+            ) from error
+        remove_owned_endpoint_runtime(Path(str(record["socket_dir"])), runtime_root)
+        remove_endpoint_process_record(root)
+    # Step 4: remove the superseded generation receipt file.
+    applied_dir = runtime_root / ENDPOINT_APPLIED_DIR_NAME
+    if not applied_dir.exists():
+        applied_dir.mkdir(mode=0o700)
+    old_receipt = _endpoint_applied_path(root, previous_generation)
+    try:
+        old_receipt.unlink()
+    except FileNotFoundError:
+        pass
+    receipt_path = _endpoint_applied_path(root, generation)
+    receipt_path.unlink(missing_ok=True)
+    # Step 5: start the endpoint with the new generation receipt path.
+    socket_dir = make_endpoint_socket_dir(runtime_root)
+    command = endpoint_command(config, locator, host_socket_dir, socket_dir, receipt_path, generation, root)
+    log_handle = (root / "logs" / "endpoint.log").open("ab")
+    process: subprocess.Popen[object] | None = None
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as error:
+        log_handle.close()
+        raise ServiceError(
+            f"cannot start endpoint process: {error}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+            facts=_endpoint_partial_facts(
+                step="start_endpoint", code="ENDPOINT_NOT_REFRESHED", cause="endpoint_start_failed",
+                generation=generation,
+            ),
+        ) from error
+    finally:
+        log_handle.close()
+    assert process is not None
+    write_json(
+        endpoint_process_record_path(root),
+        {
+            "process_version": ENDPOINT_PROCESS_RECORD_VERSION,
+            "pid": process.pid,
+            "binary": str(endpoint_binary_from(config)),
+            "binary_sha256": sha256_file(endpoint_binary_from(config)),
+            "socket_dir": str(socket_dir),
+            "runtime_root": str(runtime_root),
+            "command": command,
+        },
+    )
+    # Step 6/7: bounded-wait for the exact receipt, then strict verification.
+    try:
+        verified = wait_endpoint_applied(root, generation=generation, timeout_seconds=float(timeout_seconds))
+    except ServiceError as error:
+        raise ServiceError(
+            str(error),
+            TRUST_EXIT_CODE,
+            code=error.code or "ENDPOINT_NOT_REFRESHED",
+            facts=_endpoint_partial_facts(
+                step="verify_applied",
+                code=error.code or "ENDPOINT_NOT_REFRESHED",
+                cause=error.code or "endpoint_not_refreshed",
+                generation=generation,
+                endpoint_pid=process.pid if endpoint_process_status(
+                    {
+                        "pid": process.pid,
+                        "command": command,
+                    }
+                ) == "owned" else None,
+            ),
+        ) from error
+    # Step 8: expose the refreshed result with the endpoint PID and generation.
+    return {
+        "state": "refreshed",
+        "authorization_state": "refreshed",
+        "endpoint_pid": verified["endpoint_pid"],
+        "endpoint_generation": verified["endpoint_generation"],
+        "bound_address": verified["bound_address"],
+        "authorization_revision": verified["authorization_revision"],
+        "registry_sha256": verified["registry_sha256"],
+        "projection_sha256": verified["projection_sha256"],
+    }
+
+
+def command_trust_endpoint_refresh(args: argparse.Namespace) -> int:
+    root = root_from(args.root)
+    lock_fd = acquire_start_lock(root)
+    try:
+        result = refresh_endpoint(root, timeout_seconds=args.timeout)
+    finally:
+        release_start_lock(lock_fd)
+    emit(result)
+    return 0
+
+
 def enroll_device(
     root: Path,
     *,
@@ -2995,13 +3466,22 @@ def _export_membership_receipt(root: Path, device_id: str) -> dict[str, object] 
             TRUST_EXIT_CODE,
             code="PROFILE_NOT_FOUND",
         )
+    # An export-eligible grant must name the target device and the owner inside
+    # the applied members. The Host refuses a target-omitting grant with
+    # MEMBERSHIP_REQUIRED, so the consumer builds the committed member set from
+    # the profile owner/members plus the exact enrolled device. No membership
+    # state is invented here; the Host owns the committed result.
+    members = list(profile["members"])
+    for required in (str(profile["owner_device_id"]), device_id):
+        if required not in members:
+            members.append(required)
     result = admin_membership_set(
         socket_path,
         "grant",
         profile_id,
         str(profile["owner_device_id"]),
         device_id,
-        list(profile["members"]),
+        members,
         catalog["catalog_revision"],
     )
     return result["membership_receipt"]
@@ -3049,6 +3529,7 @@ def trust_summary(root: Path) -> dict[str, object] | None:
         "projection_sha256": status["projection_sha256"],
         "projection_state": status["projection_state"],
         "endpoint_pid": status["endpoint_pid"],
+        "endpoint_generation": status["endpoint_generation"],
     }
 
 
@@ -3114,6 +3595,13 @@ def parser() -> argparse.ArgumentParser:
     add_root_option(trust_export)
     trust_export.add_argument("--device-id", required=True)
     trust_export.add_argument("--output", required=True)
+
+    trust_endpoint_refresh = trust_commands.add_parser(
+        "endpoint-refresh",
+        help="own the declared nine-step endpoint refresh sequence and expose the refreshed result",
+    )
+    add_root_option(trust_endpoint_refresh)
+    trust_endpoint_refresh.add_argument("--timeout", type=float, default=ENDPOINT_REFRESH_TIMEOUT_SECONDS)
     return result
 
 
@@ -3143,12 +3631,17 @@ def main(argv: list[str] | None = None) -> int:
                 return command_trust_revoke(args)
             if args.trust_command == "export":
                 return command_trust_export(args)
+            if args.trust_command == "endpoint-refresh":
+                return command_trust_endpoint_refresh(args)
             raise ServiceError(f"unsupported trust command: {args.trust_command}")
         raise ServiceError(f"unsupported command: {args.command}")
     except ServiceError as error:
         if error.code:
+            payload: dict[str, object] = {"code": error.code, "message": str(error)}
+            if error.facts is not None:
+                payload["facts"] = error.facts
             print(
-                json.dumps({"error": {"code": error.code, "message": str(error)}}, ensure_ascii=False),
+                json.dumps({"error": payload}, ensure_ascii=False),
                 file=sys.stderr,
             )
         else:

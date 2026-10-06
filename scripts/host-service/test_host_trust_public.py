@@ -895,6 +895,19 @@ def test_wait_endpoint_applied_public(root: Path) -> None:
     del missing["schema_version"]
     write_endpoint_receipt(runtime, 5, missing)
     refused(5, "ENDPOINT_RECEIPT_MALFORMED")
+    # The endpoint's legacy `ready()` initializer: `status: "ready"` and no
+    # `schema_version` at all. It is never the applied receipt.
+    ready_initializer = {
+        "status": "ready",
+        "endpoint_generation": 21,
+        "endpoint_pid": os.getpid(),
+        "bound_address": "100.64.0.1:8443",
+        "authorization_revision": 0,
+        "registry_sha256": "0" * 64,
+        "projection_sha256": "0" * 64,
+    }
+    write_endpoint_receipt(runtime, 21, ready_initializer)
+    refused(21, "ENDPOINT_RECEIPT_MALFORMED")
     write_endpoint_receipt(runtime, 6, {**endpoint_receipt_fields(service_root, generation=6), "schema_version": 2})
     refused(6, "ENDPOINT_RECEIPT_MALFORMED")
     write_endpoint_receipt(runtime, 7, {**endpoint_receipt_fields(service_root, generation=7), "extra": 1})
@@ -952,6 +965,52 @@ def test_wait_endpoint_applied_public(root: Path) -> None:
 
 def der_to_pem(der_path: Path, pem_path: Path) -> None:
     openssl("x509", "-inform", "DER", "-in", str(der_path), "-out", str(pem_path))
+
+
+def test_refresh_sequence_public(root: Path) -> None:
+    """The declared service entry owns the sequence; failures carry typed facts.
+
+    This is source-only: it proves the declared public entry exists, reads its
+    generation only from the existing locator, and exposes ``not_refreshed``
+    with typed partial facts when the sequence cannot run. The real
+    nine-step sequence against the real endpoint/Host binaries is proven by the
+    run harness `docs/runs/m1-service-endpoint-refresh-r1-20261005/`.
+    """
+    base = root / "refresh-sequence"
+    base.mkdir(mode=0o700)
+    service_root, _runtime = build_service_fixture(base)
+    # `trust init` seeds the single service-owned generation stamp.
+    check(
+        host_service.trust_endpoint(service_root).get("endpoint_generation") == 0,
+        "trust init did not seed the refresh generation",
+    )
+    # Without a running Host the declared entry refuses explicitly, and the
+    # refusal carries the typed partial facts the design requires.
+    try:
+        host_service.refresh_endpoint(service_root, timeout_seconds=1.0)
+    except host_service.ServiceError as error:
+        check(error.code == "ENDPOINT_NOT_REFRESHED", f"refresh refusal code was {error.code}")
+        facts = error.facts or {}
+        check(facts.get("authorization_state") == "not_refreshed", f"refresh facts state: {facts}")
+        check(facts.get("last_step") == "host_required", f"refresh facts step: {facts}")
+        check(facts.get("error") == "ENDPOINT_NOT_REFRESHED", f"refresh facts error: {facts}")
+        check(facts.get("endpoint_pid") is None, f"refresh facts invented a PID: {facts}")
+    else:
+        raise AssertionError("refresh without a running Host must refuse")
+    # CLI/machine emission surfaces the same typed partial facts on stderr.
+    result = subprocess.run(
+        [str(MANAGER), "trust", "endpoint-refresh", "--root", str(service_root), "--timeout", "1"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    check(result.returncode != 0, "CLI refresh without a running Host returned success")
+    document = json.loads(result.stderr.strip().splitlines()[-1])
+    check(document["error"]["code"] == "ENDPOINT_NOT_REFRESHED", f"CLI refresh error: {document}")
+    check(
+        document["error"].get("facts", {}).get("last_step") == "host_required",
+        f"CLI refresh facts: {document}",
+    )
 
 
 def check_vectors() -> None:
@@ -1230,6 +1289,9 @@ def run(root: Path) -> None:
     #     receipt consumer, and the removed/omitting membership export gate.
     test_admin_client_public_refusals(root)
     test_wait_endpoint_applied_public(root)
+    # 15. The declared service entry owns the nine-step refresh sequence and
+    #     exposes typed not-refreshed partial facts on failure.
+    test_refresh_sequence_public(root)
 
     # No private material may appear in the emitted receipts.
     for receipt in (initialized, device_a, device_b, revoked, status, partial):
