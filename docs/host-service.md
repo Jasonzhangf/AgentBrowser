@@ -94,8 +94,7 @@ ordinary UI profile selection as a service configuration change or restart.
 Config version 1 is accepted only as the legacy in-memory shape and is
 normalized to an explicit null root for downstream projection. A v2 config must
 contain `profile_root`; a persistent mode without a root, a root with in-memory
-mode, a non-canonical root, or a root containing characters that cannot be
-matched in the recorded argv fails explicitly. Credentials, bearer tokens, and
+mode, or a non-canonical root fails explicitly. Credentials, bearer tokens, and
 client certificates are not accepted as service config and are not written to
 service logs or the launchd plist.
 
@@ -104,11 +103,13 @@ service logs or the launchd plist.
 The executable launcher is `scripts/host-service/host-service`.
 
 Install binds one executable and writes private config, runtime/log roots, and
-an unloaded launchd plist. The runtime root should use a short absolute path
-because macOS limits Unix-domain socket path length. It must not contain
-whitespace, quotes, or backslashes because lifecycle ownership compares the
-Host's exact argv. The default is a private per-user directory under
-`/private/tmp`.
+an unloaded launchd plist. The service root may contain spaces and follows the
+documented default shape under `$HOME/Library/Application Support/AgentBrowser/
+host-service`; the derived `--authorization-registry` flag and the lifecycle
+ownership check both use argv lists, so they preserve the exact path without
+re-parsing it through a shell. The runtime root should use a short absolute
+path because macOS limits Unix-domain socket path length. Its default is a
+private per-user directory under `/private/tmp`.
 
 ```sh
 scripts/host-service/host-service install \

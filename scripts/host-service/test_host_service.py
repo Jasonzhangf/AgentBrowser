@@ -943,18 +943,58 @@ def acceptance(binary: Path, protocol_version: int) -> None:
         if private_mode(shared_runtime) != 0o755:
             raise AssertionError("existing runtime directory permissions were changed")
 
+        # Both the service root and the runtime root carry a space, matching
+        # the documented default shape ("Application Support"). The names stay
+        # short so the Host's own session socket still fits the Unix bind bound.
+        spaced_token = uuid.uuid4().hex[:6]
+        spaced_root = runtime_base / f"abhs-sv c-{spaced_token}"
+        spaced_runtime = runtime_base / f"abhs-r t-{spaced_token}"
+        os.makedirs(spaced_root, mode=0o700, exist_ok=True)
+        os.makedirs(spaced_root / "run", mode=0o700, exist_ok=True)
+        os.makedirs(spaced_root / "logs", mode=0o700, exist_ok=True)
+        os.makedirs(spaced_runtime, mode=0o700, exist_ok=True)
         spaced_result = run_manager(
             "install",
             "--root",
-            str(base / "spaced-service"),
+            str(spaced_root),
             "--binary",
             str(binary),
             "--runtime-root",
-            str(base / "runtime with space"),
+            str(spaced_runtime),
             "--protocol-version",
             str(protocol_version),
         )
-        assert_error(spaced_result, "runtime root cannot contain whitespace")
+        if spaced_result.returncode != 0:
+            raise AssertionError(f"spaced runtime install failed: {spaced_result.stderr}")
+
+        spaced_started = manager_json(
+            "start",
+            "--root",
+            str(spaced_root),
+            "--ready-timeout",
+            "60",
+        )
+        if spaced_started["state"] != "running":
+            raise AssertionError(f"spaced service root did not start: {spaced_started!r}")
+        spaced_status = manager_json("status", "--root", str(spaced_root))
+        if spaced_status["state"] != "running" or spaced_status.get("config_identity_match") is not True:
+            raise AssertionError(f"spaced service root lost process identity: {spaced_status!r}")
+        spaced_restarted = manager_json(
+            "restart",
+            "--root",
+            str(spaced_root),
+            "--ready-timeout",
+            "60",
+        )
+        if spaced_restarted["state"] != "running" or spaced_restarted["pid"] == spaced_started["pid"]:
+            raise AssertionError(f"spaced service root restart reused the Host pid: {spaced_restarted!r}")
+        spaced_stopped = manager_json("stop", "--root", str(spaced_root))
+        if spaced_stopped["state"] != "stopped":
+            raise AssertionError(f"spaced service root did not stop: {spaced_stopped!r}")
+        if spaced_runtime.exists() and any(spaced_runtime.iterdir()):
+            raise AssertionError("spaced service root left an owned runtime behind")
+        shutil.rmtree(spaced_runtime, ignore_errors=True)
+        shutil.rmtree(spaced_root, ignore_errors=True)
 
         installed = manager_json(
             "install",

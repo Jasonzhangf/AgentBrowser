@@ -559,10 +559,19 @@ def test_status_owner_and_export_denials(root: Path) -> None:
         "projection_sha256": projection_sha,
     }
 
-    # Malformed and mismatched membership receipts are refused.
+    # A malformed receipt and an explicit null owner are not a committed grant;
+    # the latter keeps the legacy migration signal instead of inventing "None".
     assert_export_refused(
-        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        denial_root, device_id, output, "PROFILE_ACCESS_MIGRATION_REQUIRED",
         membership_receipt={"not": "a receipt"},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_MIGRATION_REQUIRED",
+        membership_receipt={**valid_membership, "owner_device_id": None},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_MIGRATION_REQUIRED",
+        membership_receipt={**valid_membership, "owner_device_id": None, "members": []},
     )
     # A committed removal, a missing target, and a missing owner are not grants.
     assert_export_refused(

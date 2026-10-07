@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import fcntl
 import hashlib
 import ipaddress
@@ -12,7 +13,6 @@ import json
 import os
 import re
 import secrets
-import shlex
 import shutil
 import signal
 import socket
@@ -36,7 +36,6 @@ DEFAULT_RUNTIME_ROOT = DEFAULT_RUNTIME_BASE / f"agentbrowser-host-{os.getuid()}"
 LABEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PROFILE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-PROCESS_PATH_FORBIDDEN = frozenset(" \t\r\n'\"\\")
 SOCKET_PATH_LIMIT = 100
 STATE_NAME = "state.json"
 CONFIG_NAME = "config.json"
@@ -217,13 +216,7 @@ def runtime_root_from(value: str | None) -> Path:
     # Keep the lexical path. macOS resolves /tmp to /private/tmp, but the
     # shorter spelling is part of the Unix-domain-socket path budget.
     result = Path(os.path.abspath(os.fspath(path)))
-    validate_process_path(str(result), "runtime root")
     return result
-
-
-def validate_process_path(value: str, field: str) -> None:
-    if any(character in PROCESS_PATH_FORBIDDEN for character in value):
-        raise ServiceError(f"{field} cannot contain whitespace, quotes, or backslashes")
 
 
 def validate_label(value: str) -> str:
@@ -255,7 +248,6 @@ def sha256_path(path: Path) -> str:
 
 def executable_path(value: str) -> Path:
     path = normalize_absolute(value, "host binary")
-    validate_process_path(str(path), "host binary")
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ServiceError(f"host binary is not executable: {path}")
     return path
@@ -263,7 +255,6 @@ def executable_path(value: str) -> Path:
 
 def executable_file(value: str, field: str) -> Path:
     path = normalize_absolute(value, field)
-    validate_process_path(str(path), field)
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ServiceError(f"{field} is not executable: {path}")
     return path
@@ -316,7 +307,6 @@ def existing_profile_root(root: Path) -> str | None:
     normalized = normalize_absolute(value, "existing profile root")
     if str(normalized) != value:
         raise ServiceError("existing service config profile_root must be canonical")
-    validate_process_path(value, "existing profile root")
     if config.get("profile_mode") != "persistent":
         raise ServiceError("existing profile_root requires persistent mode")
     return value
@@ -439,7 +429,6 @@ def load_config(root: Path) -> tuple[dict[str, object], str]:
         profile_root = normalize_absolute(profile_root_value, "profile root")
         if str(profile_root) != profile_root_value:
             raise ServiceError("profile_root must be the canonical absolute path")
-        validate_process_path(str(profile_root), "profile root")
         if profile_mode != "persistent":
             raise ServiceError("profile_root requires profile_mode persistent")
     else:
@@ -537,7 +526,6 @@ def validate_state(state: dict[str, object]) -> None:
         normalized_root = normalize_absolute(state_profile_root, "service state profile root")
         if str(normalized_root) != state_profile_root:
             raise ServiceError("service state profile_root must be canonical")
-        validate_process_path(state_profile_root, "service state profile root")
         if state["profile_mode"] != "persistent":
             raise ServiceError("service state profile_root requires persistent mode")
     elif state["profile_mode"] == "persistent":
@@ -576,7 +564,6 @@ def validate_state(state: dict[str, object]) -> None:
         normalized_registry = Path(state_registry)
         if not normalized_registry.is_absolute():
             raise ServiceError("service state authorization_registry must be absolute")
-        validate_process_path(state_registry, "service state authorization registry")
     session_id = state["session_id"]
     ready_error = state.get("ready_error")
     if ready_error is not None and not isinstance(ready_error, str):
@@ -621,6 +608,61 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def process_argv(pid: int) -> list[str] | None:
+    """Return the exact process argv on macOS without shell re-parsing.
+
+    ``ps`` prints one command string, so a path containing a space cannot be
+    reconstructed into its original argument boundaries. ``KERN_PROCARGS2``
+    returns the kernel-held argv entries as NUL-separated bytes; this is the
+    identity basis for owned Host and endpoint processes.
+    """
+    if sys.platform != "darwin":
+        return None
+    libc = ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, pid)
+    size = ctypes.c_size_t()
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        return None
+    if size.value < 4 or size.value > 1024 * 1024:
+        return None
+    buffer = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+        return None
+    data = buffer.raw[: size.value]
+    argc = int.from_bytes(data[:4], sys.byteorder)
+    if argc <= 0:
+        return None
+
+    def read_string(offset: int) -> tuple[str, int] | None:
+        end = data.find(b"\x00", offset)
+        if end < 0:
+            return None
+        try:
+            return data[offset:end].decode("utf-8"), end + 1
+        except UnicodeDecodeError:
+            return None
+
+    first = read_string(4)
+    if first is None:
+        return None
+    cursor = first[1]
+    while cursor < len(data) and data[cursor] == 0:
+        cursor += 1
+    second = read_string(cursor)
+    if second is None:
+        return None
+    argv: list[str] = []
+    argv.append(second[0])
+    cursor = second[1]
+    for _ in range(1, argc):
+        entry = read_string(cursor)
+        if entry is None:
+            return None
+        argv.append(entry[0])
+        cursor = entry[1]
+    return argv
+
+
 def process_snapshot(pid: int) -> tuple[str, str] | None:
     try:
         result = subprocess.run(
@@ -642,16 +684,12 @@ def process_snapshot(pid: int) -> tuple[str, str] | None:
 
 
 def host_command_matches(
-    snapshot: tuple[str, str],
+    argv: list[str],
     binary: str,
     socket_dir: str,
     profile_root: str | None,
     authorization_registry: str | None,
 ) -> bool:
-    try:
-        argv = shlex.split(snapshot[1])
-    except ValueError:
-        return False
     if len(argv) < 3 or argv[:3] != [binary, "--socket-dir", socket_dir]:
         return False
     remainder = argv[3:]
@@ -685,7 +723,10 @@ def stop_target_status(
         return "gone"
     if snapshot[0].startswith("Z"):
         return "gone"
-    if not host_command_matches(snapshot, binary, socket_dir, profile_root, authorization_registry):
+    argv = process_argv(pid)
+    if argv is None:
+        return "unknown"
+    if not host_command_matches(argv, binary, socket_dir, profile_root, authorization_registry):
         return "changed"
     return "owned"
 
@@ -714,13 +755,16 @@ def state_identity(state: dict[str, object]) -> tuple[bool, str]:
         return False, "foreign"
     if snapshot[0].startswith("Z"):
         return False, "dead"
-    command = snapshot[1]
+    argv = process_argv(pid)
+    if argv is None:
+        return False, "foreign"
+    command = " ".join(argv)
     binary = str(state.get("host_binary", ""))
     socket_dir = str(state.get("socket_dir", ""))
     profile_root = state.get("profile_root")
     authorization_registry = state.get("authorization_registry")
     if not host_command_matches(
-        snapshot,
+        argv,
         binary,
         socket_dir,
         profile_root if isinstance(profile_root, str) else None,
@@ -1165,8 +1209,6 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
         if profile_root_value is not None
         else None
     )
-    if profile_root is not None:
-        validate_process_path(str(profile_root), "profile root")
     existing = load_state(root) if state_path(root).is_file() else None
     if existing is not None:
         state_status = stale_or_running(root, existing)
@@ -2841,11 +2883,7 @@ def endpoint_command(
     ]
 
 
-def endpoint_command_matches(snapshot_command: str, expected_argv: list[str]) -> bool:
-    try:
-        argv = shlex.split(snapshot_command)
-    except ValueError:
-        return False
+def endpoint_command_matches(argv: list[str], expected_argv: list[str]) -> bool:
     return argv == expected_argv
 
 
@@ -2887,7 +2925,10 @@ def endpoint_process_status(record: dict[str, object]) -> str:
         return "gone" if not pid_alive(pid) else "unknown"
     if snapshot[0].startswith("Z"):
         return "gone"
-    if not endpoint_command_matches(snapshot[1], [str(item) for item in record["command"]]):
+    argv = process_argv(pid)
+    if argv is None:
+        return "unknown"
+    if not endpoint_command_matches(argv, [str(item) for item in record["command"]]):
         return "changed"
     return "owned"
 
@@ -3550,6 +3591,12 @@ def export_bundle(
             TRUST_EXIT_CODE,
             code="PROFILE_CATALOG_UNAVAILABLE",
         )
+    if membership_receipt.get("owner_device_id") is None:
+        raise ServiceError(
+            "profile has no committed owner; migrate ownership through the public membership operation before export",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_MIGRATION_REQUIRED",
+        )
     # A usable grant is the Host-owned committed proof: export_eligible, bound
     # to this device and owner, with the target inside the exact applied members.
     # A removed or target-omitting result is never an eligible grant.
@@ -3710,6 +3757,12 @@ def _export_membership_receipt(root: Path, device_id: str) -> dict[str, object] 
     # target-omitting membership by inserting the target here.
     owner_device_id = profile["owner_device_id"]
     members = list(profile["members"])
+    if owner_device_id is None:
+        raise ServiceError(
+            "profile has no committed owner; migrate ownership through the public membership operation before export",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_MIGRATION_REQUIRED",
+        )
     if (
         not isinstance(owner_device_id, str)
         or not owner_device_id
