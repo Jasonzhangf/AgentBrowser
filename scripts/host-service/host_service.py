@@ -3591,15 +3591,11 @@ def export_bundle(
             TRUST_EXIT_CODE,
             code="PROFILE_CATALOG_UNAVAILABLE",
         )
-    if membership_receipt.get("owner_device_id") is None:
-        raise ServiceError(
-            "profile has no committed owner; migrate ownership through the public membership operation before export",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_MIGRATION_REQUIRED",
-        )
     # A usable grant is the Host-owned committed proof: export_eligible, bound
     # to this device and owner, with the target inside the exact applied members.
-    # A removed or target-omitting result is never an eligible grant.
+    # A removed or target-omitting result is never an eligible grant. Type,
+    # keys and list membership are validated before owner_device_id is read, so
+    # malformed or non-object input keeps the typed write refusal.
     if (
         not isinstance(membership_receipt, dict)
         or membership_receipt.get("receipt_type") != "export_eligible"
@@ -3608,10 +3604,27 @@ def export_bundle(
         or membership_receipt["catalog_revision"] < 0
         or not isinstance(membership_receipt.get("profile_id"), str)
         or not membership_receipt["profile_id"]
-        or not isinstance(membership_receipt.get("owner_device_id"), str)
-        or not membership_receipt["owner_device_id"]
         or not isinstance(membership_receipt.get("members"), list)
         or device_id not in membership_receipt["members"]
+        or "owner_device_id" not in membership_receipt
+    ):
+        raise ServiceError(
+            "profile membership receipt does not match the enrolled device and profile",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_WRITE_FAILED",
+        )
+    # Only an explicitly null owner in an otherwise valid receipt shape is the
+    # legacy-catalog migration signal.
+    if membership_receipt["owner_device_id"] is None:
+        raise ServiceError(
+            "profile has no committed owner; migrate ownership through the public membership operation before export",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_MIGRATION_REQUIRED",
+        )
+    # A non-string or empty owner is a malformed grant, never a migration.
+    if (
+        not isinstance(membership_receipt["owner_device_id"], str)
+        or not membership_receipt["owner_device_id"]
         or membership_receipt["owner_device_id"] not in membership_receipt["members"]
     ):
         raise ServiceError(

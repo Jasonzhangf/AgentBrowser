@@ -307,6 +307,11 @@ and public `export_bundle` refusals for malformed/mismatched membership and
 endpoint receipts, wrong registry/projection material, and stale receipts. It
 prints private material only as public hashes.
 
+Malformed, non-object, missing-key, removed, target-omitting, and mismatched
+membership receipts refuse at `PROFILE_ACCESS_WRITE_FAILED` and create no
+bundle. Only an otherwise valid receipt shape whose `owner_device_id` is
+explicitly null maps to `PROFILE_ACCESS_MIGRATION_REQUIRED`.
+
 Authenticated successful export and Android consumption remain `NOT_RUN` here:
 they need the real Host catalog membership and endpoint applied receipts from
 their owning modules. The public consumer verifies only malformed-input refusal

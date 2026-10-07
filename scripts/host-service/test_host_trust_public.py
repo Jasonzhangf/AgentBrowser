@@ -339,7 +339,7 @@ def assert_export_refused(
     output: Path,
     expected_code: str,
     *,
-    membership_receipt: dict[str, object] | None = None,
+    membership_receipt: object = None,
     endpoint_receipt: dict[str, object] | None = None,
 ) -> None:
     trust = root / "trust"
@@ -559,18 +559,32 @@ def test_status_owner_and_export_denials(root: Path) -> None:
         "projection_sha256": projection_sha,
     }
 
-    # A malformed receipt and an explicit null owner are not a committed grant;
-    # the latter keeps the legacy migration signal instead of inventing "None".
+    # Malformed and non-object receipts are a typed write refusal. Only an
+    # otherwise valid receipt shape with an explicit null owner is migration.
     assert_export_refused(
-        denial_root, device_id, output, "PROFILE_ACCESS_MIGRATION_REQUIRED",
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
         membership_receipt={"not": "a receipt"},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt=[],
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt="not a receipt",
     )
     assert_export_refused(
         denial_root, device_id, output, "PROFILE_ACCESS_MIGRATION_REQUIRED",
         membership_receipt={**valid_membership, "owner_device_id": None},
     )
+    missing_owner_key = dict(valid_membership)
+    missing_owner_key.pop("owner_device_id")
     assert_export_refused(
-        denial_root, device_id, output, "PROFILE_ACCESS_MIGRATION_REQUIRED",
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt=missing_owner_key,
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
         membership_receipt={**valid_membership, "owner_device_id": None, "members": []},
     )
     # A committed removal, a missing target, and a missing owner are not grants.

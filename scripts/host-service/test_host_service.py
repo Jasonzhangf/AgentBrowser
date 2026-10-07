@@ -949,6 +949,7 @@ def acceptance(binary: Path, protocol_version: int) -> None:
         spaced_token = uuid.uuid4().hex[:6]
         spaced_root = runtime_base / f"abhs-sv c-{spaced_token}"
         spaced_runtime = runtime_base / f"abhs-r t-{spaced_token}"
+        register_service_cleanup(spaced_root, spaced_runtime)
         os.makedirs(spaced_root, mode=0o700, exist_ok=True)
         os.makedirs(spaced_root / "run", mode=0o700, exist_ok=True)
         os.makedirs(spaced_root / "logs", mode=0o700, exist_ok=True)
