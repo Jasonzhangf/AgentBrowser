@@ -309,9 +309,12 @@ prints private material only as public hashes.
 
 Malformed, non-object, missing-key, removed, target-omitting, and mismatched
 membership receipts refuse at `PROFILE_ACCESS_WRITE_FAILED` and create no
-bundle. Only an otherwise valid receipt shape bound to the enrolled device's
-selected profile whose `owner_device_id` is
-explicitly null maps to `PROFILE_ACCESS_MIGRATION_REQUIRED`.
+bundle. `export_bundle` compares the receipt `profile_id` against an explicit
+`profile_id` grant and refuses a mismatch with `PROFILE_ACCESS_WRITE_FAILED`; a
+`default_profile` grant is resolved against the live Host catalog by the CLI
+receipt producer, not by `export_bundle`. Only an otherwise valid receipt shape
+whose `owner_device_id` is explicitly null maps to
+`PROFILE_ACCESS_MIGRATION_REQUIRED`.
 
 Authenticated successful export and Android consumption remain `NOT_RUN` here:
 they need the real Host catalog membership and endpoint applied receipts from
