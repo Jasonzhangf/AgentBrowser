@@ -426,6 +426,116 @@ def register_service_cleanup(root: Path, runtime: Path, *extra_files: Path) -> N
     atexit.register(cleanup)
 
 
+def spaced_root_cleanup_subprocess_contract(binary: Path, protocol_version: int) -> None:
+    """Run the spaced-root failure path and prove each cleanup hook boundary."""
+    runtime_base = Path("/private/tmp") if Path("/private/tmp").is_dir() else Path("/tmp")
+    commands = {
+        "registered": ["spaced-fail"],
+        "removed": ["spaced-fail", "--cleanup-removed"],
+    }
+    records: dict[str, dict[str, object]] = {}
+    try:
+        for mode, child_args in commands.items():
+            command = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                *child_args,
+                "--binary",
+                str(binary),
+                "--protocol-version",
+                str(protocol_version),
+                "--runtime-base",
+                str(runtime_base),
+            ]
+            result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=180)
+            record = json.loads(result.stdout.splitlines()[-1])
+            root = Path(str(record["root"]))
+            runtime = Path(str(record["runtime"]))
+            host_pid = int(record["pid"])
+            observed = {
+                **record,
+                "pid_alive_after": pid_alive(host_pid),
+                "root_absent": not root.exists(),
+                "runtime_absent": not runtime.exists(),
+            }
+            print(
+                json.dumps(
+                    {
+                        "cleanup_mode": mode,
+                        "returncode": result.returncode,
+                        "record": record,
+                        "observed": observed,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            records[mode] = observed
+            if result.returncode != 1 or "EXPECTED_SPACED_FAILURE_BEFORE_STOP" not in result.stderr:
+                raise AssertionError(
+                    f"failure-path child did not abort before explicit stop: {result.stderr}"
+                )
+
+        registered = records["registered"]
+        removed = records["removed"]
+        if registered["pid_alive_after"] is not False:
+            raise AssertionError(f"cleanup hook did not stop the exact Host PID: {registered!r}")
+        if registered["root_absent"] is not True or registered["runtime_absent"] is not True:
+            raise AssertionError("cleanup hook did not remove both exact spaced directories")
+        if removed["pid_alive_after"] is not True:
+            raise AssertionError("discriminator did not leave the exact Host PID alive")
+        if removed["root_absent"] is not False or removed["runtime_absent"] is not False:
+            raise AssertionError("discriminator did not leave both exact spaced directories present")
+    finally:
+        for record in records.values():
+            root = Path(str(record["root"]))
+            runtime = Path(str(record["runtime"]))
+            run_manager("stop", "--root", str(root))
+            shutil.rmtree(runtime, ignore_errors=True)
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def spaced_root_failure_main(
+    binary: Path,
+    protocol_version: int,
+    runtime_base: Path,
+    cleanup_removed: bool,
+) -> int:
+    token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    root = runtime_base / f"abhs-sv c-{token}"
+    runtime = runtime_base / f"abhs-r t-{token}"
+    if not cleanup_removed:
+        register_service_cleanup(root, runtime)
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    os.makedirs(root / "run", mode=0o700, exist_ok=True)
+    os.makedirs(root / "logs", mode=0o700, exist_ok=True)
+    os.makedirs(runtime, mode=0o700, exist_ok=True)
+    install = run_manager(
+        "install",
+        "--root",
+        str(root),
+        "--binary",
+        str(binary),
+        "--runtime-root",
+        str(runtime),
+        "--protocol-version",
+        str(protocol_version),
+    )
+    if install.returncode != 0:
+        raise AssertionError(f"failure-path install failed: {install.stderr}")
+    started = manager_json("start", "--root", str(root), "--ready-timeout", "60")
+    if started["state"] != "running":
+        raise AssertionError(f"failure-path service did not start: {started!r}")
+    host_pid = int(started["pid"])
+    if host_pid <= 0:
+        raise AssertionError(f"failure-path start did not report a Host PID: {started!r}")
+    status = manager_json("status", "--root", str(root))
+    if status["state"] != "running" or status.get("config_identity_match") is not True:
+        raise AssertionError(f"failure-path service lost process identity: {status!r}")
+    print(json.dumps({"root": str(root), "runtime": str(runtime), "pid": host_pid}), flush=True)
+    raise AssertionError("EXPECTED_SPACED_FAILURE_BEFORE_STOP")
+
+
 def terminal_launchd_rejection_contract() -> None:
     with tempfile.TemporaryDirectory(prefix="agentbrowser-host-service-dev-") as temporary:
         base = Path(temporary)
@@ -996,6 +1106,7 @@ def acceptance(binary: Path, protocol_version: int) -> None:
             raise AssertionError("spaced service root left an owned runtime behind")
         shutil.rmtree(spaced_runtime, ignore_errors=True)
         shutil.rmtree(spaced_root, ignore_errors=True)
+        spaced_root_cleanup_subprocess_contract(binary, protocol_version)
 
         installed = manager_json(
             "install",
@@ -1273,9 +1384,21 @@ def acceptance(binary: Path, protocol_version: int) -> None:
 
 def main() -> int:
     arguments = argparse.ArgumentParser()
+    arguments.add_argument("mode", nargs="?", default="run")
     arguments.add_argument("--binary", type=Path)
     arguments.add_argument("--protocol-version", type=protocol_version_argument)
+    arguments.add_argument("--runtime-base", type=Path)
+    arguments.add_argument("--cleanup-removed", action="store_true")
     args = arguments.parse_args()
+    if args.mode == "spaced-fail":
+        if args.binary is None or args.protocol_version is None or args.runtime_base is None:
+            raise SystemExit("--binary, --protocol-version, and --runtime-base must be supplied together")
+        return spaced_root_failure_main(
+            args.binary.resolve(),
+            args.protocol_version,
+            args.runtime_base,
+            args.cleanup_removed,
+        )
     if args.binary is None and args.protocol_version is None:
         terminal_launchd_rejection_contract()
         persistent_maintenance_contract(11)

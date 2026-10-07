@@ -438,12 +438,14 @@ or endpoint-file receipt. A missing live producer stays unavailable and refused
 at the existing `PROFILE_CATALOG_UNAVAILABLE`, `ENDPOINT_REFRESH_REQUIRED`,
 `ENDPOINT_NOT_REFRESHED`, or `PROJECTION_MATERIAL_CONFLICT` boundary.
 `_export_membership_receipt` consumes the committed member set exactly as the
-Host reports it and refuses with `PROFILE_ACCESS_WRITE_FAILED` when the enrolled
-target is not already a committed member; it never inserts the target back to
-reach an eligible grant. Only an explicit authorized grant entry point submits a
-member set that contains the target, so a fresh enrollment can reach the
-Host-owned `assign_access` result without the export path re-authorizing a
-removed or target-omitting membership.
+Host reports it. An ownerless selected legacy profile requires explicit
+ownership migration. A profile with a committed owner refuses with
+`PROFILE_ACCESS_WRITE_FAILED` when the enrolled target is not already a
+committed member. It never inserts the target back to reach an eligible grant.
+Only an explicit authorized grant entry point submits a member set that contains
+the target, so a fresh enrollment can reach the Host-owned `assign_access`
+result without the export path re-authorizing a removed or target-omitting
+membership.
 
 The public consumer adds one-shot local admin transport harnesses and
 `wait_endpoint_applied` fixtures for malformed/mismatched/stale/EOF refusal.

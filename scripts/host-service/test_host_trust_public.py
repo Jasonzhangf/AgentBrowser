@@ -585,6 +585,14 @@ def test_status_owner_and_export_denials(root: Path) -> None:
     )
     assert_export_refused(
         denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "owner_device_id": None, "members": [device_id, 42]},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={**valid_membership, "owner_device_id": None, "members": [device_id, ""]},
+    )
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
         membership_receipt={**valid_membership, "owner_device_id": None, "members": []},
     )
     # A committed removal, a missing target, and a missing owner are not grants.

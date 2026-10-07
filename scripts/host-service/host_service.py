@@ -3605,6 +3605,10 @@ def export_bundle(
         or not isinstance(membership_receipt.get("profile_id"), str)
         or not membership_receipt["profile_id"]
         or not isinstance(membership_receipt.get("members"), list)
+        or any(
+            not isinstance(member, str) or not member
+            for member in membership_receipt["members"]
+        )
         or device_id not in membership_receipt["members"]
         or "owner_device_id" not in membership_receipt
     ):
