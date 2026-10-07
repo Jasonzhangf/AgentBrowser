@@ -309,7 +309,8 @@ prints private material only as public hashes.
 
 Malformed, non-object, missing-key, removed, target-omitting, and mismatched
 membership receipts refuse at `PROFILE_ACCESS_WRITE_FAILED` and create no
-bundle. Only an otherwise valid receipt shape whose `owner_device_id` is
+bundle. Only an otherwise valid receipt shape bound to the enrolled device's
+selected profile whose `owner_device_id` is
 explicitly null maps to `PROFILE_ACCESS_MIGRATION_REQUIRED`.
 
 Authenticated successful export and Android consumption remain `NOT_RUN` here:

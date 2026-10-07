@@ -604,6 +604,15 @@ def test_status_owner_and_export_denials(root: Path) -> None:
         denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
         membership_receipt={**valid_membership, "device_id": "00000000-0000-4000-8000-000000000000"},
     )
+    # A mismatched grant is not the legacy-catalog case, even when owner is null.
+    assert_export_refused(
+        denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
+        membership_receipt={
+            **valid_membership,
+            "profile_id": "other",
+            "owner_device_id": None,
+        },
+    )
     assert_export_refused(
         denial_root, device_id, output, "PROFILE_ACCESS_WRITE_FAILED",
         membership_receipt={**valid_membership, "profile_id": "other"},

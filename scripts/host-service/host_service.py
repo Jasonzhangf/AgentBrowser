@@ -3613,6 +3613,13 @@ def export_bundle(
             TRUST_EXIT_CODE,
             code="PROFILE_ACCESS_WRITE_FAILED",
         )
+    selection = device["initial_profile_grant"]["selection"]
+    if isinstance(selection, dict) and membership_receipt["profile_id"] != selection["profile_id"]:
+        raise ServiceError(
+            "profile membership receipt does not match the initial profile grant",
+            TRUST_EXIT_CODE,
+            code="PROFILE_ACCESS_WRITE_FAILED",
+        )
     # Only an explicitly null owner in an otherwise valid receipt shape is the
     # legacy-catalog migration signal.
     if membership_receipt["owner_device_id"] is None:
@@ -3629,13 +3636,6 @@ def export_bundle(
     ):
         raise ServiceError(
             "profile membership receipt does not match the enrolled device and profile",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_WRITE_FAILED",
-        )
-    selection = device["initial_profile_grant"]["selection"]
-    if isinstance(selection, dict) and membership_receipt["profile_id"] != selection["profile_id"]:
-        raise ServiceError(
-            "profile membership receipt does not match the initial profile grant",
             TRUST_EXIT_CODE,
             code="PROFILE_ACCESS_WRITE_FAILED",
         )
