@@ -385,24 +385,36 @@ exposes `authorization_state: "not_refreshed"` with typed partial facts
 typed `ENDPOINT_NOT_REFRESHED`, `ENDPOINT_RECEIPT_MALFORMED`,
 `ENDPOINT_GENERATION_STALE`, `ENDPOINT_PID_MISMATCH`, `ENDPOINT_BIND_MISMATCH`,
 and `PROJECTION_MATERIAL_CONFLICT` identities are preserved and never become a
-synthetic ready receipt. Cancelling the bounded wait releases only the waiter;
-it never stops or cleans up the endpoint process. A second refresh advances the
-generation again, stops the previous endpoint PID, and removes the superseded
-receipt, so an old generation's receipt can never satisfy a new generation.
-`stop` also stops the owned endpoint and removes its process record and socket
-directory; a changed or foreign endpoint PID is reported, never silently
-signaled or deleted.
+synthetic ready receipt. A filesystem failure inside the acceptance step, such
+as a registry or projection read that becomes unreadable after the new endpoint
+is already started and recorded, is converted at that owning boundary instead of
+escaping as a traceback: the error keeps its original code and chain and adds
+`authorization_state: "not_refreshed"`, `last_step: "verify_applied"`, and the
+generation and endpoint PID already committed. Cancelling the bounded wait
+releases only the waiter; it never stops or cleans up the endpoint process. A
+second refresh advances the generation again, stops the previous endpoint PID,
+and removes the superseded receipt, so an old generation's receipt can never
+satisfy a new generation. `stop` also stops the owned endpoint and removes its
+process record and socket directory; a changed or foreign endpoint PID is
+reported, never silently signaled or deleted.
 
 The public locator keeps the accepted DNS name or IP literal because that is
 what the certificate SAN and the exported WSS URL must carry, but the endpoint
-producer only accepts a numeric `SocketAddr` on `--listen`. `endpoint_bind_address`
-resolves the locator to one numeric binding basis, and `validate_endpoint_bind_address`
-confirms it is locally assignable before the refresh advances the generation or
-stops the old endpoint. The start command and the applied-receipt bound-address
-verifier both call that one basis; no second bind truth is stored. A locator that
-cannot become a local listener fails as `ENDPOINT_BIND_MISMATCH` with no side
-effect, so the accepted DNS configuration reaches the real producer instead of
-projecting a DNS string into `--listen`.
+producer only accepts a numeric `SocketAddr` on `--listen`. The numeric bind is
+resolved and preflighted exactly once, before any side effect:
+`endpoint_bind_address` resolves the locator and `validate_endpoint_bind_address`
+confirms that one address is locally assignable before the refresh advances the
+generation or stops the old endpoint. That one selected value is passed into the
+start command, so preflight and start cannot disagree. The applied-receipt
+bound-address verifier compares the receipt against the actual `--listen` value
+recorded in the typed process record for that generation; it never rebuilds the
+running bind from a new DNS query. No second bind truth is stored, so a legal
+DNS locator with several addresses and a changing answer order cannot make the
+started address differ from the preflighted one, nor reject a receipt for an
+endpoint that bound correctly. A locator that cannot become a local listener
+fails as `ENDPOINT_BIND_MISMATCH` with no side effect, so the accepted DNS
+configuration reaches the real producer instead of projecting a DNS string into
+`--listen`.
 
 The endpoint binary identity and exact argv are computed before the start. The
 interval between a successful `Popen` and a persisted process record is guarded:

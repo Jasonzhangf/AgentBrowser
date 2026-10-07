@@ -1,0 +1,33 @@
+{"base": "/private/tmp/m1r3-p1c-before", "case": "p1c", "expect": "before"}
+{"case": "p1c.record_write_failure", "ok": false, "expected": {"code": "ENDPOINT_NOT_REFRESHED", "last_step": "persist_endpoint_record", "pid_exited": true, "listener_released": true, "no_orphan_runtime": true, "no_record": true}, "actual": {"error_type": "PermissionError", "code": null, "facts": {}, "orphan_pids": [6330], "record_exists": false, "runtime_dirs": ["/private/tmp/m1r3-p1c-before/rt/endpoint-60f7ca8f"], "listener_free": false, "generation": 1}}
+{
+  "failures": [
+    {
+      "case": "p1c.record_write_failure",
+      "ok": false,
+      "expected": {
+        "code": "ENDPOINT_NOT_REFRESHED",
+        "last_step": "persist_endpoint_record",
+        "pid_exited": true,
+        "listener_released": true,
+        "no_orphan_runtime": true,
+        "no_record": true
+      },
+      "actual": {
+        "error_type": "PermissionError",
+        "code": null,
+        "facts": {},
+        "orphan_pids": [
+          6330
+        ],
+        "record_exists": false,
+        "runtime_dirs": [
+          "/private/tmp/m1r3-p1c-before/rt/endpoint-60f7ca8f"
+        ],
+        "listener_free": false,
+        "generation": 1
+      }
+    }
+  ]
+}
+FINDINGS_HARNESS_FAIL

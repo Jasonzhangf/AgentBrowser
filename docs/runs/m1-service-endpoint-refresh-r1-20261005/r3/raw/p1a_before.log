@@ -1,0 +1,39 @@
+{"base": "/private/tmp/m1r3-p1a-before", "case": "p1a", "expect": "before"}
+{"case": "p1a.dns_locator_preserved", "ok": true, "expected": {"host": "rot.test", "kind": "dns"}, "actual": {"host": "rot.test", "kind": "dns"}}
+{"case": "p1a.rotating_resolution", "ok": false, "expected": {"authorization_state": "refreshed", "bound_address": "127.0.0.1:53292", "generation": 1, "status_authorization_state": "refreshed"}, "actual": {"rc": 3, "error": {"code": "ENDPOINT_BIND_MISMATCH", "message": "endpoint applied receipt bound_address does not match the locator", "facts": {"authorization_state": "not_refreshed", "error": "ENDPOINT_BIND_MISMATCH", "cause": "ENDPOINT_BIND_MISMATCH", "last_step": "verify_applied", "endpoint_generation": 1, "endpoint_pid": 5632, "bound_address": null}}, "document": {}, "generation": 1, "receipt": true, "status_authorization_state": "not_refreshed", "status_endpoint_pid": null}}
+{
+  "failures": [
+    {
+      "case": "p1a.rotating_resolution",
+      "ok": false,
+      "expected": {
+        "authorization_state": "refreshed",
+        "bound_address": "127.0.0.1:53292",
+        "generation": 1,
+        "status_authorization_state": "refreshed"
+      },
+      "actual": {
+        "rc": 3,
+        "error": {
+          "code": "ENDPOINT_BIND_MISMATCH",
+          "message": "endpoint applied receipt bound_address does not match the locator",
+          "facts": {
+            "authorization_state": "not_refreshed",
+            "error": "ENDPOINT_BIND_MISMATCH",
+            "cause": "ENDPOINT_BIND_MISMATCH",
+            "last_step": "verify_applied",
+            "endpoint_generation": 1,
+            "endpoint_pid": 5632,
+            "bound_address": null
+          }
+        },
+        "document": {},
+        "generation": 1,
+        "receipt": true,
+        "status_authorization_state": "not_refreshed",
+        "status_endpoint_pid": null
+      }
+    }
+  ]
+}
+FINDINGS_HARNESS_FAIL

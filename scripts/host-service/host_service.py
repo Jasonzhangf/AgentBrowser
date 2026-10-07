@@ -2510,15 +2510,33 @@ def validate_endpoint_bind_address(locator: dict[str, object]) -> tuple[str, int
     return host, port
 
 
-def _bound_address_matches(receipt_address: str, locator: dict[str, object]) -> bool:
+def _declared_endpoint_listen(record: dict[str, object] | None) -> str | None:
+    """Return the ``--listen`` value declared by one endpoint process record.
+
+    The typed process record is the generation-scoped declaration of the exact
+    numeric bind the service started. Receipt verification compares against
+    this recorded fact instead of resolving the public locator again, so a
+    changing DNS answer cannot reject an endpoint that bound correctly.
+    """
+    if record is None:
+        return None
+    command = record.get("command")
+    if not isinstance(command, list):
+        return None
+    for index, item in enumerate(command):
+        if item == "--listen" and index + 1 < len(command):
+            value = command[index + 1]
+            return value if isinstance(value, str) and value else None
+    return None
+
+
+def _bound_address_matches(receipt_address: str, declared_listen: str) -> bool:
     parsed = _parse_bound_address(receipt_address)
-    if parsed is None:
+    declared = _parse_bound_address(declared_listen)
+    if parsed is None or declared is None:
         return False
     host, port = parsed
-    try:
-        bind_host, bind_port = endpoint_bind_address(locator)
-    except ServiceError:
-        return False
+    bind_host, bind_port = declared
     if port != bind_port:
         return False
     try:
@@ -2608,16 +2626,41 @@ def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[st
             TRUST_EXIT_CODE,
             code="ENDPOINT_PID_MISMATCH",
         )
-    if not _bound_address_matches(document["bound_address"], locator):
+    # Bind fact: the receipt must match the numeric ``--listen`` the service
+    # actually started for this generation, taken from the typed process
+    # record. The public locator is never re-resolved here.
+    try:
+        record = load_endpoint_process_record(root)
+    except OSError as error:
         raise ServiceError(
-            "endpoint applied receipt bound_address does not match the locator",
+            f"cannot read endpoint process record: {error}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+        ) from error
+    declared_listen = _declared_endpoint_listen(record)
+    if declared_listen is None:
+        raise ServiceError(
+            "endpoint process record does not declare the applied bind address",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_BIND_MISMATCH",
+        )
+    if not _bound_address_matches(document["bound_address"], declared_listen):
+        raise ServiceError(
+            "endpoint applied receipt bound_address does not match the declared listen address",
             TRUST_EXIT_CODE,
             code="ENDPOINT_BIND_MISMATCH",
         )
     registry_path = trust_path(root, TRUST_REGISTRY_NAME)
     if not registry_path.is_file():
         raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
-    registry_bytes = registry_path.read_bytes()
+    try:
+        registry_bytes = registry_path.read_bytes()
+    except OSError as error:
+        raise ServiceError(
+            f"cannot read trust registry: {error}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+        ) from error
     registry = parse_trust_registry(registry_bytes)
     registry_sha = sha256_bytes(registry_bytes)
     projection_path = trust_path(root, TRUST_PROJECTION_NAME)
@@ -2627,7 +2670,14 @@ def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[st
             TRUST_EXIT_CODE,
             code="PROJECTION_MATERIAL_CONFLICT",
         )
-    projection_bytes = projection_path.read_bytes()
+    try:
+        projection_bytes = projection_path.read_bytes()
+    except OSError as error:
+        raise ServiceError(
+            f"cannot read authorized-clients projection: {error}",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_NOT_REFRESHED",
+        ) from error
     projection_sha = sha256_bytes(projection_bytes)
     expected_projection, _ = refresh_projection(root, registry, registry_bytes)
     if (
@@ -2715,11 +2765,11 @@ def endpoint_ffmpeg_from(config: dict[str, object]) -> str:
     return "ffmpeg"
 
 
-def endpoint_listen_address(locator: dict[str, object]) -> str:
+def endpoint_listen_address(host: str, port: int) -> str:
     # The producer's --listen is a numeric SocketAddr, never the public DNS
-    # locator. endpoint_bind_address is the single binding basis shared with
-    # the applied-receipt verifier.
-    host, port = endpoint_bind_address(locator)
+    # locator. The caller passes the one numeric binding basis already resolved
+    # and preflighted for this generation, so this never makes a second DNS
+    # query that could disagree with the preflight.
     if ipaddress.ip_address(host).version == 6:
         host = f"[{host}]"
     return f"{host}:{port}"
@@ -2754,7 +2804,7 @@ def remove_owned_endpoint_runtime(socket_dir: Path, runtime_root: Path) -> None:
 
 def endpoint_command(
     config: dict[str, object],
-    locator: dict[str, object],
+    listen_address: str,
     host_socket_dir: Path,
     socket_dir: Path,
     receipt_path: Path,
@@ -2767,7 +2817,7 @@ def endpoint_command(
     return [
         str(endpoint_binary),
         "--listen",
-        endpoint_listen_address(locator),
+        listen_address,
         "--host-dir",
         str(host_socket_dir),
         "--socket-dir",
@@ -3063,12 +3113,15 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
         raise _endpoint_refresh_failure(error, step="publish_projection", generation=None) from error
     # Preflight: resolve the public locator into the numeric local bind and
     # confirm it is assignable before the generation changes or the old
-    # endpoint stops. A rejected bind must not advance the generation.
+    # endpoint stops. The one resolved numeric bind is kept and reused for the
+    # start command, so preflight, start and receipt verification share a single
+    # declared basis instead of three independent DNS answers.
     try:
         locator = trust_endpoint(root)
-        validate_endpoint_bind_address(locator)
+        bind_host, bind_port = validate_endpoint_bind_address(locator)
     except ServiceError as error:
         raise _endpoint_refresh_failure(error, step="resolve_bind_address", generation=None) from error
+    listen_address = endpoint_listen_address(bind_host, bind_port)
     # Step 2: allocate the next service-owned generation in the locator.
     current = locator.get("endpoint_generation")
     if type(current) is not int or current < 0:
@@ -3121,7 +3174,7 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
         socket_dir = make_endpoint_socket_dir(runtime_root)
         endpoint_binary = endpoint_binary_from(config)
         binary_sha256 = sha256_file(endpoint_binary)
-        command = endpoint_command(config, locator, host_socket_dir, socket_dir, receipt_path, generation, root)
+        command = endpoint_command(config, listen_address, host_socket_dir, socket_dir, receipt_path, generation, root)
     except (ServiceError, OSError) as error:
         cleanup = _reclaim_failed_endpoint_child(None, socket_dir, runtime_root, root)
         message = str(error) if not cleanup else f"{error}; endpoint cleanup failed: {cleanup}"
@@ -3186,23 +3239,17 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
     # never stops or cleans up the endpoint.
     try:
         verified = wait_endpoint_applied(root, generation=generation, timeout_seconds=float(timeout_seconds))
-    except ServiceError as error:
-        raise ServiceError(
-            str(error),
-            TRUST_EXIT_CODE,
-            code=error.code or "ENDPOINT_NOT_REFRESHED",
-            facts=_endpoint_partial_facts(
-                step="verify_applied",
-                code=error.code or "ENDPOINT_NOT_REFRESHED",
-                cause=error.code or "endpoint_not_refreshed",
-                generation=generation,
-                endpoint_pid=process.pid if endpoint_process_status(
-                    {
-                        "pid": process.pid,
-                        "command": command,
-                    }
-                ) == "owned" else None,
-            ),
+    except (ServiceError, OSError) as error:
+        raise _endpoint_refresh_failure(
+            error,
+            step="verify_applied",
+            generation=generation,
+            endpoint_pid=process.pid if endpoint_process_status(
+                {
+                    "pid": process.pid,
+                    "command": command,
+                }
+            ) == "owned" else None,
         ) from error
     # Step 8: expose the refreshed result with the endpoint PID and generation.
     return {

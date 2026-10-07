@@ -289,6 +289,43 @@ def write_endpoint_receipt(runtime: Path, generation: int, fields: dict[str, obj
     return path
 
 
+def write_endpoint_process_record(
+    root: Path,
+    runtime: Path,
+    *,
+    listen: str,
+    pid: int | None = None,
+) -> Path:
+    """Write the typed process record that declares this generation's bind.
+
+    The applied-receipt verifier compares the receipt's ``bound_address`` to the
+    numeric ``--listen`` value declared here instead of resolving the public
+    locator again. This fixture declares one numeric bind exactly as a real
+    refresh would after its start command.
+    """
+    path = root / "run" / "endpoint-process.json"
+    socket_dir = runtime / "endpoint-fixture"
+    host_service.write_json(
+        path,
+        {
+            "process_version": host_service.ENDPOINT_PROCESS_RECORD_VERSION,
+            "pid": os.getpid() if pid is None else pid,
+            "binary": str(Path(sys.executable).resolve()),
+            "binary_sha256": "0" * 64,
+            "socket_dir": str(socket_dir),
+            "runtime_root": str(runtime),
+            "command": [
+                str(Path(sys.executable).resolve()),
+                "--listen",
+                listen,
+                "--endpoint-generation",
+                "0",
+            ],
+        },
+    )
+    return path
+
+
 def set_endpoint_generation(root: Path, generation: int) -> None:
     """Move the single declared generation in the existing endpoint locator."""
     locator = host_service.trust_endpoint(root)
@@ -850,6 +887,10 @@ def test_wait_endpoint_applied_public(root: Path) -> None:
     base = root / "endpoint-consumer"
     base.mkdir(mode=0o700)
     service_root, runtime = build_service_fixture(base)
+    # The applied-receipt verifier compares against the numeric bind declared
+    # by the typed process record, not a fresh locator resolution. Declare the
+    # single numeric bind this generation was started with.
+    write_endpoint_process_record(service_root, runtime, listen="100.64.0.1:8443")
     # `trust init` seeds the service-owned applied-receipt generation in the
     # existing endpoint locator. There is no second endpoint store, and the
     # consumer's generation comes only from here (design §3.1).
@@ -981,17 +1022,19 @@ def test_endpoint_bind_basis_public(root: Path) -> None:
     numeric_host, numeric_port = host_service.endpoint_bind_address(locator)
     check(ipaddress.ip_address(numeric_host), "bind basis is not numeric")
     check(numeric_port == 8443, f"bind basis port drifted: {numeric_port}")
-    listen = host_service.endpoint_listen_address(locator)
+    listen = host_service.endpoint_listen_address(numeric_host, numeric_port)
     check("localhost" not in listen, f"raw DNS leaked into --listen: {listen}")
-    # The applied-receipt verifier compares against the same numeric basis.
+    # The applied-receipt verifier compares against the numeric bind the service
+    # actually started, taken from the typed process record; it never re-resolves
+    # the public locator.
     check(
-        host_service._bound_address_matches(f"[{numeric_host}]:8443", locator)
+        host_service._bound_address_matches(f"[{numeric_host}]:8443", listen)
         if ":" in numeric_host
-        else host_service._bound_address_matches(f"{numeric_host}:8443", locator),
-        "bound-address verifier did not use the shared bind basis",
+        else host_service._bound_address_matches(f"{numeric_host}:8443", listen),
+        "bound-address verifier did not use the declared listen address",
     )
     check(
-        not host_service._bound_address_matches("localhost:8443", locator),
+        not host_service._bound_address_matches("localhost:8443", listen),
         "bound-address verifier accepted the public DNS spelling as a bind",
     )
     # The public WSS URL and SAN semantics keep the DNS locator.
@@ -1022,35 +1065,39 @@ def test_refresh_missing_binary_typed_failure(root: Path) -> None:
     config["host_binary"] = str(private_host)
     config["binary_sha256"] = sha256_file(private_host)
     # Keep the runtime root on a short path so the real Host session socket
-    # stays inside the Unix-socket bound.
+    # stays inside the Unix-socket bound. This short runtime is removed on both
+    # the success and the failure exit.
     short_runtime = Path(tempfile.mkdtemp(prefix="r2mb-", dir="/private/tmp"))
-    short_runtime.chmod(0o700)
-    config["runtime_root"] = str(short_runtime)
-    host_service.write_json(service_root / "config.json", config)
-    # A running Host socket directory is required to pass the precondition.
-    runtime_root = host_service.runtime_root_from(str(config["runtime_root"]))
-    socket_dir = host_service.make_socket_dir(runtime_root)
-    socket_dir.mkdir(mode=0o700)
-    started_at = int(time.time())
-    state = host_service.state_for(
-        config, "0" * 64, os.getpid(), socket_dir, "subprocess", "fixture", None
-    )
-    state["started_at_unix"] = started_at
-    host_service.write_json(service_root / "run" / "state.json", state)
     try:
-        host_service.refresh_endpoint(service_root, timeout_seconds=1.0)
-    except host_service.ServiceError as error:
-        check(error.code == "ENDPOINT_NOT_REFRESHED", f"missing-binary code was {error.code}")
-        facts = error.facts or {}
-        check(facts.get("authorization_state") == "not_refreshed", f"missing-binary facts: {facts}")
-        check(facts.get("last_step") == "start_endpoint", f"missing-binary step: {facts}")
-        check(facts.get("endpoint_generation") == 1, f"missing-binary generation: {facts}")
-    else:
-        raise AssertionError("refresh with no sibling endpoint binary must refuse")
-    check(
-        host_service.trust_endpoint(service_root)["endpoint_generation"] == 1,
-        "missing-binary refresh did not record the advanced generation",
-    )
+        short_runtime.chmod(0o700)
+        config["runtime_root"] = str(short_runtime)
+        host_service.write_json(service_root / "config.json", config)
+        # A running Host socket directory is required to pass the precondition.
+        runtime_root = host_service.runtime_root_from(str(config["runtime_root"]))
+        socket_dir = host_service.make_socket_dir(runtime_root)
+        socket_dir.mkdir(mode=0o700)
+        started_at = int(time.time())
+        state = host_service.state_for(
+            config, "0" * 64, os.getpid(), socket_dir, "subprocess", "fixture", None
+        )
+        state["started_at_unix"] = started_at
+        host_service.write_json(service_root / "run" / "state.json", state)
+        try:
+            host_service.refresh_endpoint(service_root, timeout_seconds=1.0)
+        except host_service.ServiceError as error:
+            check(error.code == "ENDPOINT_NOT_REFRESHED", f"missing-binary code was {error.code}")
+            facts = error.facts or {}
+            check(facts.get("authorization_state") == "not_refreshed", f"missing-binary facts: {facts}")
+            check(facts.get("last_step") == "start_endpoint", f"missing-binary step: {facts}")
+            check(facts.get("endpoint_generation") == 1, f"missing-binary generation: {facts}")
+        else:
+            raise AssertionError("refresh with no sibling endpoint binary must refuse")
+        check(
+            host_service.trust_endpoint(service_root)["endpoint_generation"] == 1,
+            "missing-binary refresh did not record the advanced generation",
+        )
+    finally:
+        shutil.rmtree(short_runtime, ignore_errors=True)
 
 
 def test_refresh_sequence_public(root: Path) -> None:
