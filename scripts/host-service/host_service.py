@@ -150,6 +150,18 @@ def protocol_version_argument(value: str) -> int:
         raise argparse.ArgumentTypeError("protocol version must be a positive u32") from error
 
 
+def catalog_revision_argument(value: str) -> int:
+    try:
+        revision = int(value, 10)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "expected catalog revision must be a non-negative integer"
+        ) from error
+    if revision < 0:
+        raise argparse.ArgumentTypeError("expected catalog revision must be a non-negative integer")
+    return revision
+
+
 def emit(value: dict[str, object]) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
@@ -2452,6 +2464,70 @@ def admin_membership_set(
     return {"membership_receipt": receipt}
 
 
+def _admin_cli_socket(root: Path) -> Path:
+    """Locate the live Host-owned admin socket declared by one service root.
+
+    A root without a recorded running Host has no catalog owner. That is the
+    declared catalog-unavailable refusal: the service never guesses a socket
+    path, never scans other runtimes, and never reads catalog.json to answer.
+    """
+    socket_path = _admin_socket_path(root)
+    if socket_path is None:
+        raise ServiceError(
+            "no running Host catalog owner is declared for this service root",
+            TRUST_EXIT_CODE,
+            code="CATALOG_UNAVAILABLE",
+        )
+    return socket_path
+
+
+def command_admin_catalog_list(args: argparse.Namespace) -> int:
+    emit(admin_catalog_info(_admin_cli_socket(root_from(args.root))))
+    return 0
+
+
+def command_admin_catalog_create(args: argparse.Namespace) -> int:
+    emit(
+        admin_catalog_create(
+            _admin_cli_socket(root_from(args.root)),
+            args.display_name,
+            args.default,
+            args.expected_catalog_revision,
+        )
+    )
+    return 0
+
+
+def command_admin_catalog_select(args: argparse.Namespace) -> int:
+    emit(
+        admin_catalog_select(
+            _admin_cli_socket(root_from(args.root)),
+            args.profile_id,
+            args.expected_catalog_revision,
+        )
+    )
+    return 0
+
+
+def command_admin_membership_set(args: argparse.Namespace) -> int:
+    # The typed intent guard runs before any connection, so an unknown intent is
+    # the declared ADMIN_FRAME_MALFORMED refusal and never a catalog-unavailable
+    # guess about the owner.
+    intent = _admin_require_intent(args.intent)
+    emit(
+        admin_membership_set(
+            _admin_cli_socket(root_from(args.root)),
+            intent,
+            args.profile_id,
+            args.owner_device_id,
+            args.device_id,
+            list(args.member or []),
+            args.expected_catalog_revision,
+        )
+    )
+    return 0
+
+
 def _endpoint_applied_path(root: Path, generation: int) -> Path:
     config, _ = load_config(root)
     runtime_root = runtime_root_from(str(config["runtime_root"]))
@@ -3918,6 +3994,60 @@ def parser() -> argparse.ArgumentParser:
     )
     add_root_option(trust_endpoint_refresh)
     trust_endpoint_refresh.add_argument("--timeout", type=float, default=ENDPOINT_REFRESH_TIMEOUT_SECONDS)
+
+    admin = commands.add_parser(
+        "admin",
+        help="read or change the Host profile catalog through the local admin socket",
+    )
+    admin_commands = admin.add_subparsers(dest="admin_command", required=True)
+
+    admin_catalog = admin_commands.add_parser("catalog", help="own the Host profile catalog")
+    admin_catalog_commands = admin_catalog.add_subparsers(dest="admin_catalog_command", required=True)
+
+    admin_catalog_list = admin_catalog_commands.add_parser(
+        "list",
+        help="report the committed catalog revision, default profile and profiles",
+    )
+    add_root_option(admin_catalog_list)
+
+    admin_catalog_create = admin_catalog_commands.add_parser(
+        "create",
+        help="create one profile owned by the local device",
+    )
+    add_root_option(admin_catalog_create)
+    admin_catalog_create.add_argument("--display-name", required=True)
+    admin_catalog_create.add_argument("--default", action="store_true")
+    admin_catalog_create.add_argument("--expected-catalog-revision", type=catalog_revision_argument)
+
+    admin_catalog_select = admin_catalog_commands.add_parser(
+        "select",
+        help="select one existing profile as the catalog default",
+    )
+    add_root_option(admin_catalog_select)
+    admin_catalog_select.add_argument("--profile-id", required=True)
+    admin_catalog_select.add_argument("--expected-catalog-revision", type=catalog_revision_argument)
+
+    admin_membership = admin_commands.add_parser(
+        "membership",
+        help="write one explicit Host-owned membership change",
+    )
+    admin_membership_commands = admin_membership.add_subparsers(
+        dest="admin_membership_command", required=True
+    )
+
+    admin_membership_set = admin_membership_commands.add_parser(
+        "set",
+        help="apply one explicit grant or remove member set",
+    )
+    add_root_option(admin_membership_set)
+    admin_membership_set.add_argument("--profile-id", required=True)
+    # `--intent` deliberately has no argparse choices: an unknown intent is the
+    # typed ADMIN_FRAME_MALFORMED refusal, not a command-line syntax error.
+    admin_membership_set.add_argument("--intent", required=True, help="exactly grant or remove")
+    admin_membership_set.add_argument("--owner-device-id", required=True)
+    admin_membership_set.add_argument("--device-id", required=True)
+    admin_membership_set.add_argument("--member", action="append")
+    admin_membership_set.add_argument("--expected-catalog-revision", type=catalog_revision_argument)
     return result
 
 
@@ -3950,6 +4080,20 @@ def main(argv: list[str] | None = None) -> int:
             if args.trust_command == "endpoint-refresh":
                 return command_trust_endpoint_refresh(args)
             raise ServiceError(f"unsupported trust command: {args.trust_command}")
+        if args.command == "admin":
+            if args.admin_command == "catalog":
+                if args.admin_catalog_command == "list":
+                    return command_admin_catalog_list(args)
+                if args.admin_catalog_command == "create":
+                    return command_admin_catalog_create(args)
+                if args.admin_catalog_command == "select":
+                    return command_admin_catalog_select(args)
+                raise ServiceError(f"unsupported admin catalog command: {args.admin_catalog_command}")
+            if args.admin_command == "membership":
+                if args.admin_membership_command == "set":
+                    return command_admin_membership_set(args)
+                raise ServiceError(f"unsupported admin membership command: {args.admin_membership_command}")
+            raise ServiceError(f"unsupported admin command: {args.admin_command}")
         raise ServiceError(f"unsupported command: {args.command}")
     except ServiceError as error:
         if error.code:

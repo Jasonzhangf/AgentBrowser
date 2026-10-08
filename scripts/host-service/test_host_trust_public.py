@@ -16,6 +16,7 @@ import ipaddress
 import json
 import os
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -137,6 +138,63 @@ def start_manager(*arguments: str) -> subprocess.Popen[str]:
     )
 
 
+def manager_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run the real public launcher with a closed stdin.
+
+    Every admin-CLI assertion below is a real launcher subprocess; the module is
+    never called in-process for CLI evidence. ``stdin`` is /dev/null because the
+    contract must not depend on terminal input.
+    """
+    return subprocess.run(
+        [str(MANAGER), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def manager_cli_ok(*arguments: str) -> dict[str, object]:
+    result = manager_cli(*arguments)
+    check(result.returncode == 0, f"manager failed ({result.returncode}): {arguments}\n{result.stderr}")
+    check(result.stderr == "", f"a successful command wrote to stderr: {result.stderr!r}")
+    check(
+        result.stdout.endswith("\n") and result.stdout.count("\n") == 1,
+        f"success stdout is not exactly one JSON line: {result.stdout!r}",
+    )
+    value = json.loads(result.stdout)
+    check(isinstance(value, dict), f"manager JSON is not an object: {value!r}")
+    return value
+
+
+def manager_cli_error(*arguments: str) -> str:
+    result = manager_cli(*arguments)
+    check(result.returncode != 0, f"manager unexpectedly succeeded: {arguments}")
+    check(result.stdout == "", f"a refused command wrote to stdout: {result.stdout!r}")
+    try:
+        value = json.loads(result.stderr)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"manager error was not typed JSON: {result.stderr!r}") from error
+    return str(value["error"]["code"])
+
+
+def manager_cli_argparse(*arguments: str) -> None:
+    result = manager_cli(*arguments)
+    check(result.returncode == 2, f"expected argparse exit 2: {arguments} -> {result.returncode}")
+    check(result.stdout == "", f"an argparse refusal wrote to stdout: {result.stdout!r}")
+
+
+def start_manager_cli(*arguments: str) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [str(MANAGER), *arguments],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        stdin=subprocess.DEVNULL,
+    )
+
+
 def admin_error_frame(request_id: object, code: str, message: str = "typed denial") -> bytes:
     # The real Host serializes a flat error object, not a nested `error` field.
     return (
@@ -226,6 +284,26 @@ class RespondingAdminOwner(AdminOwner):
 
     def _response(self, request_bytes: bytes) -> bytes | None:
         return self._builder(read_request_id(request_bytes))
+
+
+class DelayAdminOwner(AdminOwner):
+    """Reads the request and holds the response open.
+
+    The harness only widens the waiter window for the public CLI's SIGINT
+    contract. It never returns a frame, so it can never manufacture a success.
+    """
+
+    def __init__(self, socket_path: Path) -> None:
+        self._release = threading.Event()
+        super().__init__(socket_path)
+
+    def _response(self, request_bytes: bytes) -> bytes | None:
+        self._release.wait(timeout=30.0)
+        return None
+
+    def join(self) -> None:
+        self._release.set()
+        super().join()
 
 
 def short_socket_dir(prefix: str = "ab-adm-") -> Path:
@@ -1208,6 +1286,287 @@ def check_vectors() -> None:
     check(b"projection_sha256" not in nonempty, "nonempty projection embeds a self-hash field")
 
 
+def admin_cli_fixture_root(base: Path, socket_dir: Path) -> Path:
+    """Declare one task-owned service root whose recorded socket_dir is a harness.
+
+    Only the declared state shape is written. The harness behind it returns no
+    valid frame, so this root can only observe the CLI's transport contract; it
+    can never stand in for the real Host producer.
+    """
+    fixture = base / "admin-cli-fixture-root"
+    (fixture / "run").mkdir(parents=True, mode=0o700, exist_ok=True)
+    fixture.chmod(0o700)
+    (fixture / "run").chmod(0o700)
+    binary = Path(sys.executable).resolve()
+    state = {
+        "state_version": 1,
+        "service_label": "com.agentbrowser.obscura-host",
+        "pid": os.getpid(),
+        "host_binary": str(binary),
+        "binary_sha256": sha256_file(binary),
+        "protocol_version": 11,
+        "profile_id": "default",
+        "profile_mode": "in_memory",
+        "profile_root": None,
+        "authorization_registry": None,
+        "runtime_root": str(socket_dir.parent),
+        "socket_dir": str(socket_dir),
+        "session_id": "00000000-0000-4000-8000-000000000000",
+        "config_id": "admin-cli-transport-fixture",
+        "config_sha256": "0" * 64,
+        "launch_mode": "subprocess",
+        "started_at_unix": int(time.time()),
+        "ready_error": None,
+    }
+    host_service.write_json(fixture / "run" / "state.json", state)
+    return fixture
+
+
+def test_admin_cli_syntax_contract(root: Path) -> None:
+    """The public admin CLI owns one declared stdout/exit contract.
+
+    Every value comes from a real launcher subprocess. The guard socket below is
+    a task-owned transport harness used only to prove a refusal happens before
+    any connection; it never produces a success frame.
+    """
+    dead_root = root / "admin-cli-dead-root"
+
+    manager_cli_argparse("admin")
+    manager_cli_argparse("admin", "catalog")
+    manager_cli_argparse("admin", "catalog", "bogus", "--root", str(dead_root))
+    manager_cli_argparse(
+        "admin", "membership", "set", "--root", str(dead_root), "--profile-id", "p1",
+        "--owner-device-id", "local", "--device-id", "device", "--member", "local",
+    )
+    manager_cli_argparse(
+        "admin", "catalog", "create", "--root", str(dead_root), "--display-name", "Work",
+        "--expected-catalog-revision", "-1",
+    )
+
+    # A root with no recorded running Host has no catalog owner. The service
+    # refuses with the declared code for both --root positions, and never
+    # guesses a socket or writes anything.
+    for arguments in (
+        ("admin", "catalog", "list", "--root", str(dead_root)),
+        ("--root", str(dead_root), "admin", "catalog", "list"),
+        ("admin", "catalog", "select", "--root", str(dead_root), "--profile-id", "p1"),
+        ("admin", "membership", "set", "--root", str(dead_root), "--profile-id", "p1",
+         "--intent", "grant", "--owner-device-id", "local", "--device-id", "device",
+         "--member", "local"),
+    ):
+        code = manager_cli_error(*arguments)
+        check(code == "CATALOG_UNAVAILABLE", f"{arguments} code was {code}")
+    code = manager_cli_error(
+        "admin", "catalog", "create", "--root", str(dead_root), "--display-name", "Work"
+    )
+    check(code == "CATALOG_UNAVAILABLE", f"dead-root create code was {code}")
+    check(not dead_root.exists(), "a refused admin command created the dead root")
+
+    # An unknown intent is the typed malformed-frame refusal, rejected before
+    # the client opens any connection.
+    sockets = short_socket_dir(prefix="ab-admcli-")
+    try:
+        guard_dir = sockets / "host-guard"
+        guard_dir.mkdir(mode=0o700)
+        guard_path = guard_dir / "host-admin.sock"
+        guard = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        guard.bind(str(guard_path))
+        guard.listen(1)
+        guard.settimeout(0.5)
+        fixture = admin_cli_fixture_root(sockets, guard_dir)
+        code = manager_cli_error(
+            "admin", "membership", "set", "--root", str(fixture), "--profile-id", "p1",
+            "--intent", "banana", "--owner-device-id", "local", "--device-id", "device",
+            "--member", "local",
+        )
+        check(code == "ADMIN_FRAME_MALFORMED", f"unknown intent code was {code}")
+        try:
+            guard.accept()
+            raise AssertionError("the CLI connected despite a rejected intent")
+        except socket.timeout:
+            pass
+        finally:
+            guard.close()
+            guard_path.unlink()
+    finally:
+        shutil.rmtree(sockets, ignore_errors=True)
+
+
+def test_admin_cli_sigint_release(root: Path) -> None:
+    """SIGINT releases the public CLI waiter and never triggers a retry."""
+    sockets = short_socket_dir(prefix="ab-admcli-")
+    try:
+        socket_dir = sockets / "host-sigint"
+        socket_dir.mkdir(mode=0o700)
+        owner = DelayAdminOwner(socket_dir / "host-admin.sock")
+        try:
+            fixture = admin_cli_fixture_root(sockets, socket_dir)
+            process = start_manager_cli("admin", "catalog", "list", "--root", str(fixture))
+            deadline = time.monotonic() + 10.0
+            while not owner.received and time.monotonic() < deadline:
+                time.sleep(0.01)
+            check(bool(owner.received), "the CLI never delivered the admin request")
+            os.kill(process.pid, signal.SIGINT)
+            stdout, stderr = process.communicate(timeout=60)
+            check(process.returncode == 130, f"SIGINT exit was {process.returncode}: {stderr!r}")
+            check(stdout == "", f"SIGINT wrote a success object: {stdout!r}")
+            time.sleep(0.2)
+            check(owner.connected == 1, f"the CLI connected {owner.connected} times")
+            check(len(owner.received) == 1, f"the CLI retried {len(owner.received)} times")
+        finally:
+            owner.join()
+    finally:
+        shutil.rmtree(sockets, ignore_errors=True)
+
+
+def test_admin_cli_real_producer() -> None:
+    """Drive the public admin CLI against a real Host producer.
+
+    This row is NOT_EXECUTED unless the caller supplies the real accepted
+    obscura-host binary and its protocol version. The fixture-level CLI tests
+    above never stand in for a real producer.
+    """
+    binary_value = os.environ.get("OBSCURA_HOST_BINARY", "")
+    version_value = os.environ.get("OBSCURA_HOST_PROTOCOL_VERSION", "")
+    if not binary_value or not version_value:
+        print(
+            "ADMIN_CLI_REAL_PRODUCER_NOT_EXECUTED: set OBSCURA_HOST_BINARY and "
+            "OBSCURA_HOST_PROTOCOL_VERSION"
+        )
+        return
+    binary = Path(binary_value).resolve()
+    check(binary.is_file() and os.access(binary, os.X_OK), f"real host binary required: {binary}")
+    # A short lexical base keeps the Host's exact-session sockets inside the
+    # macOS bound; /tmp is the /private/tmp alias.
+    base = Path("/tmp")
+    if not base.is_dir():
+        base = Path(tempfile.gettempdir())
+    workspace = Path(tempfile.mkdtemp(prefix="abac-", dir=base))
+    workspace.chmod(0o700)
+    service_root = workspace / "root"
+    runtime = workspace / "runtime"
+    profiles = workspace / "profiles"
+    launchd = workspace / "launchd"
+    for path in (service_root, runtime, profiles, launchd):
+        path.mkdir(mode=0o700)
+    started = False
+    try:
+        manager_json(
+            "install", "--root", str(service_root), "--binary", str(binary),
+            "--protocol-version", version_value, "--runtime-root", str(runtime),
+            "--profile-root", str(profiles), "--launchd-root", str(launchd),
+            "--service-label", "com.agentbrowser.obscura-host.ab-admin-cli",
+        )
+        manager_json(
+            "trust", "init", "--root", str(service_root),
+            "--endpoint-host", "127.0.0.1", "--endpoint-port", "8443",
+        )
+        manager_json("start", "--root", str(service_root), "--ready-timeout", "30")
+        started = True
+
+        baseline = manager_cli_ok("admin", "catalog", "list", "--root", str(service_root))
+        revision = baseline["catalog_revision"]
+        check(isinstance(revision, int) and revision >= 0, f"list revision was {revision!r}")
+        check(
+            isinstance(baseline["default_profile_id"], str),
+            f"list default profile was {baseline['default_profile_id']!r}",
+        )
+
+        created = manager_cli_ok(
+            "admin", "catalog", "create", "--root", str(service_root),
+            "--display-name", "Work", "--expected-catalog-revision", str(revision),
+        )
+        check(created["catalog_revision"] == revision + 1, "create did not commit one revision")
+        receipt = created["profile_receipt"]
+        check(receipt["owner_device_id"] == "local", "created profile owner is not local")
+        check("local" in receipt["members"], "created profile does not include local")
+        profile_id = str(receipt["profile_id"])
+        revision = created["catalog_revision"]
+
+        defaulted = manager_cli_ok(
+            "admin", "catalog", "create", "--root", str(service_root),
+            "--display-name", "Personal", "--default",
+        )
+        check(defaulted["profile_receipt"]["default"] is True, "--default was not applied")
+        revision = defaulted["catalog_revision"]
+
+        selected = manager_cli_ok(
+            "admin", "catalog", "select", "--root", str(service_root),
+            "--profile-id", profile_id, "--expected-catalog-revision", str(revision),
+        )
+        check(selected["profile_receipt"]["profile_id"] == profile_id, "select returned another profile")
+        revision = selected["catalog_revision"]
+
+        code = manager_cli_error(
+            "admin", "catalog", "select", "--root", str(service_root),
+            "--profile-id", "no-such-profile", "--expected-catalog-revision", str(revision),
+        )
+        check(code == "PROFILE_NOT_FOUND", f"unknown profile code was {code}")
+        code = manager_cli_error(
+            "admin", "catalog", "create", "--root", str(service_root),
+            "--display-name", "Conflict", "--expected-catalog-revision", str(revision + 100),
+        )
+        check(code == "CATALOG_REVISION_CONFLICT", f"stale revision code was {code}")
+
+        unknown_device = "11111111-2222-4333-8444-555555555555"
+        code = manager_cli_error(
+            "admin", "membership", "set", "--root", str(service_root),
+            "--profile-id", profile_id, "--intent", "grant", "--owner-device-id", "local",
+            "--device-id", unknown_device, "--member", "local", "--member", unknown_device,
+            "--expected-catalog-revision", str(revision),
+        )
+        check(code == "DEVICE_NOT_REGISTERED", f"unknown device code was {code}")
+
+        device = manager_json(
+            "trust", "provision", "--root", str(service_root), "--label", "PhoneA",
+            "--scope", "observe_human_control", "--scope", "profile_read",
+            "--scope", "profile_select", "--initial-profile", f"profile_id:{profile_id}",
+        )
+        device_id = str(device["device_id"])
+
+        granted = manager_cli_ok(
+            "admin", "membership", "set", "--root", str(service_root),
+            "--profile-id", profile_id, "--intent", "grant", "--owner-device-id", "local",
+            "--device-id", device_id, "--member", "local", "--member", device_id,
+            "--expected-catalog-revision", str(revision),
+        )
+        membership = granted["membership_receipt"]
+        check(membership["receipt_type"] == "export_eligible", "grant receipt is not export_eligible")
+        check(membership["device_id"] == device_id, "grant receipt target mismatch")
+        check(
+            device_id in membership["members"] and "local" in membership["members"],
+            "grant receipt does not carry the exact applied members",
+        )
+        revision = membership["catalog_revision"]
+
+        removed = manager_cli_ok(
+            "admin", "membership", "set", "--root", str(service_root),
+            "--profile-id", profile_id, "--intent", "remove", "--owner-device-id", "local",
+            "--device-id", device_id, "--member", "local",
+            "--expected-catalog-revision", str(revision),
+        )
+        removal = removed["membership_receipt"]
+        check(removal["receipt_type"] == "removed", "remove receipt is not removed")
+        check(device_id not in removal["members"], "remove receipt still lists the target")
+
+        # The readback proves the Host committed the membership, not that the CLI
+        # echoed its own request.
+        after = manager_cli_ok("admin", "catalog", "list", "--root", str(service_root))
+        profile = next(
+            (entry for entry in after["profiles"] if entry["profile_id"] == profile_id), None
+        )
+        check(profile is not None, "the selected profile disappeared from the committed catalog")
+        check(device_id not in profile["members"], "the Host did not commit the removal")
+        check(
+            after["catalog_revision"] == removal["catalog_revision"],
+            "the committed catalog revision differs from the membership receipt",
+        )
+    finally:
+        if started:
+            manager("stop", "--root", str(service_root))
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="ab-host-trust-test-"))
     root.chmod(0o700)
@@ -1469,6 +1828,11 @@ def run(root: Path) -> None:
     #     bind basis, and a post-side-effect failure stays typed.
     test_endpoint_bind_basis_public(root)
     test_refresh_missing_binary_typed_failure(root)
+    # 17. The public admin CLI boundary: one stdout/exit contract, a released
+    #     SIGINT waiter with no retry, and a real producer end-to-end row.
+    test_admin_cli_syntax_contract(root)
+    test_admin_cli_sigint_release(root)
+    test_admin_cli_real_producer()
 
     # No private material may appear in the emitted receipts.
     for receipt in (initialized, device_a, device_b, revoked, status, partial):

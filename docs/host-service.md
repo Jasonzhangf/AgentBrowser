@@ -344,6 +344,49 @@ responses with `ADMIN_FRAME_MALFORMED`, and propagates a Host denial with its
 exact typed code. Transport errors, clean EOF, and partial EOF remain
 `CATALOG_UNAVAILABLE` or `ADMIN_FRAME_MALFORMED`; they are never catalog success.
 
+The same boundary is a public CLI. Each command reads the live
+`host-admin.sock` that the recorded service state declares for `--root`. It
+never guesses a socket path, never scans another runtime, and never reads
+`catalog.json` to answer:
+
+```sh
+scripts/host-service/host-service admin catalog list --root "$ROOT"
+scripts/host-service/host-service admin catalog create --root "$ROOT" \
+  --display-name "Work" [--default] [--expected-catalog-revision N]
+scripts/host-service/host-service admin catalog select --root "$ROOT" \
+  --profile-id "p1" [--expected-catalog-revision N]
+scripts/host-service/host-service admin membership set --root "$ROOT" \
+  --profile-id "p1" --intent grant --owner-device-id local \
+  --device-id "<uuid>" --member local --member "<uuid>" \
+  [--expected-catalog-revision N]
+```
+
+`--root` is accepted before the command or at the end. `--expected-catalog-revision`
+is optional and must be a non-negative integer; it is never forced onto a
+caller. `--intent` is required and deliberately has no argparse `choices`: a
+missing value is a usage error (exit 2) and an unknown value is the typed
+`ADMIN_FRAME_MALFORMED` refusal (exit 3), rejected before any connection.
+
+Contract:
+
+- Success prints exactly one JSON line on stdout and exits 0. `admin catalog
+  list` prints the `admin.catalog.info` projection (`catalog_revision`,
+  `default_profile_id`, `profiles`); `admin catalog create` and `admin catalog
+  select` print `catalog_revision` plus `profile_receipt`; `admin membership
+  set` prints `membership_receipt`. The service never adds a `success` field and
+  never rebuilds a receipt from the request.
+- A typed owner/client refusal exits 3 with an empty stdout and one
+  `{"error":{"code":...,"message":...}}` object on stderr.
+- An argparse usage error exits 2 with an empty stdout.
+- SIGINT exits 130, prints no success object, and never retries the request.
+- A root with no recorded running Host is `CATALOG_UNAVAILABLE` (exit 3) and
+  writes nothing.
+
+Every reported revision is the Host's committed revision. A command that the
+Host commits as a catalog mutation therefore advances it; the service never
+substitutes a locally assumed revision, and a receipt is only returned when the
+Host committed it.
+
 The client matches the real Host wire. `admin.catalog.create` and
 `admin.catalog.select` answer with `catalog_revision` plus a `profile` object
 (`profile_id`, `display_name`, `default`, `owner_device_id`, `members`);
@@ -542,6 +585,20 @@ keeps the endpoint live, a second refresh that stops the old PID and removes
 the old receipt, and `stop` that stops the owned endpoint. A mock can never
 promote one of these real cases; the harness exits non-zero on any failed case
 and prints `REAL_REFRESH_E2E_PASS` only when all pass.
+
+The public consumer suite `scripts/host-service/test_host_trust_public.py` owns
+the public admin CLI contract. It runs every admin command as a real launcher
+subprocess with `/dev/null` stdin and asserts: exit 2 with empty stdout for
+missing arguments and unknown choices; exit 3 with empty stdout and one typed
+stderr object for a dead root, for an unknown intent rejected before any
+connection, and for the real Host refusals; exit 130 with no success object and
+exactly one connection/request for a SIGINT waiter; and clean-EOF/partial-frame
+transport failures as `CATALOG_UNAVAILABLE`/`ADMIN_FRAME_MALFORMED`. Its
+real-producer row installs, initializes trust, and starts the real accepted Host
+binary, then drives `admin catalog list/create/select` and `admin membership set`
+grant/remove through the CLI and re-reads the committed catalog. That row prints
+`ADMIN_CLI_REAL_PRODUCER_NOT_EXECUTED` unless `OBSCURA_HOST_BINARY` and
+`OBSCURA_HOST_PROTOCOL_VERSION` are set, so a fixture can never promote it.
 
 The test uses the actual binary and checks: missing executable, invalid profile
 config, missing/invalid protocol version, configured ready/session identity,
