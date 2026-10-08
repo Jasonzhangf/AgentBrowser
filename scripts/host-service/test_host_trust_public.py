@@ -1561,6 +1561,72 @@ def test_admin_cli_real_producer() -> None:
             after["catalog_revision"] == removal["catalog_revision"],
             "the committed catalog revision differs from the membership receipt",
         )
+
+        # LP-13c: commit a local+A+OTHER pre-state, then grant with the active
+        # target omitted while the other admitted remote member stays. The
+        # refusal must keep OTHER committed and must not move the catalog. Every
+        # call below is a real launcher subprocess, never an in-process call.
+        revision = removal["catalog_revision"]
+        other = manager_json(
+            "trust", "provision", "--root", str(service_root), "--label", "PhoneOther",
+            "--scope", "profile_read", "--initial-profile", f"profile_id:{profile_id}",
+        )
+        other_id = str(other["device_id"])
+
+        pre_state = manager_cli_ok(
+            "admin", "membership", "set", "--root", str(service_root),
+            "--profile-id", profile_id, "--intent", "grant", "--owner-device-id", "local",
+            "--device-id", device_id, "--member", "local", "--member", device_id,
+            "--member", other_id, "--expected-catalog-revision", str(revision),
+        )
+        pre_receipt = pre_state["membership_receipt"]
+        check(
+            pre_receipt["receipt_type"] == "export_eligible",
+            "LP-13c pre-state grant is not export_eligible",
+        )
+        check(
+            set(pre_receipt["members"]) == {"local", device_id, other_id},
+            f"LP-13c pre-state members are {pre_receipt['members']}",
+        )
+        revision = pre_receipt["catalog_revision"]
+
+        before = manager_cli_ok("admin", "catalog", "list", "--root", str(service_root))
+        before_profile = next(
+            entry for entry in before["profiles"] if entry["profile_id"] == profile_id
+        )
+        check(
+            set(before_profile["members"]) == {"local", device_id, other_id},
+            f"LP-13c committed members before the omission are {before_profile['members']}",
+        )
+
+        code = manager_cli_error(
+            "admin", "membership", "set", "--root", str(service_root),
+            "--profile-id", profile_id, "--intent", "grant", "--owner-device-id", "local",
+            "--device-id", device_id, "--member", "local", "--member", other_id,
+            "--expected-catalog-revision", str(revision),
+        )
+        check(code == "MEMBERSHIP_REQUIRED", f"LP-13c omitted-target code was {code}")
+
+        after = manager_cli_ok("admin", "catalog", "list", "--root", str(service_root))
+        check(
+            after["catalog_revision"] == revision,
+            "LP-13c refusal moved the committed catalog revision",
+        )
+        after_profile = next(
+            entry for entry in after["profiles"] if entry["profile_id"] == profile_id
+        )
+        check(
+            device_id in after_profile["members"],
+            "LP-13c refusal dropped the active target",
+        )
+        check(
+            other_id in after_profile["members"],
+            "LP-13c refusal dropped the other admitted remote member",
+        )
+        check(
+            set(after_profile["members"]) == {"local", device_id, other_id},
+            f"LP-13c refusal changed members to {after_profile['members']}",
+        )
     finally:
         if started:
             manager("stop", "--root", str(service_root))
