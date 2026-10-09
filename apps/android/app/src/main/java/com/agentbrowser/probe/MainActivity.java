@@ -525,7 +525,7 @@ public final class MainActivity extends Activity {
             case "observe" -> { requireFields(value, "op"); network.command(0, 0, 0, 0, 0, 0, ""); }
             case "takeover" -> { requireFields(value, "op", "epoch"); network.command(1, value.getLong("epoch"), 0, 0, 0, 0, ""); }
             case "release" -> { requireFields(value, "op", "epoch"); network.command(2, value.getLong("epoch"), 0, 0, 0, 0, ""); }
-            case "navigate" -> { requireFields(value, "op", "epoch", "url"); network.command(7, value.getLong("epoch"), 0, 0, 0, 0, value.getString("url")); }
+            case "navigate" -> { requireFields(value, "op", "epoch", "url"); network.command(NetworkSession.COMMAND_NAVIGATE, value.getLong("epoch"), 0, 0, 0, 0, value.getString("url")); }
             case "click" -> { requireFields(value, "op", "epoch", "x", "y"); network.command(3, value.getLong("epoch"), finite(value, "x"), finite(value, "y"), 0, 0, ""); }
             case "input_text" -> { requireFields(value, "op", "epoch", "text"); String text = value.getString("text"); if (text.length() > 4096) throw new IllegalArgumentException("INPUT_TEXT_LIMIT"); network.command(4, value.getLong("epoch"), 0, 0, 0, 0, text); }
             case "scroll" -> { requireFields(value, "op", "epoch", "x", "y", "dx", "dy"); network.command(5, value.getLong("epoch"), finite(value, "x"), finite(value, "y"), finite(value, "dx"), finite(value, "dy"), ""); }
@@ -618,9 +618,7 @@ public final class MainActivity extends Activity {
 
     private JSONObject withConnectionSetup(JSONObject value) throws org.json.JSONException {
         if (!value.has("connectionSetup")) value.put("connectionSetup", connectionSetup.projection());
-        if (!value.has("capabilities")) value.put("capabilities", new JSONObject()
-            .put("navigation", false).put("tabs", false).put("profiles", false)
-            .put("connectionSetup", true).put("quality", false));
+        if (!value.has("capabilities")) value.put("capabilities", NetworkSession.capabilitiesProjection());
         return value;
     }
 

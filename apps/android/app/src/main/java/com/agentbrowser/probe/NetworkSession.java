@@ -11,6 +11,8 @@ import java.util.concurrent.TimeUnit;
 
 /** Platform lifetime only. Host status remains an authoritative projection. */
 final class NetworkSession {
+    static final int COMMAND_NAVIGATE = 7;
+    static int navigationBridgeCommand(){return COMMAND_NAVIGATE;}
     interface FrameSink { CompletableFuture<AnnexBDecoder.Receipt> submit(NetworkFrame frame,long token,long generation); }
     private final FrameSink sink;
     private final Runnable release;
@@ -214,6 +216,16 @@ final class NetworkSession {
         command(6,0,viewport.width(),viewport.height(),viewport.landscape()?1:0,0,"");
     }
     private static long next(long value){if(value==Long.MAX_VALUE)throw new IllegalStateException("GENERATION_EXHAUSTED");return value+1;}
+    /**
+     * The Android probe advertises only capabilities with a wired native path.
+     * navigation: MainActivity forwards op=navigate to NativeConnection op 7.
+     * tabs/profiles/quality: no Android native owner exists yet, so they stay false.
+     * connectionSetup: ConnectionSetupSession owns the SAF import path.
+     */
+    static JSONObject capabilitiesProjection(){
+        return new JSONObject().put("navigation",true).put("tabs",false).put("profiles",false)
+            .put("connectionSetup",true).put("quality",false);
+    }
     synchronized JSONObject snapshot(JSONObject media){
         try{
             String mode="observe";long epoch=0;
@@ -232,9 +244,7 @@ final class NetworkSession {
                 .put("transport",selectedTransport)
                 .put("inputReady",inputReady()).put("pending",commandPending||queuedCommand!=null||framePending?"busy":JSONObject.NULL)
                 .put("connectionSetup",connectionSetup.projection())
-                .put("capabilities",new JSONObject()
-                    .put("navigation",false).put("tabs",false).put("profiles",false)
-                    .put("connectionSetup",true).put("quality",false));
+                .put("capabilities",capabilitiesProjection());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
             if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
                 .put("displayedDocumentRevision",displayed.documentRevision).put("displayedViewportRevision",displayed.viewportRevision)
