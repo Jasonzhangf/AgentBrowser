@@ -127,28 +127,15 @@ final class ConnectionSetupSession {
         }
     }
 
+    /**
+     * The setup entry point opens the same ordinary import picker. Admission,
+     * pre-state capture and the picker launch have one owner: a second
+     * admission path here set the state to opening without saving
+     * pendingPreState, so commit rejected the picked document with
+     * CONFIG_ORDINARY_IMPORT_BLOCKED.
+     */
     void onOpenRequested() {
-        requireMainThread();
-        synchronized (lock) {
-            if (closed) throw new IllegalStateException("CONNECTION_SETUP_CLOSED");
-            if (busy) throw new IllegalStateException("CONNECTION_SETUP_BUSY");
-            if ("unresolved".equals(state)) throw new IllegalStateException("CONFIG_ACTIVE_COMMIT_UNRESOLVED");
-            if ("unavailable".equals(state)) throw new IllegalStateException("CONFIG_ACTIVE_REFERENCE_INVALID");
-            state = "opening";
-            error = null;
-            busy = true;
-            pendingIntent = IntentType.ORDINARY;
-        }
-        if (activity == null) return;
-        try {
-            activity.startActivityForResult(documentPicker(), REQUEST_OPEN_CONNECTION);
-        } catch (Exception failure) {
-            synchronized (lock) {
-                busy = false;
-                state = "required";
-                error = "CONFIG_PICKER_UNAVAILABLE";
-            }
-        }
+        beginImport(IntentType.ORDINARY);
     }
 
     void onImportRequested() {
