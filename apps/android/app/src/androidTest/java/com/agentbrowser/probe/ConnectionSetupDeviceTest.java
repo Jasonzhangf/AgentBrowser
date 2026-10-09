@@ -121,6 +121,29 @@ public final class ConnectionSetupDeviceTest extends InstrumentationTestCase {
         session.release(binding);
     }
 
+    public void testUnprotectedImportNeedsNoTransferCode() throws Exception {
+        final boolean[] prompted = {false};
+        ConnectionSetupSession.setCodePromptHook(() -> {
+            prompted[0] = true;
+            return null;
+        });
+        File file = writeTemp("nocode", asset("nocode.abconnection"));
+        session.startImportForTest(Uri.fromFile(file), ConnectionSetupSession.IntentType.ORDINARY);
+        JSONObject configured = awaitSettled(15000);
+        file.delete();
+        assertFalse("the no-code bundle must not open the transfer-code dialog", prompted[0]);
+        assertEquals("configured", configured.getString("state"));
+        assertEquals("Android test phone", configured.getString("label"));
+        assertEquals(1L, configured.getLong("active_revision"));
+        ActiveConfiguration binding = session.admitNewBinding();
+        assertEquals("wss://localhost:8443/", binding.endpoint());
+        assertTrue(binding.ca().length > 0);
+        assertTrue(binding.clientCert().length > 0);
+        assertTrue(binding.clientKey().length > 0);
+        assertTrue(new File(binding.generationRoot(), "key.der").isFile());
+        session.release(binding);
+    }
+
     public void testWrongTransferCodeDeniedAndPriorPreserved() throws Exception {
         importBundle(asset("valid.abconnection"), CODE, ConnectionSetupSession.IntentType.ORDINARY);
         String before = activeText();

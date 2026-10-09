@@ -128,8 +128,11 @@ final class ConnectionBundle {
         if (p12.length > MAX_P12_BYTES) throw invalid("BUNDLE_P12_OVERSIZED");
         String actualSha = hex(digest("SHA-256", p12));
         if (!actualSha.equals(declaredSha)) throw invalid("BUNDLE_P12_DIGEST_MISMATCH");
-        if (transferCode == null || transferCode.isEmpty())
-            throw invalid("BUNDLE_TRANSFER_CODE_REQUIRED");
+        // A null or empty transfer code is the default no-code import: the
+        // bundle is still opened, its private key extracted and its
+        // certificates validated. A protected bundle yields the typed
+        // BUNDLE_TRANSFER_CODE_REQUIRED here and then takes the explicit
+        // transfer-code path.
         Material material = validatePkcs12(p12, transferCode, endpoint);
         return new ConnectionBundle(endpoint, deviceId, deviceLabel, version,
             material.caDer(), material.clientCertDer(), material.clientKeyDer(), declaredSha);
@@ -138,11 +141,20 @@ final class ConnectionBundle {
     private record Material(byte[] caDer, byte[] clientCertDer, byte[] clientKeyDer) { }
 
     private static Material validatePkcs12(byte[] p12, String transferCode, String endpoint) {
+        // No transfer code is the default no-code bundle: its PKCS#12 is
+        // written without key or certificate encryption and opens with the
+        // empty password. A protected bundle does not open that way, and then
+        // the explicit protected mode asks for its one-time transfer code.
+        // This owner still opens the real container, extracts the real private
+        // key and validates the real certificates on both paths.
+        boolean noCode = transferCode == null || transferCode.isEmpty();
+        char[] password = noCode ? new char[0] : transferCode.toCharArray();
         KeyStore store;
         try {
             store = KeyStore.getInstance("PKCS12");
-            store.load(new ByteArrayInputStream(p12), transferCode.toCharArray());
+            store.load(new ByteArrayInputStream(p12), password);
         } catch (Exception failure) {
+            if (noCode) throw invalid("BUNDLE_TRANSFER_CODE_REQUIRED", failure);
             throw invalid("BUNDLE_TRANSFER_CODE_INVALID", failure);
         }
         Set<String> aliases = new HashSet<>();
@@ -204,8 +216,9 @@ final class ConnectionBundle {
         }
         Key key;
         try {
-            key = store.getKey(CLIENT_ALIAS, transferCode.toCharArray());
+            key = store.getKey(CLIENT_ALIAS, password);
         } catch (Exception failure) {
+            if (noCode) throw invalid("BUNDLE_TRANSFER_CODE_REQUIRED", failure);
             throw invalid("BUNDLE_TRANSFER_CODE_INVALID", failure);
         }
         if (!(key instanceof PrivateKey privateKey)) throw invalid("BUNDLE_P12_ALIAS_INVALID");

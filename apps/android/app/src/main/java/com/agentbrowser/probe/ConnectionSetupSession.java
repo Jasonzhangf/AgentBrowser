@@ -40,9 +40,10 @@ import org.json.JSONObject;
 
 /**
  * Single admission owner for the Android first-connection configuration. It
- * owns the SAF picker, the secure transfer-code dialog, immutable generation
- * writes, the AtomicFile active reference, exact readback classification and
- * the immutable binding handed to a NEW connection.
+ * owns the SAF picker, the default no-code import, the explicit transfer-code
+ * path of a protected bundle, immutable generation writes, the AtomicFile
+ * active reference, exact readback classification and the immutable binding
+ * handed to a NEW connection.
  */
 final class ConnectionSetupSession {
     enum IntentType { ORDINARY, REPAIR }
@@ -338,29 +339,7 @@ final class ConnectionSetupSession {
         }
         try {
             byte[] raw = readUri(uri);
-            ConnectionBundle bundle = null;
-            String code;
-            for (int attempt = 0; attempt < 3; attempt++) {
-                code = requestCode();
-                if (code == null) {
-                    finishCancel(intent, preState);
-                    return;
-                }
-                try {
-                    bundle = ConnectionBundle.parse(raw, code);
-                    break;
-                } catch (IllegalArgumentException failure) {
-                    String message = failure.getMessage() == null ? "BUNDLE_INVALID" : failure.getMessage();
-                    if (!message.startsWith("BUNDLE_TRANSFER_CODE_INVALID")) {
-                        throw failure;
-                    }
-                    synchronized (lock) {
-                        error = "BUNDLE_TRANSFER_CODE_INVALID";
-                    }
-                    if (!codePromptHookActive) throw failure;
-                }
-            }
-            if (bundle == null) throw new IllegalArgumentException("BUNDLE_TRANSFER_CODE_INVALID");
+            ConnectionBundle bundle = parseBundle(raw);
             commit(bundle, intent, preState);
         } catch (ImportAbort abort) {
             finishCancel(intent, preState);
@@ -369,6 +348,47 @@ final class ConnectionSetupSession {
         } catch (Exception failure) {
             finishFailure(intent, preState, typedMessage(failure));
         }
+    }
+
+    /**
+     * The default import needs no transfer code: the bundle of the ordinary
+     * export opens without a password. Only a bundle that does not open that
+     * way is protected, and only then does the explicit one-time transfer-code
+     * path run. That path stays available for the protected mode and is never
+     * entered by the ordinary bundle.
+     */
+    private ConnectionBundle parseBundle(byte[] raw) throws Exception {
+        try {
+            return ConnectionBundle.parse(raw, null);
+        } catch (IllegalArgumentException protectedBundle) {
+            String message = protectedBundle.getMessage() == null
+                ? "BUNDLE_INVALID" : protectedBundle.getMessage();
+            if (!message.startsWith("BUNDLE_TRANSFER_CODE_REQUIRED")) throw protectedBundle;
+            synchronized (lock) {
+                error = "BUNDLE_TRANSFER_CODE_REQUIRED";
+            }
+        }
+        return parseProtectedBundle(raw);
+    }
+
+    private ConnectionBundle parseProtectedBundle(byte[] raw) throws Exception {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            String code = requestCode();
+            if (code == null) throw new ImportAbort();
+            try {
+                return ConnectionBundle.parse(raw, code);
+            } catch (IllegalArgumentException failure) {
+                String message = failure.getMessage() == null ? "BUNDLE_INVALID" : failure.getMessage();
+                if (!message.startsWith("BUNDLE_TRANSFER_CODE_INVALID")) {
+                    throw failure;
+                }
+                synchronized (lock) {
+                    error = "BUNDLE_TRANSFER_CODE_INVALID";
+                }
+                if (!codePromptHookActive) throw failure;
+            }
+        }
+        throw new IllegalArgumentException("BUNDLE_TRANSFER_CODE_INVALID");
     }
 
     private void commit(ConnectionBundle bundle, IntentType intent, String preState) throws Exception {

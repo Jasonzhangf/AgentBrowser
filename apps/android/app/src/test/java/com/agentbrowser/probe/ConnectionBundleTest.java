@@ -121,6 +121,22 @@ public final class ConnectionBundleTest {
             .getMessage().contains("BUNDLE_TRANSFER_CODE_INVALID"));
     }
 
+    @Test public void defaultNoCodeImportAsksForTheCodeOnlyOfAProtectedBundle() throws Exception {
+        // The default import opens the no-code bundle without any transfer
+        // code. This protected fixture is not that container, so it must ask
+        // for the code with the typed BUNDLE_TRANSFER_CODE_REQUIRED instead of
+        // silently succeeding or silently failing. The real no-code container
+        // is exercised against the Android PKCS#12 provider by
+        // ConnectionSetupDeviceTest, because the JVM provider does not expose
+        // the unencrypted bag set this project's Host writes.
+        assertTrue(assertThrows(IllegalArgumentException.class,
+            () -> ConnectionBundle.parse(valid(), null))
+            .getMessage().contains("BUNDLE_TRANSFER_CODE_REQUIRED"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+            () -> ConnectionBundle.parse(valid(), ""))
+            .getMessage().contains("BUNDLE_TRANSFER_CODE_REQUIRED"));
+    }
+
     @Test public void rejectsUnknownAliasInRealPkcs12() throws Exception {
         byte[] raw = valid();
         JSONObject value = new JSONObject(new String(raw, StandardCharsets.UTF_8));
