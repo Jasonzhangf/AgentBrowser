@@ -44,6 +44,6 @@ public final class BrowserNavigationContractTest {
             root = root.getParent();
         }
         if (root == null) throw new IOException("REPOSITORY_ROOT_NOT_FOUND");
-        return Files.readString(root.resolve(repositoryRelative), StandardCharsets.UTF_8);
+        return new String(Files.readAllBytes(root.resolve(repositoryRelative)), StandardCharsets.UTF_8);
     }
 }

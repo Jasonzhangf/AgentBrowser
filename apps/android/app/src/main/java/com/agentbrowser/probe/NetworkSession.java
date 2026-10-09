@@ -223,8 +223,10 @@ final class NetworkSession {
      * connectionSetup: ConnectionSetupSession owns the SAF import path.
      */
     static JSONObject capabilitiesProjection(){
-        return new JSONObject().put("navigation",true).put("tabs",false).put("profiles",false)
-            .put("connectionSetup",true).put("quality",false);
+        try{
+            return new JSONObject().put("navigation",true).put("tabs",false).put("profiles",false)
+                .put("connectionSetup",true).put("quality",false);
+        }catch(org.json.JSONException invalid){throw new IllegalStateException("CAPABILITIES_INVALID",invalid);}
     }
     synchronized JSONObject snapshot(JSONObject media){
         try{
