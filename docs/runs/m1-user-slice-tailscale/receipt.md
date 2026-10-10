@@ -11,7 +11,7 @@ Result scope: **same physical Mac over the Tailscale interface**. Cross-node rem
 
 ## Dedicated Task-8 lifecycle
 
-The original task6 root was not modified. Task8 used service root `$HOME/Library/Application Support/AgentBrowser/host-service-task8`, short private runtime `/tmp/abn-task8-runtime` and profile `/tmp/abn-task8-profile` (both `0700`), service label `com.agentbrowser.task8`, protocol 11, and the same r8 Host binary SHA-256 `d8e956a22809629b50366a51298d94552284ac7519a06e4ab17c000bde62dd21`.
+The first Tailscale attempt reused and cycled the task6 instance (restart PID 70574; stop evidence is retained under the first-run evidence directory), then the run moved to the dedicated Task8 instance. The task6 trust root material was not modified. Task8 used service root `$HOME/Library/Application Support/AgentBrowser/host-service-task8`, short private runtime `/tmp/abn-task8-runtime` and profile `/tmp/abn-task8-profile` (both `0700`), service label `com.agentbrowser.task8`, protocol 11, and the same r8 Host binary SHA-256 `d8e956a22809629b50366a51298d94552284ac7519a06e4ab17c000bde62dd21`.
 
 - Lifecycle start: **PASS**. Socket `/tmp/abn-task8-runtime/host-eca88be0`, mode `0600`.
 - Endpoint refresh: **PASS**. Raw result: `authorization_state=refreshed`, `bound_address=100.66.1.82:51881`, `endpoint_generation=2`, `endpoint_pid=59549`.
@@ -32,6 +32,6 @@ The original task6 root was not modified. Task8 used service root `$HOME/Library
 
 ## Host cleanup
 
-Task8 was stopped through the lifecycle entrypoint after the Android run. Stop receipt: `evidence/user-slice/tailscale/tailscale-20261010T1615/host-stop.json`. Task6 root remains untouched.
+Task8 was stopped through the lifecycle entrypoint after the Android run. The initial stop file was the no-live-state branch and is retained for audit; the corrected stop receipt is `evidence/user-slice/tailscale/tailscale-20261010T1615/host-stop-real.json`, followed by status `state=stopped`, `endpoint_pid=null`. Task6 root trust material was not modified, although the first attempt did cycle the task6 service before the dedicated Task8 instance was created.
 
 No cross-node Tailscale result is claimed. No M1 completion claim is made.
