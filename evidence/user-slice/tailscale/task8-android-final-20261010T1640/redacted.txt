@@ -1,0 +1,4 @@
+bundle_sha=22220a52b5a81b7d93653aa7efbda3072bed57be7baf578c26e1330c3b67fc95
+device_sha=22220a52b5a81b7d93653aa7efbda3072bed57be7baf578c26e1330c3b67fc95
+exit=0
+scope=same-physical-mac-tailscale-100.66.1.82:51881

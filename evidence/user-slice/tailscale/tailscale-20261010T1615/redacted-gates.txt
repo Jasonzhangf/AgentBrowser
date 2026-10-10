@@ -1,0 +1,15 @@
+scope=same physical Mac over the Tailscale interface
+live_tailscale_mac=100.66.1.82
+cross_node_15t=unknown; status=offline; last_seen=8h ago
+lifecycle_start=PASS
+socket=/tmp/abn-task8-runtime/host-eca88be0
+endpoint_refresh=PASS; bound_address=100.66.1.82:51881; generation=2; endpoint_pid=59549
+catalog_membership=PASS
+bundle_export=PASS
+bundle_sha256=7adcb281cc779554e2d99c9eedb12c17c8f97cfad51d5f0933addc23a74897f9
+mac_tcp_reachability=PASS
+android_ordinary_import=PENDING
+android_connect=PENDING
+browse=PENDING
+handoff_present=PENDING
+code_entered=PENDING

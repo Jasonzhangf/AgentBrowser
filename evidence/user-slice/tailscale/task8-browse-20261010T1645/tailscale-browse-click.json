@@ -1,0 +1,13 @@
+{
+  "endpoint": "wss:\/\/100.66.1.82:51881\/",
+  "connectionState": "connected",
+  "controlMode": "observe",
+  "renderedFrames": 2,
+  "displayedTicket": 42,
+  "displayedPtsUs": 833723,
+  "documentRevision": 0,
+  "navigatedFixturePage": true,
+  "redBeforeClick": true,
+  "limeAfterClick": true,
+  "nativePixelsChanged": true
+}
