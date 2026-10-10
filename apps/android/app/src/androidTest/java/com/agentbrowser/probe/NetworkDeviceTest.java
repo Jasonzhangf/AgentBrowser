@@ -891,6 +891,66 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         assertEquals("Ordinary import must configure", "configured", panel.optString("state"));
     }
 
+    /**
+     * Ordinary UI browse against the already-admitted pairing. The configured
+     * endpoint is read back from the app's own pairing materials so the run
+     * cannot silently target a different Host.
+     */
+    public void testOrdinaryTailscaleBrowse() throws Exception {
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            JSONObject panel=activity.connectionSetup.projection();
+            assertEquals("Admitted pairing must be configured", "configured", panel.optString("state"));
+            String endpoint=null;
+            for(File material:new File(activity.getFilesDir(),"pairing/.generations").listFiles()){
+                File candidate=new File(material,"endpoint.txt");
+                if(candidate.isFile())endpoint=new String(java.nio.file.Files.readAllBytes(candidate.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            assertNotNull("Admitted endpoint material",endpoint);
+            until("!!document.getElementById('connect')",10000);
+            clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000);
+            JSONObject connected=new JSONObject(js(STATUS));
+            String fixtureUrl=null;
+            String encoded=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("initialUrlBase64");
+            if(encoded!=null)fixtureUrl=new String(android.util.Base64.decode(encoded,android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
+            if(fixtureUrl!=null){
+                clickEnabled("takeover");
+                until(UI_MODE+"==='control'",8000);
+                navigateFromAddress(fixtureUrl);
+            }
+            Bitmap before=capture("tailscale-before");
+            boolean redBefore=Color.red(before.getPixel(30,30))>160&&Color.green(before.getPixel(30,30))<100;
+            touch(30,30);
+            long paintDeadline=SystemClock.elapsedRealtime()+8000;
+            Bitmap after;
+            do{SystemClock.sleep(150);after=capture("tailscale-after");}
+            while(before.sameAs(after)&&SystemClock.elapsedRealtime()<paintDeadline);
+            boolean limeAfter=Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100;
+            JSONObject result=new JSONObject()
+                .put("endpoint",endpoint)
+                .put("connectionState",connected.optString("connectionState"))
+                .put("controlMode",connected.optString("controlMode"))
+                .put("renderedFrames",connected.optLong("renderedFrames",-1))
+                .put("displayedTicket",connected.optLong("displayedTicket",-1))
+                .put("displayedPtsUs",connected.optLong("displayedPtsUs",-1))
+                .put("documentRevision",connected.optLong("documentRevision",-1))
+                .put("navigatedFixturePage",fixtureUrl!=null)
+                .put("redBeforeClick",redBefore)
+                .put("limeAfterClick",limeAfter)
+                .put("nativePixelsChanged",!before.sameAs(after));
+            try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/tailscale-browse.json"))){
+                output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            assertTrue("The admitted endpoint must be the Tailscale endpoint: "+endpoint,
+                endpoint.startsWith("wss://100.66.1.82:"));
+            assertTrue("Remote video must render frames: "+result,connected.optLong("renderedFrames",0)>=2);
+            if(fixtureUrl!=null)assertTrue("A real touch must reach the Host page and repaint the clicked control: "+result,
+                redBefore&&limeAfter);
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
@@ -952,6 +1012,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             do { SystemClock.sleep(150); after=capture("after"); }
             while (Color.green(after.getPixel(30,30))<=160 && SystemClock.elapsedRealtime()<paintDeadline);
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
+            long scrollBefore=Long.parseLong(js("window.scrollY"));
             swipe(30,350,100);
             until(STATUS+".inputReady",6000);
             assertFalse("A drag must leave no open Host lease: "+localGestureState(),hostLeaseFencesAgents());

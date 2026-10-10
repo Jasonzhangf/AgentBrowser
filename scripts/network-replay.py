@@ -15,7 +15,27 @@ import time
 import urllib.parse
 import uuid
 
-from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
+from instrumentation_result import (
+    EXPECTED_TEST_CLASS,
+    InstrumentationExpectation,
+    parse_instrumentation_result,
+)
+
+# The browse gate collects exactly these two entries. Argument-dependent tests
+# that need a protected transfer code are deliberately not collected here. An
+# explicit method list may narrow the run for one diagnostic; the parser below
+# then requires exactly the narrowed entries, so a narrowed run cannot pass as
+# the full gate.
+_selected = os.environ.get("NETWORK_REPLAY_METHODS")
+REPLAY_METHODS = tuple(_selected.split(",")) if _selected else ("testImeCompositionCancel", "testRealNetworkControlAndFrames")
+REPLAY_SELECTOR = ",".join(f"{EXPECTED_TEST_CLASS}#{method}" for method in REPLAY_METHODS)
+REPLAY_EXPECTATION = InstrumentationExpectation(
+    test_class=EXPECTED_TEST_CLASS,
+    test_count=len(REPLAY_METHODS),
+    summary=f"OK ({len(REPLAY_METHODS)} test{'s' if len(REPLAY_METHODS) != 1 else ''})",
+    instrumentation_code=-1,
+    test_entries=tuple((EXPECTED_TEST_CLASS, method) for method in REPLAY_METHODS),
+)
 
 
 root = pathlib.Path(__file__).resolve().parent.parent
@@ -167,12 +187,12 @@ with (evidence / "network-host.log").open("wb") as log:
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
         subprocess.run(["bash", "scripts/device.sh", "prepare"], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
-            EXPECTED_TEST_CLASS + "#testRealNetworkControlAndFrames", "-e", "bundleSha256", bundle_sha256,
+            REPLAY_SELECTOR, "-e", "bundleSha256", bundle_sha256,
             "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)
         (evidence / "network-test.log").write_bytes(result.stdout)
-        if not parse_instrumentation_result(result.stdout).ok:
+        if not parse_instrumentation_result(result.stdout, REPLAY_EXPECTATION).ok:
             raise RuntimeError(f"Network instrumentation failed; see {evidence / 'network-test.log'}")
         instrumentation = json.loads(subprocess.check_output(
             ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", "files/network-evidence/result.json"]
@@ -191,10 +211,22 @@ with (evidence / "network-host.log").open("wb") as log:
         # independent Host check asserts exact-once insertion plus the preserved
         # surrounding text, not a fixed insertion offset.
         text = dom.get("text") or ""
+        trace = dom.get("scrollTrace") or []
+        if not all(isinstance(value, int) and not isinstance(value, bool) for value in trace):
+            raise RuntimeError(f"Host scroll trace is not an integer series: {trace!r}")
         if (dom.get("clicked") != 1 or text.count("中文") != 1
                 or text.replace("中文", "") != "native-network-proof"
                 or dom.get("scrollY") != 0 or dom.get("maxScroll", 0) < 240):
             raise RuntimeError(f"Host DOM mismatch: {dom}")
+        # The Host page records every scroll offset it observes, so the drag is a
+        # real positive delta from the pre-drag 0 and the reverse drag restores 0.
+        if max(trace, default=0) <= 0:
+            raise RuntimeError(f"Host scroll trace does not show a real drag delta: {trace!r}")
+        (evidence / "network-scroll-trace.json").write_text(json.dumps({
+            "session": ready["session"], "scrollTrace": trace,
+            "maxScroll": dom.get("maxScroll"), "finalScrollY": dom.get("scrollY"),
+            "restoredToZero": bool(trace) and trace[-1] == 0,
+        }, indent=2) + "\n")
         (evidence / "network-dom.json").write_text(json.dumps({"session":ready["session"],"dom":dom},indent=2)+"\n")
         for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png", "text-before.png", "text-after.png", "ime-text.png", "ime-trace.txt", "scrolled.png", "scroll-restored.png", "landscape.png", "portrait-restored.png"]:
             result = subprocess.run(["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", f"files/network-evidence/{name}"],
