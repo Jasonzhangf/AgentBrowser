@@ -232,6 +232,37 @@ def compare_field(field: str, sides: Mapping[str, Mapping[str, Any]]) -> dict[st
     return {"status": "proved", "field": field, "values": values}
 
 
+def same_point_claim(
+    field: str,
+    host: Mapping[str, Any],
+    android: Mapping[str, Any],
+    observation: str,
+) -> dict[str, Any]:
+    """Compare two sides only when both name the same observation point.
+
+    A control epoch advances whenever control changes owner, so a snapshot taken
+    before a later takeover can never be compared with a post-takeover value. A
+    difference at a shared observation point is unproved evidence, not a failed
+    side: the raw values stay in the claim for the reviewer.
+    """
+
+    host_value = host.get("value") if isinstance(host, Mapping) else None
+    android_value = android.get("value") if isinstance(android, Mapping) else None
+    raw = {"observation": observation, "host": host_value, "android": android_value}
+    if not isinstance(host, Mapping) or host.get("status") != "known":
+        return {"status": "unknown", "field": field, "reason": f"Host did not report {field} at {observation}", "raw": raw}
+    if not isinstance(android, Mapping) or android.get("status") != "known":
+        return {"status": "unknown", "field": field, "reason": f"Android did not report {field} at {observation}", "raw": raw}
+    if host_value == android_value:
+        return {"status": "proved", "field": field, "values": {"host": host_value, "android": android_value}, "observation": observation}
+    return {
+        "status": "unknown",
+        "field": field,
+        "reason": f"Host and Android {field} differ at {observation}; a stale snapshot is not a single-session claim",
+        "raw": raw,
+    }
+
+
 def classify_result(first_failure: Optional[Mapping[str, Any]], claims: Mapping[str, Mapping[str, Any]]) -> str:
     if first_failure is not None:
         return "failed"
@@ -550,6 +581,10 @@ def build_arguments(namespace: argparse.Namespace, cwd: pathlib.Path = ROOT) -> 
 
 
 class CombinedRunner:
+    # The Host control epoch observed when the Android client finished. It stays
+    # None until the Android stage completes, so correlation never invents one.
+    host_epoch_at_android_completion: Optional[int] = None
+
     def __init__(self, args: Arguments, *, worktree: pathlib.Path = ROOT):
         self.args = args
         self.worktree = worktree.resolve()
@@ -1325,7 +1360,13 @@ class CombinedRunner:
         self.android_result = dict(result)
         self._write_json("android-result.json", self.android_result)
         self.evidence["events"]["android"].append({"event": "instrumentation_result", "observed_at": utc_now(), "value": self.android_result})
-        self.record_host_status("android_complete", "android_replay")
+        completion_status = self.record_host_status("android_complete", "android_replay")
+        # The shared observation point for the cross-side epoch claim: the Host
+        # epoch recorded the moment this Android process finished, compared with
+        # the epoch the Android client reported at its own completion.
+        if isinstance(completion_status, Mapping):
+            control = completion_status.get("control")
+            self.host_epoch_at_android_completion = control_epoch(control.get("epoch")) if isinstance(control, Mapping) else None
         self.stage_finish("android_replay", "passed", {"exit_code": code, "result": str(self.args.evidence_dir / "android-result.json")})
 
     def mac_control(self) -> None:
@@ -1378,7 +1419,7 @@ class CombinedRunner:
     def build_side_evidence(self) -> None:
         host = self.host_statuses[-1]["value"] if self.host_statuses else None
         if not isinstance(host, Mapping):
-            host_side = {field: unknown("Host status was not observed") for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "frame_ack")}
+            host_side = {field: unknown("Host status was not observed") for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "control_epoch_at_completion", "frame_ack")}
         else:
             phase = host.get("control", {}).get("phase") if isinstance(host.get("control"), Mapping) else None
             host_session = host.get("session_id")
@@ -1395,6 +1436,7 @@ class CombinedRunner:
                 "viewport_revision": integer_evidence(host.get("viewport_revision"), ["fixture status"], "Host SessionStatus omitted viewport_revision"),
                 "document_revision": integer_evidence(host.get("document_revision"), ["fixture status"], "Host SessionStatus omitted document_revision"),
                 "control_epoch": integer_evidence(host.get("control", {}).get("epoch") if isinstance(host.get("control"), Mapping) else None, ["fixture status"], "Host SessionStatus omitted control epoch"),
+                "control_epoch_at_completion": integer_evidence(self.host_epoch_at_android_completion, ["fixture status at Android completion"], "Host control epoch was not observed when the Android client completed"),
                 "frame_ack": unknown("Host status does not own client display acknowledgements"),
             }
         android = self.android_result or {}
@@ -1425,6 +1467,14 @@ class CombinedRunner:
             status_evidence.get("epoch"),
             ["android-result.json:statusEvidence.epoch"],
             "Android result statusEvidence omitted control epoch",
+        )
+        completion_status = android.get("completionStatus") if isinstance(android, Mapping) else None
+        if not isinstance(completion_status, Mapping):
+            completion_status = {}
+        android_completion_epoch = integer_evidence(
+            completion_status.get("epoch"),
+            ["android-result.json:completionStatus.epoch"],
+            "Android result completionStatus omitted the control epoch observed at client completion",
         )
         explicit_source = android.get("sourceDimensions") if isinstance(android, Mapping) else None
         if isinstance(explicit_source, Mapping):
@@ -1464,6 +1514,7 @@ class CombinedRunner:
             "viewport_revision": android_viewport_revision,
             "document_revision": android_document_revision,
             "control_epoch": android_control_epoch,
+            "control_epoch_at_completion": android_completion_epoch,
             "frame_ack": android_frame_ack,
             "actions": {
                 **android_actions,
@@ -1544,7 +1595,26 @@ class CombinedRunner:
         self.evidence["sides"] = {"host": host_side, "android": android_side, "mac": mac_side}
         self.evidence["cross_side"] = {
             field: compare_field(field, self.evidence["sides"])
-            for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "frame_ack")
+            for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "frame_ack")
+        }
+        # A control epoch advances whenever control changes owner, so only the Host
+        # and Android observations taken at the Android completion point describe
+        # one instant. The Mac epoch is post-takeover and stays a Mac-only claim.
+        self.evidence["cross_side"]["control_epoch_at_android_completion"] = same_point_claim(
+            "control_epoch",
+            host_side["control_epoch_at_completion"],
+            android_side["control_epoch_at_completion"],
+            "android_complete",
+        )
+        self.evidence["cross_side"]["control_epoch_snapshot_skew"] = {
+            "status": "unknown",
+            "field": "control_epoch",
+            "reason": "per-side snapshots were taken at different observation points; recorded raw and never claimed equal",
+            "raw": {
+                "host_last": host_side["control_epoch"].get("value"),
+                "android_status_evidence": android_side["control_epoch"].get("value"),
+                "mac_post_takeover": mac_side["control_epoch"].get("value"),
+            },
         }
         session_claim = self.evidence["cross_side"]["session_id"]
         reconnect_items = {
@@ -1571,7 +1641,7 @@ class CombinedRunner:
             "three_side_source_dimensions": self.evidence["cross_side"]["source_dimensions"],
             "three_side_viewport_revision": self.evidence["cross_side"]["viewport_revision"],
             "three_side_document_revision": self.evidence["cross_side"]["document_revision"],
-            "three_side_control_epoch": self.evidence["cross_side"]["control_epoch"],
+            "host_android_control_epoch_at_android_completion": self.evidence["cross_side"]["control_epoch_at_android_completion"],
             "three_side_frame_ack": self.evidence["cross_side"]["frame_ack"],
             "mac_observe_takeover_release": {
                 "status": "proved" if all(mac_side["actions"][name].get("value") is True for name in ("observe", "takeover", "release")) else "unknown",
@@ -1605,7 +1675,7 @@ class CombinedRunner:
                 stage="preflight",
             )
         self.evidence["environment"] = environment_identity(self.args.android_serial, probe=False)
-        for claim in ("same_session", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "frame_ack", "observe", "takeover", "release", "rotation", "disconnect", "reconnect", "disconnect_reconnect"):
+        for claim in ("same_session", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch_at_android_completion", "frame_ack", "observe", "takeover", "release", "rotation", "disconnect", "reconnect", "disconnect_reconnect"):
             self.add_unknown(claim, "dry-run does not start fixture or clients")
         self.evidence["result"] = "dry_run" if self.first_failure is None else "failed"
         if self.first_failure is None:

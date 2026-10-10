@@ -440,6 +440,48 @@ def test_result_classification() -> None:
     check(runner.classify_result(None, {"claim": {"status": "proved"}}) == "pass", "complete proved claims may pass")
 
 
+def test_control_epoch_observation_point() -> None:
+    # One observation point: the Host epoch recorded when the Android process
+    # finished and the epoch Android reported at its own completion.
+    matched = runner.same_point_claim(
+        "control_epoch",
+        runner.known(16, ["fixture status at Android completion"]),
+        runner.known(16, ["android-result.json:completionStatus.epoch"]),
+        "android_complete",
+    )
+    check(matched["status"] == "proved", "equal epochs at one observation point must be proved")
+    check(matched["values"] == {"host": 16, "android": 16}, "a proved claim must keep both observed values")
+
+    # The observed dual-run defect: a mid-run Android snapshot against a
+    # post-takeover Host epoch. It stays unproved, never a failed side, and the
+    # raw values survive for the reviewer.
+    stale = runner.same_point_claim(
+        "control_epoch",
+        runner.known(19, ["fixture status"]),
+        runner.known(13, ["android-result.json:statusEvidence.epoch"]),
+        "android_complete",
+    )
+    check(stale["status"] == "unknown", "a stale snapshot comparison must be unknown, not failed")
+    check(stale["raw"] == {"observation": "android_complete", "host": 19, "android": 13}, "raw skew must be preserved")
+    check(
+        runner.classify_result(None, {"host_android_control_epoch_at_android_completion": stale}) == "partial",
+        "unproved epoch evidence must classify as partial, never pass",
+    )
+
+    # A missing side stays unknown with its reason and never fabricates equality.
+    missing = runner.same_point_claim(
+        "control_epoch",
+        runner.known(16, ["fixture status at Android completion"]),
+        runner.unknown("Android result omitted completionStatus"),
+        "android_complete",
+    )
+    check(missing["status"] == "unknown" and "Android" in missing["reason"], "a missing side must stay unknown with its reason")
+    check(
+        runner.classify_result(None, {"host_android_control_epoch_at_android_completion": matched}) == "pass",
+        "a matched observation point may still pass on its own",
+    )
+
+
 def test_write_exclusive() -> None:
     with tempfile.TemporaryDirectory(prefix="m1-dual-write-") as raw:
         root = pathlib.Path(raw)
@@ -558,6 +600,7 @@ def main() -> int:
         test_git_probe_failure_is_distinct,
         test_schema_and_comparison,
         test_result_classification,
+        test_control_epoch_observation_point,
         test_write_exclusive,
         test_schema_dry_run_switch,
         test_dry_run,

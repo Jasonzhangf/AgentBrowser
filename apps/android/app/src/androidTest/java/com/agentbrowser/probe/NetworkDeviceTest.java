@@ -987,10 +987,15 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             getInstrumentation().runOnMainSync(()->backgrounded[0]=activity.moveTaskToBack(true));
             assertTrue("The probe must be able to leave the foreground",backgrounded[0]);
             until(STATUS+".released",6000);
+            // The status the client observes at its own completion point. The runner
+            // compares this epoch with the Host epoch recorded when this process
+            // exited; a mid-run snapshot is not comparable after a later takeover.
+            JSONObject completionStatus=new JSONObject(js(STATUS));
             JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true).put("addressNavigation",true)
                 .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
                 .put("viewport",viewport)
                 .put("statusEvidence",statusEvidence)
+                .put("completionStatus",completionStatus)
                 .put("sourceDimensions",new JSONObject().put("codedWidth",statusEvidence.optInt("displayedCodedWidth",-1)).put("codedHeight",statusEvidence.optInt("displayedCodedHeight",-1)))
                 .put("frameAck",new JSONObject().put("ticket",statusEvidence.optLong("displayedTicket",-1)).put("renderedFrames",statusEvidence.optInt("renderedFrames",-1)).put("displayed",true))
                 .put("operationReceipts",new org.json.JSONArray().put(new JSONObject().put("operation","observe").put("result","succeeded")).put(new JSONObject().put("operation","takeover").put("result","succeeded")).put(new JSONObject().put("operation","release").put("result","succeeded")))
