@@ -167,7 +167,7 @@ with (evidence / "network-host.log").open("wb") as log:
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
         subprocess.run(["bash", "scripts/device.sh", "prepare"], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
-            EXPECTED_TEST_CLASS, "-e", "bundleSha256", bundle_sha256,
+            EXPECTED_TEST_CLASS + "#testRealNetworkControlAndFrames", "-e", "bundleSha256", bundle_sha256,
             "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)

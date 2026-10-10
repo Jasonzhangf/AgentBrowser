@@ -1,6 +1,45 @@
 # Task-7 first-connect receipt
 
-Status: **INCOMPLETE**. No first-connect or full-M1 acceptance claim.
+Status: **INCOMPLETE / EVIDENCED PARTIAL**. Admission is proven. Browse evidence is retained from the fixture-host fallback; system Chinese IME and same-session lifecycle browse remain incomplete.
+
+## Current consolidated gate results
+
+| Gate | Result | Raw evidence |
+| --- | --- | --- |
+| Ordinary DocumentsUI picker | PASS | UiDevice instrumentation; `OK (1 test)`; `task7-instrumented-retry-20261010T1650/` |
+| Protected dialog and real IMPORT | PASS | `am instrument` exit 0; configured + active-generation-change assertions |
+| Service-lifecycle admission | PASS | bundle SHA `a5e7970747f1a119110e3b74c989635f77cbd04147163021159a322166a92cb5`; device SHA identical |
+| Fixture-host remote video | PASS | `task7-browse-only-20261010T1720/network-result.json`: `frameAck.renderedFrames=3`, `displayed=true`, `networkFrames=true` |
+| Fixture-host real click | PASS | `network-dom-failing.json`: Host DOM `clicked=1` |
+| Fixture-host drag-scroll | operation PASS; document delta UNPROVEN | `scrollPixels=true`, `swipeDoesNotClick=true`; Host DOM `scrollY=0`, `maxScroll=250`; no before/after scrollY delta |
+| Fixture-host observe/takeover | PASS | `observerTouchIgnored=true`, `takeoverPixels=true`, operation receipts succeeded |
+| System IME focus | UNKNOWN | no raw `dumpsys input_method` capture in fixture browse run; prior task-4 raw focus was `mInputShown=false`, `mServedInputConnection=null` |
+| Chinese composition | UNKNOWN (environment-blocked) | emulator has no zh-capable IME subtype/package; controlled RemoteIme composition is not a system IME proof |
+| Cross-node Tailscale | UNKNOWN | designated 15T `100.104.163.65` offline |
+
+Browse was proven against the fixture-launched r8 Host, while pairing/admission
+was proven against the Service-lifecycle Host. It is not a same-session browse
+claim. Automated code entry (`setText`/instrumentation argument) stood in for
+human typing.
+
+Screen recording: `evidence/user-slice/first-connect/task7-recording-20261010T1730/ordinary-flow.mp4` (SHA-256 `4bea683553cda2997bf2e92465a9eeea65eaa3715faf053dc69fe54f07bd3397`).
+
+## Instrumented ordinary admission
+
+The installed task-4 APK was admitted through the ordinary Android UI using the
+UiDevice instrumentation driver. The driver used accessibility-first lookup,
+real DocumentsUI file selection, the protected EditText, and real `IMPORT`.
+It passed `transferCode` only as a transient instrumentation argument; the code
+was never written to logs, receipts, or evidence. The shipped APK was unchanged
+(SHA-256 `8eceb55e404791484451499aac38cce70a2d6fcdd2aa2d1ed72f872a7d63cb45`,
+versionCode 2).
+
+- Instrumented admission result: **PASS**, `OK (1 test)`, exit 0
+- Latest admission bundle SHA-256: `a5e7970747f1a119110e3b74c989635f77cbd04147163021159a322166a92cb5`
+- Device bundle SHA-256: identical
+- Evidence: `evidence/user-slice/first-connect/task7-instrumented-retry-20261010T1650/`
+- Limitation: automated `setText`/instrumentation argument stands in for human typing.
+
 
 ## Handoff rerun (fresh protected bundle)
 

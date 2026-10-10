@@ -18,7 +18,11 @@ android {
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
 }
-dependencies { testImplementation 'junit:junit:4.13.2'; testImplementation 'org.json:json:20240303' }
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+}
 tasks.register('bundleUi', Exec) {
     workingDir '../../..'
     commandLine 'npm', 'run', 'build:ui'
