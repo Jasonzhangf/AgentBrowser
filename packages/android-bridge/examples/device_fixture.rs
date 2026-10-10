@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut id = 0;
     let attached = status(call(&mut local, &mut id, Command::Attach { mode: Mode::Agent, viewport: None }, None).await);
     let initial_url: String =
-        "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p><div style='height:3000px;background:blue'></div><script>window.maxScroll=0;window.__obscuraProbe=[];['compositionstart','compositionupdate','compositionend','beforeinput','input'].forEach(t=>document.addEventListener(t,e=>window.__obscuraProbe.push({type:t,value:document.getElementById('field').value,inputType:e.inputType||null,data:e.data||null})));window.addEventListener('scroll',()=>{window.maxScroll=Math.max(window.maxScroll,window.scrollY)});</script>".into()
+        "data:text/html,<body style='margin:0;background:white'><button id='target' style='width:180px;height:100px;background:red' onclick=\"window.clicked=(window.clicked||0)+1;this.style.background='lime'\">touch</button><input id='field' style='display:block;width:200px;height:50px' placeholder='type here'><p>AgentBrowser live Host</p><div style='height:3000px;background:blue'></div><script>window.maxScroll=0;window.__scrollTrace=[0];window.__obscuraProbe=[];['compositionstart','compositionupdate','compositionend','beforeinput','input'].forEach(t=>document.addEventListener(t,e=>window.__obscuraProbe.push({type:t,value:document.getElementById('field').value,inputType:e.inputType||null,data:e.data||null})));window.addEventListener('scroll',()=>{window.maxScroll=Math.max(window.maxScroll,window.scrollY);window.__scrollTrace.push(window.scrollY)});</script>".into()
     ;
     let navigated = status(call(&mut local, &mut id, Command::Navigate { url: initial_url.clone() }, Some(identity(&attached))).await);
     let resized = status(call(&mut local, &mut id, Command::Resize { width:391,height:845 }, Some(identity(&navigated))).await);
@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let resumed = resume_agent(&mut local,&mut id).await;
             eprintln!("inspect resume: {resumed}");
             let current = status(call(&mut local,&mut id,Command::Status {},None).await);
-            let result = probe(&mut local,&mut id,Command::Evaluate { expression:"JSON.stringify({clicked:window.clicked||0,text:document.getElementById('field').value,scrollY:window.scrollY,maxScroll:window.maxScroll,editorEvents:window.__obscuraProbe||[]})".into() },Some(identity(&current))).await;
+            let result = probe(&mut local,&mut id,Command::Evaluate { expression:"JSON.stringify({clicked:window.clicked||0,text:document.getElementById('field').value,scrollY:window.scrollY,maxScroll:window.maxScroll,scrollTrace:window.__scrollTrace||[],editorEvents:window.__obscuraProbe||[]})".into() },Some(identity(&current))).await;
             println!("{}",evidence_line(&result));
         } else { eprintln!("Expected status, inspect or quit"); }
     }

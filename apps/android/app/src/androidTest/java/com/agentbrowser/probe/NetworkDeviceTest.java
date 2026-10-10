@@ -16,6 +16,10 @@ import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
+import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.UiObject2;
+import androidx.test.uiautomator.Until;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
@@ -292,6 +296,51 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
      * file must be the fixture's own bytes; the transfer code of the no-code
      * bundle stays empty.
      */
+    /** Drive the real launcher/picker/import path. No app test hooks or private staging. */
+    private void importOrdinaryPairing() throws Exception {
+        String code=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("transferCode");
+        assertNotNull("Transfer code argument",code);
+        UiDevice device=UiDevice.getInstance(getInstrumentation());
+        device.pressHome();
+        device.executeShellCommand("am start -n com.agentbrowser.probe/.MainActivity");
+        assertTrue("MainActivity",device.wait(Until.hasObject(By.pkg("com.agentbrowser.probe")),10000));
+        // WebView content is not exposed as child accessibility nodes on this
+        // device. Use UiDevice's real touch coordinate for the visible launcher
+        // control, then locate the ordinary button once the drawer is open.
+        UiObject2 drawer=device.findObject(By.desc("打开菜单配置连接"));
+        if(drawer!=null) drawer.click(); else { device.click(1005,68); device.waitForIdle(); }
+        UiObject2 importButton=device.wait(Until.findObject(By.text("导入")),5000);
+        if(importButton==null){
+            // The ordinary drawer's 导入 control is rendered in the WebView;
+            // this coordinate is the visible control, not an app test hook.
+            device.click(350,630); device.waitForIdle();
+            importButton=device.wait(Until.findObject(By.text("导入")),2000);
+        }
+        assertNotNull("Ordinary import button",importButton); importButton.click();
+        assertTrue("DocumentsUI",device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")),10000));
+        UiObject2 download=device.wait(Until.findObject(By.text("Download")),10000);
+        if(download!=null) download.click();
+        UiObject2 file=device.wait(Until.findObject(By.text("pairing.abconnection")),15000);
+        assertNotNull("DocumentsUI pairing file",file); file.click();
+        assertTrue("Return to app",device.wait(Until.hasObject(By.pkg("com.agentbrowser.probe")),10000));
+        UiObject2 field=device.wait(Until.findObject(By.clazz("android.widget.EditText")),10000);
+        assertNotNull("Transfer code field",field); field.setText(code);
+        UiObject2 submit=device.wait(Until.findObject(By.text("IMPORT")),5000);
+        assertNotNull("Import button",submit); submit.click();
+        long deadline=SystemClock.elapsedRealtime()+15000;
+        File active=new File(activity.getFilesDir(),"pairing/"+ConnectionSetupSession.ACTIVE_FILE);
+        String before=active.isFile()?new String(java.nio.file.Files.readAllBytes(active.toPath()),java.nio.charset.StandardCharsets.UTF_8):"";
+        while(SystemClock.elapsedRealtime()<deadline){
+            JSONObject projection=activity.connectionSetup.projection();
+            if("configured".equals(projection.optString("state"))){
+                String after=new String(java.nio.file.Files.readAllBytes(active.toPath()),java.nio.charset.StandardCharsets.UTF_8);
+                assertFalse("Active generation must change",before.equals(after)); return;
+            }
+            SystemClock.sleep(100);
+        }
+        fail("Ordinary import did not configure: "+activity.connectionSetup.projection());
+    }
+
     private void importFixturePairing() throws Exception {
         String expected=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("bundleSha256");
         assertNotNull("Fixture bundle digest argument",expected);
@@ -833,6 +882,75 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         return count;
     }
 
+    public void testOrdinaryProtectedImport() throws Exception {
+        String transferCode=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("transferCode");
+        assertNotNull("transferCode argument required for ordinary import", transferCode);
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        importOrdinaryPairing();
+        JSONObject panel=activity.connectionSetup.projection();
+        assertEquals("Ordinary import must configure", "configured", panel.optString("state"));
+    }
+
+    /**
+     * Ordinary UI browse against the already-admitted pairing. The configured
+     * endpoint is read back from the app's own pairing materials so the run
+     * cannot silently target a different Host.
+     */
+    public void testOrdinaryTailscaleBrowse() throws Exception {
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            JSONObject panel=activity.connectionSetup.projection();
+            assertEquals("Admitted pairing must be configured", "configured", panel.optString("state"));
+            String endpoint=null;
+            for(File material:new File(activity.getFilesDir(),"pairing/.generations").listFiles()){
+                File candidate=new File(material,"endpoint.txt");
+                if(candidate.isFile())endpoint=new String(java.nio.file.Files.readAllBytes(candidate.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            assertNotNull("Admitted endpoint material",endpoint);
+            until("!!document.getElementById('connect')",10000);
+            clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000);
+            JSONObject connected=new JSONObject(js(STATUS));
+            String fixtureUrl=null;
+            String encoded=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("initialUrlBase64");
+            if(encoded!=null)fixtureUrl=new String(android.util.Base64.decode(encoded,android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
+            if(fixtureUrl!=null){
+                clickEnabled("takeover");
+                until(UI_MODE+"==='control'",8000);
+                navigateFromAddress(fixtureUrl);
+            }
+            Bitmap before=capture("tailscale-before");
+            boolean redBefore=Color.red(before.getPixel(30,30))>160&&Color.green(before.getPixel(30,30))<100;
+            touch(30,30);
+            long paintDeadline=SystemClock.elapsedRealtime()+8000;
+            Bitmap after;
+            do{SystemClock.sleep(150);after=capture("tailscale-after");}
+            while(before.sameAs(after)&&SystemClock.elapsedRealtime()<paintDeadline);
+            boolean limeAfter=Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100;
+            JSONObject result=new JSONObject()
+                .put("endpoint",endpoint)
+                .put("connectionState",connected.optString("connectionState"))
+                .put("controlMode",connected.optString("controlMode"))
+                .put("renderedFrames",connected.optLong("renderedFrames",-1))
+                .put("displayedTicket",connected.optLong("displayedTicket",-1))
+                .put("displayedPtsUs",connected.optLong("displayedPtsUs",-1))
+                .put("documentRevision",connected.optLong("documentRevision",-1))
+                .put("navigatedFixturePage",fixtureUrl!=null)
+                .put("redBeforeClick",redBefore)
+                .put("limeAfterClick",limeAfter)
+                .put("nativePixelsChanged",!before.sameAs(after));
+            try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/tailscale-browse.json"))){
+                output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            assertTrue("The admitted endpoint must be the Tailscale endpoint: "+endpoint,
+                endpoint.startsWith("wss://100.66.1.82:"));
+            assertTrue("Remote video must render frames: "+result,connected.optLong("renderedFrames",0)>=2);
+            if(fixtureUrl!=null)assertTrue("A real touch must reach the Host page and repaint the clicked control: "+result,
+                redBefore&&limeAfter);
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
@@ -894,6 +1012,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             do { SystemClock.sleep(150); after=capture("after"); }
             while (Color.green(after.getPixel(30,30))<=160 && SystemClock.elapsedRealtime()<paintDeadline);
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
+            long scrollBefore=Long.parseLong(js("window.scrollY"));
             swipe(30,350,100);
             until(STATUS+".inputReady",6000);
             assertFalse("A drag must leave no open Host lease: "+localGestureState(),hostLeaseFencesAgents());
