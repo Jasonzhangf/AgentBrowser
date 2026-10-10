@@ -1,0 +1,6 @@
+{
+  "runId": "1d60e8131dcc4e03a947308a27d006ea",
+  "serial": "emulator-5554",
+  "port": 60405,
+  "mapping": "host-16 tcp:60405 tcp:60405"
+}

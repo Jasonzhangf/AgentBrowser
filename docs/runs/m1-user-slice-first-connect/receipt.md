@@ -114,3 +114,142 @@ Cross-node Tailscale remains **unknown**. No cross-node success is claimed.
 First failing gate: ordinary import/admission of the task-6 lifecycle bundle. Raw app error: `BUNDLE_TRANSFER_CODE_REQUIRED`.
 
 Next executable action: task-6 owner must provide the documented transfer-code (or lifecycle export configuration) required by the installed task-4 artifact, then rerun this same ordinary DocumentsUI flow with the exact replacement bundle. Do not use `startImportForTest`, app-private staging, or a test hook.
+
+## Evidence audit, secret hygiene, and contract integrity
+
+### Removed code-bearing UI dumps (security)
+
+Automated code entry can leave code-bearing UI dumps behind: `uiautomator dump`
+writes the live `EditText` text of the protected `Transfer code` dialog into a
+plain XML file. Two such dumps existed under the gitignored evidence tree and
+each held a 16-character transfer-code-shaped plaintext:
+
+```text
+evidence/user-slice/first-connect/task7-final-picker-20261010T1615/entered.xml
+evidence/user-slice/first-connect/task7-retry-20261010T1540/dialog-entered.xml
+```
+
+Both were deleted from disk after resolving and confirming their absolute paths.
+Neither file was ever tracked, and neither was force-added. A follow-up scan of
+the whole evidence tree for a 16-character token from the transfer-code alphabet
+found no remaining hit, and no committed evidence file contains a transfer code
+or a protected-field UI dump. Future runs must treat UI dumps of the protected
+dialog as secret material and delete them.
+
+### Force-added evidence paths
+
+`/evidence/` is gitignored, so the artifacts these receipts cite were untracked
+and therefore unauditable at HEAD. Only redacted, non-secret artifacts were
+force-added (`git add -f`) with this exact path list:
+
+```text
+evidence/user-slice/host/user-slice-host-20261010T1405/receipt.md
+evidence/user-slice/host/user-slice-host-20261010T1418/receipt.md
+evidence/user-slice/host/user-slice-host-20261010T1424/receipt.md
+evidence/user-slice/host/user-slice-host-handoff-20261010T143236/receipt.md
+evidence/user-slice/android/ime-20261010T1705/enabled-imes.txt
+evidence/user-slice/android/ime-20261010T1705/ime-list.txt
+evidence/user-slice/android/ime-20261010T1705/ime-subtype-zh-count.txt
+evidence/user-slice/android/ime-20261010T1705/input-method-focus.txt
+evidence/user-slice/android/recon/state-01-launched.png
+evidence/user-slice/android/recon/state-02-drawer.png
+evidence/user-slice/android/recon/state-03-picker.png
+evidence/user-slice/android/recon/state-04-imported.png
+evidence/user-slice/android/recon/state-05-picker.png
+evidence/user-slice/android/recon/state-06-connected.png
+evidence/user-slice/android/recon/state-07-connected.png
+evidence/user-slice/android/recon/state-08-retry.png
+evidence/user-slice/android/recon/state-09-video.png
+evidence/user-slice/android/upgrade-v2/drawer.png
+evidence/user-slice/android/upgrade-v2/install-exit.txt
+evidence/user-slice/android/upgrade-v2/install-r.txt
+evidence/user-slice/android/upgrade-v2/package-after.txt
+evidence/user-slice/android/upgrade-v2/package-before.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/clicked.png
+evidence/user-slice/android/user-slice-android-20261010T1402/connected-before.png
+evidence/user-slice/android/user-slice-android-20261010T1402/default-ime.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/field-screen.png
+evidence/user-slice/android/user-slice-android-20261010T1402/full-flow.mp4
+evidence/user-slice/android/user-slice-android-20261010T1402/hashes.sha256
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-after-field.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-before-field.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-committed.png
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-focused-final.png
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-focused-final.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-focused-rerun.png
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-list.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/ime-raised.png
+evidence/user-slice/android/user-slice-android-20261010T1402/input-method.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/run.json
+evidence/user-slice/android/user-slice-android-20261010T1402/scrolled.png
+evidence/user-slice/android/user-slice-android-20261010T1402/signing.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/window-after-field.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/window-after-flow.txt
+evidence/user-slice/android/user-slice-android-20261010T1402/window-before-field.txt
+evidence/user-slice/first-connect/task7-instrumented-retry-20261010T1650/instrument.txt
+evidence/user-slice/first-connect/task7-instrumented-retry-20261010T1650/redacted.txt
+evidence/user-slice/first-connect/task7-recording-20261010T1730/ordinary-flow-sanity.mp4
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/adb-reverse.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/fixture-pairing.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/installed-apks.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-after.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-before.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-cancel-after.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-cancel-before.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-chrome-touch.txt
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-dom.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-host.log
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-ime-text.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-ime-trace.logcat.txt
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-ime-trace.txt
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-landscape.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-path-evidence.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-portrait-restored.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-reconnected.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-result.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-rotation-visual.txt
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-screen.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-scroll-restored.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-scroll-trace.json
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-scrolled.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-test.log
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-text-after-cancel.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-text-after.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-text-before-composition.png
+evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740/network-text-before.png
+evidence/user-slice/tailscale/task8-android-final-20261010T1640/instrument.txt
+evidence/user-slice/tailscale/task8-android-final-20261010T1640/redacted.txt
+evidence/user-slice/tailscale/task8-browse-20261010T1645/instrument-click.txt
+evidence/user-slice/tailscale/task8-browse-20261010T1645/instrument.txt
+evidence/user-slice/tailscale/task8-browse-20261010T1645/redacted.txt
+evidence/user-slice/tailscale/task8-browse-20261010T1645/tailscale-after.png
+evidence/user-slice/tailscale/task8-browse-20261010T1645/tailscale-before.png
+evidence/user-slice/tailscale/task8-browse-20261010T1645/tailscale-browse-click.json
+evidence/user-slice/tailscale/task8-browse-20261010T1645/tailscale-browse.json
+```
+
+Explicitly **not** force-added, because they carry private connection material or
+are superseded: every `*.abconnection` bundle
+(`task7-instrumented-retry-20261010T1650/pairing.abconnection`,
+`task8-android-final-20261010T1640/task8-tailscale.abconnection`), every
+protected-dialog UI dump, the truncated `ordinary-flow.mp4`, and all Host run
+artifacts other than their receipts.
+
+### Ordinary-path contract integrity
+
+The ordinary-path proofs never use the test hook and never stage into
+app-private storage:
+
+- `NetworkDeviceTest.testOrdinaryProtectedImport()` — `apps/android/app/src/androidTest/java/com/agentbrowser/probe/NetworkDeviceTest.java:885`
+- `NetworkDeviceTest.testOrdinaryTailscaleBrowse()` — same file, line `899`
+- both call `importOrdinaryPairing()` — same file, lines `300`-`342`, which
+  launches `MainActivity` and drives the real launcher, real DocumentsUI file
+  picker, the real protected `EditText` and the real `IMPORT` control, and
+  asserts `connectionSetup` becomes `configured` with a changed
+  `files/pairing/active-generation.json`
+- the only app-private read in that method is the read-only comparison of the
+  active-generation file at line `331`; nothing is staged there
+- `startImportForTest` is called only by `importFixturePairing()` at line `350`,
+  which the ordinary-path methods never call. The hook stays in product source
+  (`apps/android/app/src/main/java/com/agentbrowser/probe/ConnectionSetupSession.java:193`)
+  as an existing test hook for the fixture replay suite.

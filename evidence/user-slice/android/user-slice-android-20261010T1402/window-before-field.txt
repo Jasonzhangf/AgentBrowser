@@ -1,0 +1,2 @@
+  mCurrentFocus=Window{7b52aae u0 com.agentbrowser.probe/com.agentbrowser.probe.MainActivity}
+  mFocusedApp=ActivityRecord{11721734 u0 com.agentbrowser.probe/.MainActivity t258}

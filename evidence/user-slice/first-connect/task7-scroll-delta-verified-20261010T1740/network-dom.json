@@ -1,0 +1,166 @@
+{
+  "session": "d41f5b59-7391-498d-bd99-4f414aa1bd4b",
+  "dom": {
+    "clicked": 1,
+    "text": "\u4e2d\u6587native-network-proof",
+    "scrollY": 0,
+    "maxScroll": 250,
+    "scrollTrace": [
+      0,
+      250,
+      0
+    ],
+    "editorEvents": [
+      {
+        "type": "input",
+        "value": "native-network-proof",
+        "inputType": null,
+        "data": null
+      },
+      {
+        "type": "input",
+        "value": "native-network-proof",
+        "inputType": null,
+        "data": null
+      },
+      {
+        "type": "beforeinput",
+        "value": "native-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "zhongwen"
+      },
+      {
+        "type": "compositionstart",
+        "value": "zhongwennative-network-proof",
+        "inputType": null,
+        "data": "zhongwen"
+      },
+      {
+        "type": "input",
+        "value": "zhongwennative-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "zhongwen"
+      },
+      {
+        "type": "beforeinput",
+        "value": "zhongwennative-network-proof",
+        "inputType": "deleteCompositionText",
+        "data": null
+      },
+      {
+        "type": "compositionend",
+        "value": "native-network-proof",
+        "inputType": null,
+        "data": null
+      },
+      {
+        "type": "beforeinput",
+        "value": "native-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "zhongwen"
+      },
+      {
+        "type": "compositionstart",
+        "value": "zhongwennative-network-proof",
+        "inputType": null,
+        "data": "zhongwen"
+      },
+      {
+        "type": "input",
+        "value": "zhongwennative-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "zhongwen"
+      },
+      {
+        "type": "beforeinput",
+        "value": "zhongwennative-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "\u4e2d\u6587"
+      },
+      {
+        "type": "compositionend",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": null,
+        "data": "\u4e2d\u6587"
+      },
+      {
+        "type": "input",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "\u4e2d\u6587"
+      },
+      {
+        "type": "input",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": null,
+        "data": null
+      },
+      {
+        "type": "beforeinput",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "disconnect-me"
+      },
+      {
+        "type": "compositionstart",
+        "value": "\u4e2d\u6587disconnect-menative-network-proof",
+        "inputType": null,
+        "data": "disconnect-me"
+      },
+      {
+        "type": "input",
+        "value": "\u4e2d\u6587disconnect-menative-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "disconnect-me"
+      },
+      {
+        "type": "beforeinput",
+        "value": "\u4e2d\u6587disconnect-menative-network-proof",
+        "inputType": "deleteCompositionText",
+        "data": null
+      },
+      {
+        "type": "compositionend",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": null,
+        "data": null
+      },
+      {
+        "type": "input",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": null,
+        "data": null
+      },
+      {
+        "type": "beforeinput",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "probe"
+      },
+      {
+        "type": "compositionstart",
+        "value": "\u4e2d\u6587probenative-network-proof",
+        "inputType": null,
+        "data": "probe"
+      },
+      {
+        "type": "input",
+        "value": "\u4e2d\u6587probenative-network-proof",
+        "inputType": "insertCompositionText",
+        "data": "probe"
+      },
+      {
+        "type": "beforeinput",
+        "value": "\u4e2d\u6587probenative-network-proof",
+        "inputType": "deleteCompositionText",
+        "data": null
+      },
+      {
+        "type": "compositionend",
+        "value": "\u4e2d\u6587native-network-proof",
+        "inputType": null,
+        "data": null
+      }
+    ]
+  }
+}

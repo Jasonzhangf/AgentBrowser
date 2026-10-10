@@ -1,0 +1,8 @@
+{
+  "runId": "1d60e8131dcc4e03a947308a27d006ea",
+  "fixture": "/tmp/an-4856d4c9ee83468a85193baaa83a7bbc",
+  "deviceId": "62eb3b08-88aa-4495-8ab2-fc1ed59c2137",
+  "endpoint": "wss://127.0.0.1:60405",
+  "bundleSha256": "3d22d2c1edd13e03005ee163ee68eef46a06ae003196d5f1328c1019150d5848",
+  "session": "d41f5b59-7391-498d-bd99-4f414aa1bd4b"
+}

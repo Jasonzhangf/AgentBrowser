@@ -1,0 +1,2 @@
+      mInputShown=false
+  mServedInputConnection=null
