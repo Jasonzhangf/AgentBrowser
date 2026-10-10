@@ -1,0 +1,104 @@
+
+> agentbrowser-probe@0.1.0 verify:local
+> npm run typecheck && npm test && npm run build:ui
+
+
+> agentbrowser-probe@0.1.0 typecheck
+> tsc --noEmit
+
+
+> agentbrowser-probe@0.1.0 test
+> tsx --test packages/**/*.test.ts
+
+TAP version 13
+# Subtest: account port keeps command plane typed and projection secret-free
+ok 1 - account port keeps command plane typed and projection secret-free
+  ---
+  duration_ms: 1.120834
+  type: 'test'
+  ...
+# Subtest: account projection preserves online, offline, and expired host status
+ok 2 - account projection preserves online, offline, and expired host status
+  ---
+  duration_ms: 0.197875
+  type: 'test'
+  ...
+# Subtest: account projection rejects credential leakage and malformed states
+ok 3 - account projection rejects credential leakage and malformed states
+  ---
+  duration_ms: 0.197958
+  type: 'test'
+  ...
+# Subtest: missing native capability fails explicitly
+ok 4 - missing native capability fails explicitly
+  ---
+  duration_ms: 0.609042
+  type: 'test'
+  ...
+# Subtest: malformed native response cannot become ready
+ok 5 - malformed native response cannot become ready
+  ---
+  duration_ms: 0.111125
+  type: 'test'
+  ...
+# Subtest: only typed local commands cross native bridge
+ok 6 - only typed local commands cross native bridge
+  ---
+  duration_ms: 0.663208
+  type: 'test'
+  ...
+# Subtest: navigation keeps the user URL unchanged across the native port
+ok 7 - navigation keeps the user URL unchanged across the native port
+  ---
+  duration_ms: 0.057375
+  type: 'test'
+  ...
+# Subtest: Cordis injected provider mounts once and disposes subscription once
+ok 8 - Cordis injected provider mounts once and disposes subscription once
+  ---
+  duration_ms: 2.753583
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 196.466583
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+[codex/m1-mainline-hook-repair-r1-20261004 f5c18af] fix(hooks): admit verified clean main pushes
+ 29 files changed, 1321 insertions(+), 1 deletion(-)
+ create mode 100755 docs/runs/m1-mainline-hook-repair-r1-20261004/harness/pre-push-blackbox.sh
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/notes.md
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/cleanup.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/commit.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/commit.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-direct-main.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-direct-main.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-public-push.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-public-push.refs.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-public-push.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-sixcase.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/current-sixcase.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/npm-ci-commit.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/npm-ci-commit.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/npm-ci.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/npm-ci.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-elevencase-v2.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-elevencase-v2.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-elevencase.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-elevencase.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-tencase-final.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-tencase-final.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-tencase.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-tencase.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/verify-ci-pinned.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/verify-ci-pinned.stdout.txt
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/verify-ci.exit
+ create mode 100644 docs/runs/m1-mainline-hook-repair-r1-20261004/raw/verify-ci.stdout.txt

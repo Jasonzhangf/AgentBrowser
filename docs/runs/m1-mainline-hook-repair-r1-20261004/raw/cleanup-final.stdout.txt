@@ -1,0 +1,13 @@
+cleanup_final_receipt=2026-10-03
+fixture_root_exists_after=no
+target_exists=no
+android_build_exists=no
+app_build_exists=no
+gradle_project_cache_exists=no
+node_modules_state=retained-for-evidence-commit-removed-after
+git_status_porcelain:
+?? docs/runs/m1-mainline-hook-repair-r1-20261004/raw/cleanup-final.stdout.txt
+?? docs/runs/m1-mainline-hook-repair-r1-20261004/raw/commit-2.exit
+?? docs/runs/m1-mainline-hook-repair-r1-20261004/raw/commit-2.stdout.txt
+?? docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-final.exit
+?? docs/runs/m1-mainline-hook-repair-r1-20261004/raw/repaired-hook-final.stdout.txt
