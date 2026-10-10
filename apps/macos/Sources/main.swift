@@ -9,6 +9,7 @@ private let nativePrompt = "AgentBrowser.Native"
 private let maximumCommandBytes = 64 * 1024
 private let maximumFrameBytes = 4 * 1024 * 1024
 
+
 private struct FrameHeader: Decodable {
     let type: String
     let ticket: UInt64
@@ -1611,7 +1612,10 @@ private final class HostProvisioningBridge {
     }
 
     func exportBundle(deviceId: String, outputPath: String) -> Result<[String: Any], HostProvisioningError> {
-        return invoke(["trust", "export", "--device-id", deviceId, "--output", outputPath], timeout: 60)
+        // The protected bundle requires a one-time code. This explicit flag
+        // hands it directly to the native AppKit owner; it never enters argv,
+        // logs, the bundle JSON, or the WebView.
+        return invoke(["trust", "export", "--device-id", deviceId, "--output", outputPath, "--include-transfer-code"], timeout: 60)
     }
 
     private func appendRevision(_ revision: Int?, to arguments: inout [String]) {
@@ -1624,25 +1628,51 @@ private final class HostProvisioningBridge {
             return .failure(HostProvisioningError("HOST_SERVICE_LOCATOR_UNAVAILABLE", "host-service launcher is not packaged"))
         }
         let process = Process()
-        process.executableURL = launcherURL
-        process.arguments = arguments + ["--root", root]
+        // Launch env directly, with the packaged launcher as argv[0]. This
+        // avoids relying on shell/open inherited state and binds the command
+        // to the app's Resources directory and dedicated service root.
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [launcherURL.path] + arguments + ["--root", root]
+        process.currentDirectoryURL = launcherURL.deletingLastPathComponent().deletingLastPathComponent()
+        var environment = ProcessInfo.processInfo.environment
+        environment[hostServiceRootEnvironment] = root
+        environment[hostServiceLauncherEnvironment] = launcherURL.path
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+        process.environment = environment
         let standardOutput = Pipe()
         let standardError = Pipe()
         process.standardOutput = standardOutput
         process.standardError = standardError
         process.standardInput = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
+        // Put launch itself behind a bounded gate. This keeps a platform launch
+        // stall from blocking the provisioning worker before its deadline.
+        let launchGate = DispatchSemaphore(value: 0)
+        var launchError: Error?
+        DispatchQueue.global(qos: .userInitiated).async {
+            do { try process.run() }
+            catch { launchError = error }
+            launchGate.signal()
+        }
+        if launchGate.wait(timeout: .now() + 5.0) == .timedOut {
+            if process.isRunning { process.terminate() }
+            return .failure(HostProvisioningError("HOST_SERVICE_TIMEOUT", "host-service launch timed out"))
+        }
+        if launchError != nil {
             return .failure(HostProvisioningError("HOST_SERVICE_LAUNCH_FAILED", "cannot start host-service"))
         }
         // Drain both pipes off the caller thread so a full pipe cannot deadlock
         // a command that is still running.
         let buffer = ServiceOutputBuffer()
         let drain = DispatchGroup()
+        // Drain stdout and stderr independently. Reading one pipe to EOF before
+        // the other can deadlock a valid Host command when either pipe fills.
         drain.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             buffer.stdout = (try? standardOutput.fileHandleForReading.readToEnd()) ?? Data()
+            drain.leave()
+        }
+        drain.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
             buffer.stderr = (try? standardError.fileHandleForReading.readToEnd()) ?? Data()
             drain.leave()
         }
@@ -1654,8 +1684,26 @@ private final class HostProvisioningBridge {
         if timedOut {
             process.terminate()
         }
-        process.waitUntilExit()
-        drain.wait()
+        if timedOut {
+            // Do not let waitUntilExit defeat the deadline. Give graceful
+            // termination a short window, then force-kill the exact child PID.
+            let reapDeadline = Date(timeIntervalSinceNow: 2.0)
+            while process.isRunning && Date() < reapDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+            while process.isRunning && Date() < Date(timeIntervalSinceNow: 0.2) {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+        } else {
+            process.waitUntilExit()
+        }
+        // A launcher or descendant may retain a pipe descriptor after the
+        // parent exits. Never let cleanup defeat the command timeout or leave
+        // the provisioning sheet busy forever.
+        _ = drain.wait(timeout: .now() + 2.0)
         if timedOut {
             return .failure(HostProvisioningError("HOST_SERVICE_TIMEOUT", "host-service did not return"))
         }
@@ -1968,7 +2016,8 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
     }
 
     private func runEnrollmentFlow(label: String, scopes: [String], profileId: String, revision: Int?) {
-        guard let enroll = unwrap(provisioning.enrollDevice(label: label, scopes: scopes, profileId: profileId), step: "登记设备") else { return }
+        let enrollment = provisioning.enrollDevice(label: label, scopes: scopes, profileId: profileId)
+        guard let enroll = unwrap(enrollment, step: "登记设备") else { return }
         guard let deviceId = enroll["device_id"] as? String, !deviceId.isEmpty else {
             return fail("登记设备", "HOST_SERVICE_OUTPUT_MALFORMED")
         }
@@ -1976,7 +2025,7 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
             return
         }
         guard let refresh = unwrap(provisioning.refreshEndpoint(timeout: 30), step: "刷新端点"),
-              refresh["status"] as? String == "refreshed" else {
+              refresh["state"] as? String == "refreshed" else {
             return fail("刷新端点", "ENDPOINT_NOT_REFRESHED")
         }
         guard let verify = unwrap(provisioning.verifyEndpoint(), step: "校验端点"),
@@ -2049,8 +2098,20 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
         field.font = NSFont.monospacedSystemFont(ofSize: 18, weight: .semibold)
         field.isSelectable = true
         alert.accessoryView = field
+        alert.addButton(withTitle: "复制传输码")
         alert.addButton(withTitle: "完成")
-        alert.runModal()
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            // User-mediated handoff: the user pastes this into Android's
+            // visible protected dialog. The value never enters diagnostics.
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(code, forType: .string)
+            let copied = NSAlert()
+            copied.messageText = "传输码已复制"
+            copied.informativeText = "请在 Android 的 Transfer code 对话框中粘贴，然后点击 IMPORT。"
+            copied.addButton(withTitle: "完成")
+            copied.runModal()
+        }
     }
 
     private func setStatus(_ text: String, code: String?) {

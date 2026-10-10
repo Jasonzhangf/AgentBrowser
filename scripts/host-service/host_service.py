@@ -3903,9 +3903,12 @@ def command_trust_export(args: argparse.Namespace) -> int:
         membership_receipt=membership_receipt,
         endpoint_receipt=endpoint_receipt,
     )
-    # The one-time transfer code is a sensitive in-process value and is never
-    # emitted to stdout, argv, the bundle, or the registry.
-    result = {key: value for key, value in result.items() if key != "transfer_code"}
+    # The default CLI contract never emits the one-time code. The native Mac
+    # provisioning owner opts into an in-process handoff over this pipe; it
+    # immediately renders the value in its secure AppKit modal and never logs
+    # or persists it.
+    if not args.include_transfer_code:
+        result = {key: value for key, value in result.items() if key != "transfer_code"}
     emit(result)
     return 0
 
@@ -3987,6 +3990,11 @@ def parser() -> argparse.ArgumentParser:
     add_root_option(trust_export)
     trust_export.add_argument("--device-id", required=True)
     trust_export.add_argument("--output", required=True)
+    trust_export.add_argument(
+        "--include-transfer-code",
+        action="store_true",
+        help="return the one-time code to the native provisioning owner only",
+    )
 
     trust_endpoint_refresh = trust_commands.add_parser(
         "endpoint-refresh",
