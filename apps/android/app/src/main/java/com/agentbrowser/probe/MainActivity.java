@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.SurfaceView;
 import android.view.SurfaceHolder;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.MotionEvent;
 import android.view.WindowInsets;
@@ -64,6 +65,15 @@ public final class MainActivity extends Activity {
     private String gestureOperationId;
     private long gestureEventSequence;
     private long gestureEpoch, gestureDocument, gestureViewport;
+    /**
+     * Drag-to-scroll state. A press that travels further than the touch slop stops being a
+     * pointer sequence and becomes the documented scroll operation, so a real finger drag
+     * can move the page; below that slop the press keeps its tap/click meaning.
+     */
+    private float gestureDownDeviceX, gestureDownDeviceY;
+    private double gestureLastCssY;
+    private double gestureScrollPending;
+    private boolean gestureScrolling;
     private static final AtomicLong NEXT_GESTURE = new AtomicLong(1);
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -142,8 +152,12 @@ public final class MainActivity extends Activity {
                 } catch (IOException error) { return new WebResourceResponse("text/plain", "UTF-8", 500, "Asset missing", Map.of(), new ByteArrayInputStream(error.toString().getBytes(StandardCharsets.UTF_8))); }
             }
         });
-        root.addView(stage);
+        // The chrome WebView fills the window, so the initial z-order must match the
+        // initial "browsing" presentation: the native stage is added last and stays
+        // above the WebView, which is what lets a real touch reach the remote video
+        // surface. applyPresentation() owns every later z-order change.
         root.addView(webView);
+        root.addView(stage);
         rootLayoutListener = (v,l,t,r,b,ol,ot,or,ob) -> recomputeLayout();
         root.addOnLayoutChangeListener(rootLayoutListener);
         setContentView(root);
@@ -440,6 +454,11 @@ public final class MainActivity extends Activity {
                 gestureEpoch = context.epoch();
                 gestureDocument = context.document();
                 gestureViewport = context.viewport();
+                gestureDownDeviceX = event.getX();
+                gestureDownDeviceY = event.getY();
+                gestureLastCssY = y;
+                gestureScrollPending = 0;
+                gestureScrolling = false;
                 try {
                     network.gesture(gestureEpoch, gestureOperationId, gestureOperationId, gestureEventSequence,
                         RemoteInput.event("pointer_down", "pointer_id", 1, "x", x, "y", y,
@@ -452,7 +471,22 @@ public final class MainActivity extends Activity {
                 gestureEventSequence++;
                 return true;
             }
+            if (gestureScrolling) {
+                // The pointer sequence already ended when this drag became a scroll.
+                if (action == MotionEvent.ACTION_MOVE) scrollBy(x, y);
+                else if (action == MotionEvent.ACTION_UP) finishScroll(x, y);
+                return true;
+            }
             if (gestureOperationId == null) return true;
+            if (action == MotionEvent.ACTION_MOVE && isDrag(event)) {
+                // A real drag must move the page. design.md keeps `scroll` as its own
+                // bounded operation, so end the pointer sequence first: that leaves no
+                // residual capture and no open lease behind.
+                gestureScrolling = true;
+                cancelGesture();
+                scrollBy(x, y);
+                return true;
+            }
             NetworkSession.InputContext context = network.inputContext();
             if (context == null || context.epoch() != gestureEpoch || context.document() != gestureDocument
                     || context.viewport() != gestureViewport) {
@@ -496,6 +530,45 @@ public final class MainActivity extends Activity {
         } finally {
             gestureOperationId = null;
             gestureEventSequence = 0;
+        }
+    }
+    /** True when the press travelled past the touch slop, so it is a drag and not a tap. */
+    private boolean isDrag(MotionEvent event) {
+        float slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        return Math.abs(event.getX() - gestureDownDeviceX) > slop
+            || Math.abs(event.getY() - gestureDownDeviceY) > slop;
+    }
+    /**
+     * Translate an ongoing drag into the documented scroll operation. Movement is
+     * accumulated in CSS pixels, sent in bounded chunks, and kept while the Host is still
+     * busy with the previous scroll, so no pointer movement is lost.
+     */
+    private void scrollBy(double x, double y) {
+        gestureScrollPending += gestureLastCssY - y;
+        gestureLastCssY = y;
+        submitScroll(x, y);
+    }
+    /** Seal the drag at its end point: the last movement must still reach the Host. */
+    private void finishScroll(double x, double y) {
+        gestureScrolling = false;
+        sealScroll(x, y, 0);
+    }
+    private void sealScroll(double x, double y, int attempt) {
+        submitScroll(x, y);
+        if ((gestureScrollPending > 1 || gestureScrollPending < -1) && attempt < 20)
+            video.postDelayed(() -> {
+                if (gestureScrollPending > 1 || gestureScrollPending < -1) sealScroll(x, y, attempt + 1);
+            }, 20);
+    }
+    private void submitScroll(double x, double y) {
+        while (gestureScrollPending > 1 || gestureScrollPending < -1) {
+            double delta = Math.max(-4096, Math.min(4096, gestureScrollPending));
+            try {
+                network.command(5, gestureEpoch, x, y, 0, delta, "");
+            } catch (RuntimeException busy) {
+                return; // keep the remainder for the next movement or the seal retry
+            }
+            gestureScrollPending -= delta;
         }
     }
     private String dispatch(ProbeCommand command) throws org.json.JSONException {

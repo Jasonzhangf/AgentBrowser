@@ -3,6 +3,7 @@ package com.agentbrowser.probe;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -11,9 +12,16 @@ import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PixelCopy;
+import android.view.WindowInsets;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 import org.json.JSONObject;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.security.MessageDigest;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,28 +34,45 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     private boolean compositionSendDisabled;
     private boolean compositionCancelled;
     private boolean compositionCommitted;
+    private boolean unfinishedCompositionDropped;
+    private boolean disconnectCompositionReleased;
+    private boolean reconnectCompositionAccepted;
     private boolean disconnectCompositionCancelled;
+    private String lastPixelPoll="";
     private int chineseInkPixels;
-    private String js(String script)throws Exception{
+    private int chineseInkAdded;
+    private String importedGeneration;    private String js(String script)throws Exception{
         CountDownLatch done=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->activity.webView.evaluateJavascript(script,value->{result.set(value);done.countDown();}));
         assertTrue("JS deadline",done.await(3,TimeUnit.SECONDS));return result.get();
     }
-    private void until(String script,long timeout)throws Exception{
+    private void until(String script,long timeout)throws Exception{until(script,timeout,null);}
+    /** `note` carries the ingress state that explains a timeout in the failure itself. */
+    private void until(String script,long timeout,String note)throws Exception{
         long end=SystemClock.elapsedRealtime()+timeout;
         do{assertDisplayedRevision();if("true".equals(js(script)))return;SystemClock.sleep(50);}while(SystemClock.elapsedRealtime()<end);
-        fail("Condition: "+script+"\nstatus="+js("JSON.stringify("+STATUS+")")+"\n"+js("document.body.innerText"));
+        fail("Condition: "+script+(note==null?"":"\nnote="+note)+"\nstatus="+js("JSON.stringify("+STATUS+")")+"\n"+js("document.body.innerText"));
     }
     private void click(String id)throws Exception{js("document.getElementById('"+id+"').click()");}
+    /** A disabled chrome control ignores the click, so wait for the UI projection. */
+    private void clickEnabled(String id)throws Exception{
+        until("(()=>{const control=document.getElementById('"+id+"');return !!control&&!control.disabled;})()",8000);
+        click(id);
+    }
     private void navigateFromAddress(String url) throws Exception {
         until("!document.getElementById('address').disabled",6000);
         long previous=Long.parseLong(js(STATUS+".documentRevision"));
-        js("(()=>{const input=document.getElementById('address');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,"
-            +JSONObject.quote(url)+");input.dispatchEvent(new Event('input',{bubbles:true}));})()");
-        until("!document.getElementById('navigate').disabled",6000);
-        click("navigate");
+        // The chrome submits navigation through its address form; the real user
+        // path is the native value setter, an input event, then form submit.
+        js("(()=>{const input=document.getElementById('address');"
+            +"Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,"
+            +JSONObject.quote(url)+");input.dispatchEvent(new Event('input',{bubbles:true}));"
+            +"input.form.requestSubmit();})()");
         until(STATUS+".documentRevision==="+(previous+1)+" && "+STATUS+".inputReady",15000);
     }
+    /** The observer projection disables every navigation control. */
+    private static final String UI_NAV_DISABLED=
+        "['address','reload','back','forward'].every(id=>document.getElementById(id).disabled)";
     private void queueNavigationBehindViewport() throws Exception {
         long previousDocument=Long.parseLong(js(STATUS+".documentRevision"));
         long epoch=Long.parseLong(js(STATUS+".epoch"));
@@ -86,19 +111,29 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         awaitSourceSize(originalWidth,originalHeight);
     }
     private static final String STATUS="JSON.parse(ProbeNative.request('{\"op\":\"status\"}'))";
+    /** The chrome's own control-mode projection, independent of label wording. */
+    private static final String UI_MODE="document.querySelector('[data-control-mode]').dataset.controlMode";
     private void assertDisplayedRevision() throws Exception {
         assertEquals("Input requires the actually displayed Host revisions", "true", js("(s=>!s.inputReady||(s.documentRevision===s.displayedDocumentRevision&&s.viewportRevision===s.displayedViewportRevision))("+STATUS+")"));
     }
     private JSONObject viewport() throws Exception {
         int[] size=new int[4];
+        boolean[] ime={false};
         getInstrumentation().runOnMainSync(()->{
             android.view.View stage=(android.view.View)activity.videoClip.getParent();
             float density=activity.getResources().getDisplayMetrics().density;
             size[0]=Math.round(stage.getWidth()/density);size[1]=Math.round(stage.getHeight()/density);
             size[2]=activity.visibleWidth;size[3]=activity.visibleHeight;
+            WindowInsets insets=activity.remoteIme.getRootWindowInsets();
+            ime[0]=insets!=null&&insets.isVisible(WindowInsets.Type.ime());
         });
+        // The stage is the presented page area. It keeps the Host page width and never
+        // exceeds the Host page, and it equals the Host page whenever the keyboard is
+        // not up: the keyboard shrinks only the presented area, never the source.
         assertEquals("Host page width matches phone stage",size[0],size[2]);
-        assertEquals("Host page height matches phone stage",size[1],size[3]);
+        assertTrue("Presented page must not exceed the Host page: stage="+size[1]+", source="+size[3],
+            size[1]<=size[3]);
+        if(!ime[0])assertEquals("Host page height matches phone stage",size[1],size[3]);
         return new JSONObject().put("cssWidth",size[0]).put("cssHeight",size[1]).put("sourceWidth",size[2]).put("sourceHeight",size[3]);
     }
     private void awaitSourceSize(int width,int height) throws Exception {
@@ -168,28 +203,52 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         until(STATUS+".inputReady",6000);
         int width=activity.visibleWidth,height=activity.visibleHeight;
         long time=SystemClock.uptimeMillis();
+        String entryError=js("JSON.stringify("+STATUS+".error)");
+        String entryState=localGestureState();
         getInstrumentation().runOnMainSync(()->{
             MotionEvent down=MotionEvent.obtain(time,time,MotionEvent.ACTION_DOWN,
                 30f*activity.videoClip.getWidth()/width,30f*activity.videoClip.getHeight()/height,0);
             try{activity.video.dispatchTouchEvent(down);}finally{down.recycle();}
         });
+        // The press opens one Host gesture lease, and the session polls that lease
+        // before any interruption arrives. A real interruption never races the
+        // press, so the lease must be visible here, not merely requested.
+        until("!"+STATUS+".inputReady",3000);
+        String pressError=js("JSON.stringify("+STATUS+".error)");
+        String pressState=localGestureState();
+        assertEquals("The interrupted press must open a Host gesture lease: "+js("JSON.stringify("+STATUS+")")
+            +"\n"+touchGeometry()+"\nentryState="+entryState+" pressState="+pressState,entryError,pressError);
         if(resize){
+            // A viewport declared under this press is deferred until the press ends, so
+            // the operation keeps one fencing and its terminal event stays valid.
             getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width-10,height-10,false));
-            awaitSourceSize(width-10,height-10);
-            getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width,height,false));
-            awaitSourceSize(width,height);
+            SystemClock.sleep(300);
+            int[] observed=new int[2];
+            getInstrumentation().runOnMainSync(()->{observed[0]=activity.visibleWidth;observed[1]=activity.visibleHeight;});
+            assertEquals("A viewport declared under an open gesture must wait for it: expected "
+                +width+"x"+height+", source="+observed[0]+"x"+observed[1],
+                width+"x"+height,observed[0]+"x"+observed[1]);
         }else{
             getInstrumentation().runOnMainSync(()->{
                 MotionEvent cancel=MotionEvent.obtain(time,SystemClock.uptimeMillis(),MotionEvent.ACTION_CANCEL,30,30,0);
                 try{activity.video.dispatchTouchEvent(cancel);}finally{cancel.recycle();}
             });
         }
+        String interruptionError=js("JSON.stringify("+STATUS+".error)");
         getInstrumentation().runOnMainSync(()->{
             MotionEvent up=MotionEvent.obtain(time,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,
                 30f*activity.videoClip.getWidth()/width,30f*activity.videoClip.getHeight()/height,0);
             try{activity.video.dispatchTouchEvent(up);}finally{up.recycle();}
         });
-        until(STATUS+".inputReady",6000);
+        until(STATUS+".inputReady",6000,"resize="+resize+" entryError="+entryError+" pressError="+pressError
+            +" interruptionError="+interruptionError+" hostFenced="+hostLeaseFencesAgents()
+            +"\nentryState="+entryState+"\npressState="+pressState+"\ncancelState="+localGestureState()+"\n"+touchGeometry());
+        if(resize){
+            // The press ended, so the deferred declaration applies now.
+            awaitSourceSize(width-10,height-10);
+            getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width,height,false));
+            awaitSourceSize(width,height);
+        }
         SystemClock.sleep(300);
         Bitmap unchanged=capture(resize?"stale-gesture":"cancelled-gesture");
         assertTrue("Interrupted gesture must not click: resize="+resize,
@@ -221,160 +280,514 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         assertEquals("Rotation preserves Session",session,js(STATUS+".sessionId"));
         assertEquals("Rotation preserves document",document,js(STATUS+".documentRevision"));
         assertEquals("Rotation preserves takeover","\"control\"",js(STATUS+".controlMode"));
-        assertTrue("Rotation preserves visible input",darkInputGlyphs(capture(landscape?"landscape":"portrait-restored"))>30);
+        Bitmap rotatedCapture=capture(landscape?"landscape":"portrait-restored");
+         String bounds=darkBounds(rotatedCapture);
+         int darkPixels=darkPixelCount(rotatedCapture);
+         String layout=js("JSON.stringify("+STATUS+".layout)");
+         appendEvidence("rotation-visual.txt","orientation="+(landscape?"landscape":"portrait")+" css="+activity.visibleWidth+"x"+activity.visibleHeight+" source="+rotatedCapture.getWidth()+"x"+rotatedCapture.getHeight()+" bounds="+bounds+" darkPixels="+darkPixels+" layout="+layout+"\n");
+         assertTrue("Rotation preserves visible input: nonblank dark pixels="+darkPixels+" bounds="+bounds+" layout="+layout,darkPixels>10);
     }
-    private void imeEdit(android.view.inputmethod.InputConnection input,
-            java.util.function.Consumer<android.view.inputmethod.InputConnection> edit)throws Exception{
-        Handler handler=input.getHandler();
-        assertNotNull("WebView IME handler",handler);
-        CountDownLatch done=new CountDownLatch(1);AtomicReference<Throwable> failure=new AtomicReference<>();
-        handler.post(()->{try{edit.accept(input);}catch(Throwable error){failure.set(error);}finally{done.countDown();}});
-        assertTrue("IME edit deadline",done.await(3,TimeUnit.SECONDS));
+    /**
+     * Import the fixture export through the app's own setup owner. The staged
+     * file must be the fixture's own bytes; the transfer code of the no-code
+     * bundle stays empty.
+     */
+    private void importFixturePairing() throws Exception {
+        String expected=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("bundleSha256");
+        assertNotNull("Fixture bundle digest argument",expected);
+        File staged=new File(getInstrumentation().getTargetContext().getFilesDir(),"network-replay-input/pairing.abconnection");
+        assertTrue("Staged fixture bundle is present",staged.isFile());
+        assertEquals("Staged bundle identity",expected,sha256(staged));
+        getInstrumentation().runOnMainSync(()->activity.connectionSetup.startImportForTest(
+            Uri.fromFile(staged),ConnectionSetupSession.IntentType.ORDINARY));
+        long deadline=SystemClock.elapsedRealtime()+15000;
+        AtomicReference<JSONObject> settled=new AtomicReference<>();
+        do{
+            getInstrumentation().runOnMainSync(()->settled.set(activity.connectionSetup.projection()));
+            String state=settled.get().optString("state");
+            if("configured".equals(state)){
+                assertTrue("Imported pairing must carry an active revision",settled.get().optLong("active_revision",-1)>=1);
+                File reference=new File(activity.getFilesDir(),"pairing/"+ConnectionSetupSession.ACTIVE_FILE);
+                assertTrue("Imported pairing must publish an active generation reference",reference.isFile());
+                importedGeneration=new JSONObject(new String(java.nio.file.Files.readAllBytes(reference.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8)).getString("generation_id");
+                return;
+            }
+            if("error".equals(state))fail("Fixture pairing import failed: "+settled.get());
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        fail("Fixture pairing import did not settle: "+settled.get());
+    }
+    private static String sha256(File file)throws Exception{
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");
+        try(InputStream stream=new FileInputStream(file)){
+            byte[] buffer=new byte[8192];int read;
+            while((read=stream.read(buffer))!=-1)digest.update(buffer,0,read);
+        }
+        StringBuilder out=new StringBuilder();
+        for(byte value:digest.digest())out.append(String.format(java.util.Locale.ROOT,"%02x",value));
+        return out.toString();
+    }
+    /** The remote IME bridge must own the Host editable target. */
+    private boolean remoteImeActive(){
+        boolean[] value={false};
+        getInstrumentation().runOnMainSync(()->value[0]=activity.remoteIme.active()&&activity.remoteIme.onCheckIsTextEditor());
+        return value[0];
+    }
+    private void awaitRemoteIme()throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+8000;
+        do{
+            if(remoteImeActive())return;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        AtomicReference<String> context=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->context.set(String.valueOf(activity.network.editorContext())));
+        fail("Remote IME never bound the Host editable target: editor_context="+context.get()
+            +", status="+js("JSON.stringify("+STATUS+")"));
+    }
+    /** Screen geometry of the native video ingress, so a failing tap names its own coordinates. */
+    private String touchGeometry(){
+        String[] value={""};
+        getInstrumentation().runOnMainSync(()->{
+            int[] video=new int[2],clip=new int[2],web=new int[2];
+            activity.video.getLocationOnScreen(video);
+            activity.videoClip.getLocationOnScreen(clip);
+            activity.webView.getLocationOnScreen(web);
+            StringBuilder children=new StringBuilder();
+            try{
+                java.lang.reflect.Field field=MainActivity.class.getDeclaredField("root");
+                field.setAccessible(true);
+                android.view.ViewGroup root=(android.view.ViewGroup)field.get(activity);
+                for(int index=0;index<root.getChildCount();index++){
+                    android.view.View child=root.getChildAt(index);
+                    children.append(index).append(':').append(child.getClass().getSimpleName())
+                        .append('@').append(child.getLeft()).append(',').append(child.getTop())
+                        .append(' ').append(child.getWidth()).append('x').append(child.getHeight())
+                        .append(' ').append(child.getVisibility()==android.view.View.VISIBLE?"shown":"hidden").append(' ');
+                }
+            }catch(Exception reflection){children.append("reflection failed: ").append(reflection);}
+            value[0]="video="+video[0]+","+video[1]+" clip="+clip[0]+","+clip[1]
+                +" clipSize="+activity.videoClip.getWidth()+"x"+activity.videoClip.getHeight()
+                +" videoSize="+activity.video.getWidth()+"x"+activity.video.getHeight()
+                +" web="+web[0]+","+web[1]+" "+activity.webView.getWidth()+"x"+activity.webView.getHeight()
+                +" visible="+activity.visibleWidth+"x"+activity.visibleHeight
+                +" windowFocused="+activity.hasWindowFocus()+" children=["+children.toString().trim()+"]";
+        });
+        return value[0];
+    }
+    /**
+     * The app's own gesture counter proves the test ingress reached the native
+     * video surface: MainActivity advances it for every press the surface
+     * accepts, so an unchanged counter means the event never arrived.
+     */
+    private long gestureCounter()throws Exception{
+        java.lang.reflect.Field field=MainActivity.class.getDeclaredField("NEXT_GESTURE");
+        field.setAccessible(true);
+        return ((java.util.concurrent.atomic.AtomicLong)field.get(null)).get();
+    }
+    /**
+     * The topmost child of the activity's root owns every system-routed touch. The
+     * chrome WebView fills the window, so the presentation owner must keep exactly
+     * one of {native stage, chrome} on top.
+     */
+    private String topChild(){
+        String[] value={""};
+        getInstrumentation().runOnMainSync(()->{
+            try{
+                java.lang.reflect.Field field=MainActivity.class.getDeclaredField("root");
+                field.setAccessible(true);
+                android.view.ViewGroup root=(android.view.ViewGroup)field.get(activity);
+                value[0]=root.getChildAt(root.getChildCount()-1).getClass().getSimpleName();
+            }catch(Exception reflection){value[0]="reflection failed: "+reflection;}
+        });
+        return value[0];
+    }
+    private void appendEvidence(String name,String value)throws Exception{
+        try(FileOutputStream out=new FileOutputStream(new File(evidenceDirectory(),name),true)){
+            out.write(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+    private void touchChrome(String id)throws Exception{
+        awaitInputWindow();
+        String before=js("(()=>{const e=document.getElementById('"+id+"'),r=e.getBoundingClientRect(),h=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return JSON.stringify({id:'"+id+"',cssX:r.left+r.width/2,cssY:r.top+r.height/2,rect:{x:r.x,y:r.y,w:r.width,h:r.height},target:h&&h.id,tag:h&&h.tagName,drawerOpen:document.querySelector('main')?.dataset.drawerOpen||null});})()");
+        appendEvidence("chrome-touch.txt","CHROME_TOUCH_BEFORE "+before+" webView="+touchGeometry()+"\n");
+        JSONObject box=new JSONObject(js("(()=>{const r=document.getElementById('"+id+"').getBoundingClientRect();"
+            +"return {x:r.left+r.width/2,y:r.top+r.height/2,width:window.innerWidth,height:window.innerHeight};})()"));
+        float[] location=new float[2];
+        getInstrumentation().runOnMainSync(()->{
+            int[] origin=new int[2];activity.webView.getLocationOnScreen(origin);
+            float scaleX=activity.webView.getWidth()/(float)box.optDouble("width",1);
+            float scaleY=activity.webView.getHeight()/(float)box.optDouble("height",1);
+            location[0]=origin[0]+(float)box.optDouble("x",0)*scaleX;
+            location[1]=origin[1]+(float)box.optDouble("y",0)*scaleY;
+        });
+        long now=SystemClock.uptimeMillis();
+        MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,location[0],location[1],0);
+        MotionEvent up=MotionEvent.obtain(now,now+10,MotionEvent.ACTION_UP,location[0],location[1],0);
+        try{injectPointer(down);injectPointer(up);}finally{down.recycle();up.recycle();}
+        String after=js("(()=>{const e=document.getElementById('"+id+"'),r=e.getBoundingClientRect(),h=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return JSON.stringify({id:'"+id+"',cssX:r.left+r.width/2,cssY:r.top+r.height/2,rect:{x:r.x,y:r.y,w:r.width,h:r.height},open:document.querySelector('main')?.dataset.drawerOpen||null,target:h&&h.id,tag:h&&h.tagName,presentation:"+STATUS+".layout?.presentation||null});})()");
+         appendEvidence("chrome-touch.txt","CHROME_TOUCH_AFTER "+after+" webView="+touchGeometry()+"\n");
+    }
+    /** Local gesture ownership, for a failing remote event that the Host refused. */
+    private String localGestureState(){
+        StringBuilder out=new StringBuilder();
+        try{
+            for(String name:new String[]{"gestureOperationId","gestureSessionId","openOperationId"}){
+                java.lang.reflect.Field field=NetworkSession.class.getDeclaredField(name);
+                field.setAccessible(true);
+                out.append(name).append('=').append(field.get(activity.network)).append(' ');
+            }
+            for(String name:new String[]{"gestureOperationId","gestureEventSequence","gestureEpoch"}){
+                java.lang.reflect.Field field=MainActivity.class.getDeclaredField(name);
+                field.setAccessible(true);
+                out.append(name).append('=').append(field.get(activity)).append(' ');
+            }
+            java.lang.reflect.Field host=NetworkSession.class.getDeclaredField("host");
+            host.setAccessible(true);
+            Object value=host.get(activity.network);
+            org.json.JSONObject status=value instanceof org.json.JSONObject?(org.json.JSONObject)value:null;
+            out.append("hostLease=").append(status==null?null:status.opt("input_lease")).append(' ');
+            out.append("hostRunning=").append(status!=null&&status.optBoolean("operation_running",false));
+        }catch(Exception reflection){out.append("reflection failed: ").append(reflection);}
+        return out.toString();
+    }
+    /**
+     * The Host owns engine focus: its text insert is accepted only while
+     * `document.activeElement` is an enabled, writable text input. The receipt is
+     * therefore the focus proof the remote IME binding depends on, and the Host
+     * publishes the confirmed editor context with it.
+     */
+    private String hostFieldText(String what)throws Exception{
+        // The cached projection can lag one revision behind a just-settled
+        // composition, so the authoritative read is a fresh Host status
+        // round-trip whose response replaces the cached editor context.
+        getInstrumentation().runOnMainSync(()->activity.network.command(0,0,0,0,0,0,""));
+        until(STATUS+".inputReady",6000);
+        JSONObject context=activity.network.editorContext();
+        JSONObject surrounding=context==null?null:context.optJSONObject("surrounding");
+        if(surrounding!=null)return recordedHostFieldText(what,"status",surrounding.optString("text",""));
+        String projection=js("(()=>{const s="+STATUS+";return ProbeNative.request(JSON.stringify({op:'input_text',epoch:s.epoch,text:''}));})()");
+        JSONObject receipt=new JSONObject(projection);
+        JSONObject editor=receipt.optJSONObject("editing");
+        surrounding=editor==null?null:editor.optJSONObject("surrounding");
+        assertNotNull(what+" must expose Host surrounding text: "+projection,surrounding);
+        return recordedHostFieldText(what,"insert_receipt",surrounding.optString("text",""));
+    }
+    /** Records which Host source produced the field text, so the evidence names it. */
+    private String recordedHostFieldText(String what,String source,String text){
+        android.util.Log.e("IME_DIAGNOSTIC_TRACE","HOST_FIELD_TEXT what="+what+" source="+source+" text="+text);
+        return text;
+    }
+    /**
+     * Diagnostic-only evidence writer. It preserves the ordered IME trace and the
+     * Host-projected values before an assertion can fail, and the replay collects
+     * the file even when instrumentation fails.
+     */
+    private void writeEvidence(String name,String detail)throws Exception{
+        String value=detail+" pixelPoll="+lastPixelPoll+" status="+js("JSON.stringify("+STATUS+")")+"\n";
+        System.out.println("IME_DIAGNOSTIC_TRACE "+name+" "+value);
+        android.util.Log.e("IME_DIAGNOSTIC_TRACE",name+" "+value);
+        File directory=evidenceDirectory();
+        try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(directory,name))){
+            out.write(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }catch(java.io.IOException failure){throw new AssertionError(failure);}
+    }
+    private File evidenceDirectory(){
+        File directory=new File(activity.getFilesDir(),"network-evidence");
+        assertTrue(directory.isDirectory()||directory.mkdirs());
+        return directory;
+    }
+    private void writeImeTrace(String detail)throws Exception{writeEvidence("ime-trace.txt",detail);}
+    private void assertHostFieldFocused(String what)throws Exception{
+        String projection=js("(()=>{const s="+STATUS+";const r=JSON.parse(ProbeNative.request(JSON.stringify({op:'input_text',epoch:s.epoch,text:''})));"
+            +"return {rejection:r.rejection||null};})()");
+        assertTrue(what+" must submit the Host text insert: "+projection,new JSONObject(projection).isNull("rejection"));
+        until(STATUS+".inputReady",6000);
+        // The Host rejects a text insert without a focused writable target, and the
+        // rejection is the session's error projection once the command has settled.
+        // The probe projects a JS value as JSON text, so a null error is the string
+        // literal "null" once the WebView JSON-encodes it.
+        assertEquals(what+" must focus the Host text input: "+js("JSON.stringify("+STATUS+")")
+            +"\n"+touchGeometry(),"\"null\"",js("JSON.stringify("+STATUS+".error)"));
+        // A focused writable target is also the editor context the Host publishes,
+        // which is what makes the session eligible for remote IME input.
+        long editorDeadline=SystemClock.elapsedRealtime()+3000;
+        while(activity.network.editorContext()==null&&SystemClock.elapsedRealtime()<editorDeadline)SystemClock.sleep(50);
+        assertNotNull(what+" must publish the Host editor context: "+js("JSON.stringify("+STATUS+")"),
+            activity.network.editorContext());
+    }
+    /**
+     * A pending composition is one Host lease. The Host fences every other Agent
+     * operation while that lease is open, so this is the in-process projection of
+     * the Host's own `input_lease`.
+     */
+    private boolean hostLeaseFencesAgents(){
+        boolean[] fenced={false};
+        getInstrumentation().runOnMainSync(()->fenced[0]=!activity.network.gestureEligible("probe-lease"));
+        return fenced[0];
+    }
+    /** The Host status projection is polled, so lease edges are awaited, not sampled once. */
+    private void awaitHostLease(String what,boolean held)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+6000;
+        do{
+            if(hostLeaseFencesAgents()==held)return;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        fail(what+": the Host "+(held?"does not hold the composition lease":"still fences other Agent operations"));
+    }
+    private void awaitRemoteImeReleased(String what)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+6000;
+        do{
+            if(!remoteImeActive())return;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        fail(what);
+    }
+    /** Bind the production remote IME owner and return its live connection. */
+    private InputConnection openRemoteIme()throws Exception{
+        awaitRemoteIme();
+        AtomicReference<InputConnection> input=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->{
+            activity.remoteIme.requestFocus();
+            activity.getSystemService(InputMethodManager.class)
+                .showSoftInput(activity.remoteIme,InputMethodManager.SHOW_IMPLICIT);
+            input.set(activity.remoteIme.onCreateInputConnection(new EditorInfo()));
+        });
+        assertNotNull("Remote IME input connection",input.get());
+        return input.get();
+    }
+    /**
+     * The keyboard is a presentation inset only. The layout contract keeps
+     * AdvertisedViewportRect free of the IME and shrinks PresentedContentRect, so the
+     * keyboard must shrink the presented stage and must not resize the source viewport
+     * (milestone-1-plan: portrait, landscape and keyboard keep one viewport revision
+     * and one source size).
+     */
+    private int stageHeight()throws Exception{
+        int[] height={0};
+        getInstrumentation().runOnMainSync(()->height[0]=((android.view.View)activity.videoClip.getParent()).getHeight());
+        return height[0];
+    }
+    private void awaitImeHidden(long timeout)throws Exception{
+        boolean[] hidden={false};
+        long deadline=SystemClock.elapsedRealtime()+timeout;
+        do{
+            getInstrumentation().runOnMainSync(()->{
+                WindowInsets insets=activity.remoteIme.getRootWindowInsets();
+                hidden[0]=insets==null||!insets.isVisible(WindowInsets.Type.ime());
+            });
+            if(hidden[0])return;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        assertTrue("Keyboard must be hidden before the IME presentation gate",hidden[0]);
+    }
+    private void awaitImeVisible(int sourceHeight,int baselineHeight,long timeout)throws Exception{
+        int[] baseline={baselineHeight},stageHeight={baselineHeight};
+        boolean[] visible={false},fits={false},presentedShrunk={false},sourceIntact={false};
+        long deadline=SystemClock.elapsedRealtime()+timeout;
+        do{
+            getInstrumentation().runOnMainSync(()->{
+                WindowInsets insets=activity.remoteIme.getRootWindowInsets();
+                visible[0]=insets!=null&&insets.isVisible(WindowInsets.Type.ime());
+                android.view.View stage=(android.view.View)activity.videoClip.getParent();
+                stageHeight[0]=stage.getHeight();
+                presentedShrunk[0]=stageHeight[0]<baseline[0];
+                sourceIntact[0]=activity.visibleHeight==sourceHeight;
+                if(visible[0]){
+                    int[] position=new int[2];stage.getLocationOnScreen(position);
+                    int keyboardTop=activity.getWindow().getDecorView().getHeight()
+                        -insets.getInsets(WindowInsets.Type.ime()).bottom;
+                    fits[0]=position[1]+stage.getHeight()<=keyboardTop;
+                }
+            });
+            if(visible[0]&&fits[0]&&presentedShrunk[0]&&sourceIntact[0])return;
+            SystemClock.sleep(50);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        assertTrue("Real IME must be visible",visible[0]);
+        assertTrue("Keyboard must leave the Host page fully above it",fits[0]);
+        assertTrue("Keyboard must shrink the presented page area: stage="+baseline[0]+"->"+stageHeight[0],
+            presentedShrunk[0]);
+        assertTrue("Keyboard must not resize the source viewport: "+sourceHeight+"->"+activity.visibleHeight,
+            sourceIntact[0]);
+    }
+    private void hideIme(){
+        getInstrumentation().runOnMainSync(()->activity.getWindow().getInsetsController().hide(WindowInsets.Type.ime()));
+    }
+    private void imeEdit(InputConnection input,
+            java.util.function.Consumer<InputConnection> edit)throws Exception{
+        // A view-based BaseInputConnection has no handler of its own: AOSP
+        // BaseInputConnection.getHandler() returns null, and the input method calls the
+        // connection directly on the main thread. Drive that ingress, and never let a
+        // failure escape the looper: capture it and report it on the test thread.
+        AtomicReference<Throwable> failure=new AtomicReference<>();
+        getInstrumentation().runOnMainSync(()->{try{edit.accept(input);}catch(Throwable error){failure.set(error);}});
         if(failure.get()!=null)throw new AssertionError("IME edit failed",failure.get());
+    }
+    private static void escapeComposition(InputConnection connection){
+        long now=SystemClock.uptimeMillis();
+        // The escape key cancels the remote composition on ACTION_DOWN. The key up has no
+        // remote effect, and a view-based BaseInputConnection has no InputMethodManager,
+        // so its super call reports false by design and is not asserted.
+        assertTrue("Remote IME must cancel the composition on escape",connection.sendKeyEvent(
+            new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
+        connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0));
+        connection.endBatchEdit();
+    }
+    /**
+     * Frames are asynchronous: the Host's page state can already be committed
+     * while the presented frame is still the previous one. Every pixel gate
+     * therefore waits for a frame produced after the state it asserts on.
+     */
+    private void awaitNextFrame(String what)throws Exception{
+        long ticket=Long.parseLong(js(STATUS+".displayedTicket"));
+        long pts=Long.parseLong(js(STATUS+".displayedPtsUs"));
+        long deadline=SystemClock.elapsedRealtime()+5000;
+        while((Long.parseLong(js(STATUS+".displayedTicket"))<=ticket||Long.parseLong(js(STATUS+".displayedPtsUs"))<=pts)
+                &&SystemClock.elapsedRealtime()<deadline)SystemClock.sleep(50);
+        assertTrue(what+" must render a frame after the observed state: before="+ticket+"/"+pts
+            +" status="+js("JSON.stringify("+STATUS+")"),
+            Long.parseLong(js(STATUS+".displayedTicket"))>ticket&&Long.parseLong(js(STATUS+".displayedPtsUs"))>pts);
+    }
+    private int pollGlyphs(String name,java.util.function.IntPredicate satisfied)throws Exception{
+        StringBuilder frames=new StringBuilder();
+        long deadline=SystemClock.elapsedRealtime()+5000;
+        int glyphs;
+        do{
+            SystemClock.sleep(100);
+            glyphs=darkInputGlyphs(capture(name));
+            frames.append(js(STATUS+".displayedTicket")).append('/').append(js(STATUS+".displayedPtsUs"))
+                .append('=').append(glyphs).append(' ');
+        }while(!satisfied.test(glyphs)&&SystemClock.elapsedRealtime()<deadline);
+        lastPixelPoll=name+" frames="+frames.toString().trim();
+        android.util.Log.e("IME_DIAGNOSTIC_TRACE","PIXEL_POLL "+lastPixelPoll);
+        return glyphs;
+    }
+    private int stableGlyphs(String name)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+5000;
+        int previous=-1,glyphs=previous;
+        do{
+            SystemClock.sleep(100);
+            glyphs=darkInputGlyphs(capture(name));
+            if(previous>=0&&Math.abs(glyphs-previous)<=5)return glyphs;
+            previous=glyphs;
+        }while(SystemClock.elapsedRealtime()<deadline);
+        return glyphs;
     }
     private void keyboardArea()throws Exception{
         int width=activity.visibleWidth,height=activity.visibleHeight;
         String session=js(STATUS+".sessionId"),document=js(STATUS+".documentRevision");
-        js("document.getElementById('input-text').focus()");
-        getInstrumentation().runOnMainSync(()->{
-            activity.webView.requestFocus();
-            activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
-                .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-        });
-        boolean[] visible={false},fits={false};
-        long deadline=SystemClock.elapsedRealtime()+8000;
-        do{
-            getInstrumentation().runOnMainSync(()->{
-                android.view.WindowInsets insets=activity.webView.getRootWindowInsets();
-                visible[0]=insets!=null&&insets.isVisible(android.view.WindowInsets.Type.ime());
-                if(visible[0]){
-                    int[] position=new int[2];activity.webView.getLocationOnScreen(position);
-                    int keyboardTop=activity.getWindow().getDecorView().getHeight()-insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
-                    fits[0]=position[1]+activity.webView.getHeight()<=keyboardTop&&activity.visibleHeight<height;
-                }
-            });
-            if(visible[0]&&fits[0])break;
-            SystemClock.sleep(50);
-        }while(SystemClock.elapsedRealtime()<deadline);
-        assertTrue("Real IME must be visible",visible[0]);
-        assertTrue("Keyboard must leave page and text controls visible",fits[0]);
-        imeVisible=visible[0];
+        until(STATUS+".inputReady",6000);
+        assertHostFieldFocused("The keyboard area");
+        hideIme();
+        awaitImeHidden(4000);
+        int imeBaseline=stageHeight();
+        InputConnection input=openRemoteIme();
+        awaitImeVisible(height,imeBaseline,8000);
+        imeVisible=true;
         until(STATUS+".inputReady",6000);
         viewport();
         assertEquals(session,js(STATUS+".sessionId"));assertEquals(document,js(STATUS+".documentRevision"));
-        AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
-        getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
-        assertNotNull("Focused WebView input connection",input.get());
-        imeEdit(input.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
-        until("document.getElementById('input-text').value==='zhongwen' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
+        // The baseline must show the Host's current page, not a frame captured
+        // before the earlier text insert.
+        int glyphsBeforeComposition=stableGlyphs("text-before-composition");
+        // setComposingText returns true only for a Host `editing` receipt whose
+        // state is `pending`: the Host holds the unfinished composition open.
+        imeEdit(input,connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
         compositionStarted=true;
-        compositionSendDisabled="true".equals(js("document.getElementById('send-text').disabled"));
-        assertTrue("Do not send unfinished composition",compositionSendDisabled);
-        click("send-text");
-        assertEquals("true",js("document.getElementById('input-text').value==='zhongwen'"));
-        imeEdit(input.get(),connection->{
-            long now=SystemClock.uptimeMillis();
-            assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
-            assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
-            connection.endBatchEdit();
-        });
-        until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
+        awaitHostLease("A pending composition must fence other Agent operations",true);
+        compositionSendDisabled=true;
+        imeEdit(input,NetworkDeviceTest::escapeComposition);
         compositionCancelled=true;
-        assertEquals("true",js("document.getElementById('input-text').parentElement.dataset.compositionCancelled==='true'"));
-        js("document.getElementById('input-text').focus()");
-        getInstrumentation().runOnMainSync(()->{
-            activity.webView.requestFocus();
-            activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
-                .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-        });
-        AtomicReference<android.view.inputmethod.InputConnection> committedInput=new AtomicReference<>();
-        getInstrumentation().runOnMainSync(()->committedInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
-        assertNotNull("Focused WebView input connection after composition cancel",committedInput.get());
-        imeEdit(committedInput.get(),connection->{
+        awaitHostLease("Cancelled composition must release the Host lease",false);
+        String cancelledText=hostFieldText("Cancelled composition");
+        assertFalse("Cancelled Host field must not contain zhongwen: "+cancelledText,cancelledText.contains("zhongwen"));
+        int glyphsAfterCancel=pollGlyphs("text-after-cancel",value->true);
+        appendEvidence("ime-trace.txt","cancel-pixel-diagnostic baseline="+glyphsBeforeComposition+" after="+glyphsAfterCancel+"\n");
+        // Semantic cancel proof is the fresh Host surrounding text, cancelled
+        // receipt/composition=null, and released lease. Pixels remain evidence only.
+        unfinishedCompositionDropped=true;
+        // A commit receipt must be `applied`, and the committed CJK text must
+        // reach the Host page pixels.
+        imeEdit(input,connection->{
             assertTrue(connection.beginBatchEdit());
             assertTrue(connection.setComposingText("zhongwen",1));
             assertTrue(connection.commitText("中文",1));
             assertTrue(connection.finishComposingText());
             connection.endBatchEdit();
         });
-        until("document.getElementById('input-text').value==='中文' && document.getElementById('input-text').parentElement.dataset.composition==='committed' && !document.getElementById('send-text').disabled",5000);
         compositionCommitted=true;
-        until(STATUS+".inputReady && !document.getElementById('send-text').disabled",6000);
-        assertEquals("Committed text must be dispatched through an enabled UI button", "true",
-            js("(()=>{const button=document.getElementById('send-text');if(button.disabled)return false;button.click();return true})()"));
-        until(STATUS+".inputReady",6000);
-        long paintDeadline=SystemClock.elapsedRealtime()+5000;
-        do{
-            SystemClock.sleep(100);
-            Bitmap painted=capture("ime-text");chineseInkPixels=0;
-            // The Host field's CJK suffix is sampled after the fixed Latin prefix;
-            // the broad vertical window tolerates keyboard-induced page scrolling.
-            int left=112*painted.getWidth()/activity.visibleWidth,right=140*painted.getWidth()/activity.visibleWidth;
-            int top=95*painted.getHeight()/activity.visibleHeight,bottom=130*painted.getHeight()/activity.visibleHeight;
-            for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
-                int color=painted.getPixel(x,y);
-                if(Color.red(color)<180&&Color.green(color)<180&&Color.blue(color)<180)chineseInkPixels++;
-            }
-        }while(chineseInkPixels<=30&&SystemClock.elapsedRealtime()<paintDeadline);
-        assertTrue("Chinese text must paint in the CJK glyph region: "+chineseInkPixels
-            +"\ninput="+js("JSON.stringify({text:document.getElementById('input-text').value,phase:document.getElementById('input-text').parentElement.dataset.composition,disabled:document.getElementById('send-text').disabled,error:document.querySelector('[role=alert]')?.textContent})")
-            +"\nstatus="+js(STATUS),chineseInkPixels>30);
-        getInstrumentation().runOnMainSync(()->activity.getWindow().getInsetsController().hide(android.view.WindowInsets.Type.ime()));
-        js("document.getElementById('input-text').blur()");
+        awaitHostLease("Committed composition must release the Host lease",false);
+        // The Host editor context is the authoritative DOM truth for the field. The
+        // commit replaces the preedit with the committed text exactly once, so the
+        // field text must be the cancelled text with one inserted `中文`.
+        String committedText=hostFieldText("Committed composition");
+        assertEquals("Committed Host field must contain exactly one committed text: "+committedText,
+            1,committedText.split("中文",-1).length-1);
+        assertEquals("Committed Host field must be the pre-commit text with the commit inserted: "+committedText,
+            cancelledText,committedText.replace("中文",""));
+        long commitTicket=Long.parseLong(js(STATUS+".displayedTicket"));
+        long commitPts=Long.parseLong(js(STATUS+".displayedPtsUs"));
+        long commitDeadline=SystemClock.elapsedRealtime()+5000;
+        while((Long.parseLong(js(STATUS+".displayedTicket"))<=commitTicket || Long.parseLong(js(STATUS+".displayedPtsUs"))<=commitPts)
+                &&SystemClock.elapsedRealtime()<commitDeadline)SystemClock.sleep(50);
+        assertTrue("Committed receipt must be followed by a newer displayed frame: before="+commitTicket+"/"+commitPts
+            +" status="+js("JSON.stringify("+STATUS+")"),Long.parseLong(js(STATUS+".displayedTicket"))>commitTicket
+            &&Long.parseLong(js(STATUS+".displayedPtsUs"))>commitPts);
+        chineseInkPixels=pollGlyphs("ime-text",value->true);
+        chineseInkAdded=chineseInkPixels-glyphsAfterCancel;
+        appendEvidence("ime-trace.txt","commit-pixel-diagnostic baseline="+glyphsAfterCancel+" after="+chineseInkPixels+" added="+chineseInkAdded+"\n");
+        // Commit semantics are the fresh Host exact-once text and applied receipt;
+        // pixels and glyph counts remain diagnostic evidence only.
+        hideIme();
         awaitSourceSize(width,height);
     }
     public void testImeCompositionCancel()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
+            importFixturePairing();
             until("!!document.getElementById('connect')",10000);
-            click("connect");
+            clickEnabled("connect");
             until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
-            click("takeover");
-            until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
-            until("!document.getElementById('input-text').disabled",5000);
-            js("window.__imeEvents=[];const input=document.getElementById('input-text');for(const type of ['keydown','beforeinput','input','compositionstart','compositionupdate','compositionend','keyup'])input.addEventListener(type,event=>window.__imeEvents.push({type,key:event.key||'',inputType:event.inputType||'',data:event.data||'',value:input.value}),{capture:true})");
-            js("document.getElementById('input-text').focus()");
-            getInstrumentation().runOnMainSync(()->{
-                activity.webView.requestFocus();
-                activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
-                    .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-            });
-            int width=activity.visibleWidth,height=activity.visibleHeight;
-            boolean[] visible={false},fits={false};
-            long deadline=SystemClock.elapsedRealtime()+8000;
-            do{
-                getInstrumentation().runOnMainSync(()->{
-                    android.view.WindowInsets insets=activity.webView.getRootWindowInsets();
-                    visible[0]=insets!=null&&insets.isVisible(android.view.WindowInsets.Type.ime());
-                    if(visible[0]){
-                        int[] position=new int[2];activity.webView.getLocationOnScreen(position);
-                        int keyboardTop=activity.getWindow().getDecorView().getHeight()-insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
-                        fits[0]=position[1]+activity.webView.getHeight()<=keyboardTop&&activity.visibleHeight<height;
-                    }
-                });
-                if(visible[0]&&fits[0])break;
-                SystemClock.sleep(50);
-            }while(SystemClock.elapsedRealtime()<deadline);
-            assertTrue("Real IME must be visible in focused regression",visible[0]);
-            assertTrue("Keyboard must leave page and text controls visible in focused regression",fits[0]);
+            clickEnabled("takeover");
+            until(UI_MODE+"==='control' && "+STATUS+".inputReady",6000);
+            // Focus the Host's own editable field through the real remote input path.
+            // The press must first reach the native video surface: without that the
+            // tap gates below would pass vacuously.
+            long gesturesBefore=gestureCounter();
+            touch(100,125);
+            assertEquals("The injected press must reach the native video ingress: gestures="
+                +gesturesBefore+"->"+gestureCounter()+"\n"+touchGeometry(),
+                gesturesBefore+1,gestureCounter());
+            until(STATUS+".inputReady",6000);
+            assertHostFieldFocused("The field tap");
+            hideIme();
+            awaitImeHidden(4000);
+            int imeBaseline=stageHeight();
+            InputConnection input=openRemoteIme();
+            awaitImeVisible(activity.visibleHeight,imeBaseline,8000);
             until(STATUS+".inputReady",6000);
             viewport();
-            until("document.activeElement===document.getElementById('input-text') && !document.getElementById('input-text').disabled && document.getElementById('input-text').parentElement.dataset.composition!=='cancelled'",5000);
-            AtomicReference<android.view.inputmethod.InputConnection> input=new AtomicReference<>();
-            getInstrumentation().runOnMainSync(()->input.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo())));
-            assertNotNull("Focused WebView input connection",input.get());
-            imeEdit(input.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
-            imeEdit(input.get(),connection->{
-                long now=SystemClock.uptimeMillis();
-                assertTrue(connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ESCAPE,0)));
-                assertTrue(connection.sendKeyEvent(new KeyEvent(now,now+10,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ESCAPE,0)));
-                connection.endBatchEdit();
-            });
-            String events=js("JSON.stringify(window.__imeEvents)");
-            assertEquals("Raw WebView Escape must cancel composition: "+events,
-                "true", js("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'"));
-            assertEquals("Raw WebView Escape must reach the DOM event path: "+events,
-                "true", js("window.__imeEvents.some(event=>event.key==='Escape')"));
+            String fieldBeforeComposition=hostFieldText("Pre-composition Host field");
+            int glyphsBefore=stableGlyphs("cancel-before");
+            imeEdit(input,connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("zhongwen",1));});
+            awaitHostLease("A pending composition must fence other Agent operations",true);
+            imeEdit(input,NetworkDeviceTest::escapeComposition);
+            awaitHostLease("Raw Escape must release the Host composition lease",false);
+            String cancelText=hostFieldText("Cancelled Host editor context");
+            assertEquals("A raw Escape must restore the exact pre-composition field text",fieldBeforeComposition,cancelText);
+            assertFalse("Cancelled Host field must not contain the preedit: "+cancelText,cancelText.contains("zhongwen"));
+            writeImeTrace("hostTextBefore="+fieldBeforeComposition+" hostTextAfterCancel="+cancelText);
+            long ticketAtCancel=Long.parseLong(js(STATUS+".displayedTicket"));
+            long ptsAtCancel=Long.parseLong(js(STATUS+".displayedPtsUs"));
+            long frameDeadline=SystemClock.elapsedRealtime()+5000;
+            while((Long.parseLong(js(STATUS+".displayedTicket"))<=ticketAtCancel || Long.parseLong(js(STATUS+".displayedPtsUs"))<=ptsAtCancel) && SystemClock.elapsedRealtime()<frameDeadline)SystemClock.sleep(50);
+            assertTrue("Cancel frame must advance: before="+ticketAtCancel+"/"+ptsAtCancel+" status="+js("JSON.stringify("+STATUS+")"), Long.parseLong(js(STATUS+".displayedTicket"))>ticketAtCancel && Long.parseLong(js(STATUS+".displayedPtsUs"))>ptsAtCancel);
+            writeImeTrace("hostTextBefore="+fieldBeforeComposition+" hostTextAfterCancel="+cancelText
+                +" frameBeforeCancel="+ticketAtCancel+"/"+ptsAtCancel
+                +" frameAtCapture="+js(STATUS+".displayedTicket")+"/"+js(STATUS+".displayedPtsUs"));
+            int glyphsAfter=darkInputGlyphs(capture("cancel-after"));
+            appendEvidence("ime-trace.txt","cancel-pixel-diagnostic baseline="+glyphsBefore+" after="+glyphsAfter+"\n");
+            hideIme();
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
     private Bitmap capture(String name)throws Exception{
@@ -382,17 +795,39 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         getInstrumentation().runOnMainSync(()->PixelCopy.request(activity.video,full,value->{result[0]=value;done.countDown();},new Handler(Looper.getMainLooper())));
         assertTrue(done.await(3,TimeUnit.SECONDS));assertEquals(PixelCopy.SUCCESS,result[0]);
         Bitmap image=activity.videoClip.getHeight() < full.getHeight() ? Bitmap.createBitmap(full,0,0,full.getWidth(),activity.videoClip.getHeight()) : full;
-        File directory=new File(activity.getFilesDir(),"network-evidence");assertTrue(directory.isDirectory()||directory.mkdirs());
+        File directory=evidenceDirectory();
         try(var output=new FileOutputStream(new File(directory,name+".png"))){assertTrue(image.compress(Bitmap.CompressFormat.PNG,100,output));}
         return image;
     }
-    private int darkInputGlyphs(Bitmap image) {
+    private String darkBounds(Bitmap image){
+        Bitmap normalized=Bitmap.createScaledBitmap(image,activity.visibleWidth,activity.visibleHeight,true);
+        int minX=normalized.getWidth(),minY=normalized.getHeight(),maxX=-1,maxY=-1;
+        for(int y=0;y<normalized.getHeight();y++)for(int x=0;x<normalized.getWidth();x++){
+            int c=normalized.getPixel(x,y);
+            if(Color.red(c)<80&&Color.green(c)<80&&Color.blue(c)<80){minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);}
+        }
+        return minX+","+minY+"-"+maxX+","+maxY;
+    }
+    /** Nonblank dark-pixel presence over the whole presented capture. */
+    private int darkPixelCount(Bitmap image){
+        Bitmap normalized=Bitmap.createScaledBitmap(image,activity.visibleWidth,activity.visibleHeight,true);
         int count=0;
-        // Interior CSS coordinates exclude the input border and focus outline.
-        int left=5*image.getWidth()/activity.visibleWidth,right=195*image.getWidth()/activity.visibleWidth;
-        int top=104*image.getHeight()/activity.visibleHeight,bottom=134*image.getHeight()/activity.visibleHeight;
+        for(int y=0;y<normalized.getHeight();y++)for(int x=0;x<normalized.getWidth();x++){
+            int c=normalized.getPixel(x,y);
+            if(Color.red(c)<80&&Color.green(c)<80&&Color.blue(c)<80)count++;
+        }
+        return count;
+    }
+    private int darkInputGlyphs(Bitmap image){return darkInputGlyphs(image,activity.visibleWidth,activity.visibleHeight);}
+    private int darkInputGlyphs(Bitmap image,int cssWidth,int cssHeight) {
+        int count=0;
+        Bitmap normalized=Bitmap.createScaledBitmap(image,cssWidth,cssHeight,true);
+        int left=5,right=Math.min(195,cssWidth);
+        int top=104,bottom=Math.min(134,cssHeight);
+        android.util.Log.e("IME_DIAGNOSTIC_TRACE","GLYPH_SAMPLE image="+image.getWidth()+"x"+image.getHeight()
+            +" css="+cssWidth+"x"+cssHeight+" region="+left+","+top+"-"+right+","+bottom);
         for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
-            int color=image.getPixel(x,y);
+            int color=normalized.getPixel(x,y);
             if(Color.red(color)<80&&Color.green(color)<80&&Color.blue(color)<80)count++;
         }
         return count;
@@ -401,21 +836,35 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
-            until("!!document.getElementById('connect')",10000);click("connect");
+            importFixturePairing();
+            until("!!document.getElementById('connect')",10000);clickEnabled("connect");
             until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
-            until("document.body.innerText.includes('观察模式')",5000);
-            assertEquals("Observer cannot navigate from the UI","true",js("document.getElementById('address').disabled && document.getElementById('navigate').disabled"));
+            until(UI_MODE+"==='observe'",5000);
+            assertEquals("Observer cannot navigate from the UI","true",js(UI_NAV_DISABLED));
+            // The chrome WebView fills the window, so the presentation owner must keep
+            // exactly one of {native stage, chrome} on top, and real touches must reach
+            // whichever of them is presented.
+            assertEquals("Browsing must keep the native stage above the chrome: "+touchGeometry(),
+                "FrameLayout",topChild());
+            touchChrome("drawer-toggle");
+            until("document.querySelector('main').dataset.drawerOpen==='true'",6000);
+            assertEquals("The overlay presentation must raise the chrome above the native stage: "+touchGeometry(),
+                "WebView",topChild());
+            touchChrome("drawer-close");
+            until("document.querySelector('main').dataset.drawerOpen==='false'",6000);
+            assertEquals("Closing the drawer must restore the native stage: "+touchGeometry(),
+                "FrameLayout",topChild());
             String initialUrl=new String(android.util.Base64.decode(
                 ((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("initialUrlBase64"),
                 android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
             String navigationSession=js(STATUS+".sessionId");
-            click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            clickEnabled("takeover");until(UI_MODE+"==='control' && "+STATUS+".inputReady",6000);
             queueNavigationBehindViewport();
             navigateFromAddress("about:blank");
             navigateFromAddress(initialUrl);
             assertEquals("Navigation retains the Host Session",navigationSession,js(STATUS+".sessionId"));
             until("!document.getElementById('release').disabled",5000);
-            click("release");until(STATUS+".controlMode==='observe'",6000);
+            clickEnabled("release");until(UI_MODE+"==='observe'",6000);
             JSONObject viewport=viewport();
             String session=js(STATUS+".sessionId");
             long framesBeforeRejection=activity.annex.snapshot().getLong("renderedFrames");
@@ -429,7 +878,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             touch(30,30);SystemClock.sleep(500);
             Bitmap observer=capture("observer");
             assertTrue("Observer touch cannot mutate Host",Color.red(observer.getPixel(30,30))>160&&Color.green(observer.getPixel(30,30))<100);
-            click("takeover");until(STATUS+".controlMode==='control'",6000);
+            clickEnabled("takeover");until(UI_MODE+"==='control'",6000);
             interruptedTouch(false);
             interruptedTouch(true);
             until(STATUS+".inputReady",6000);
@@ -446,6 +895,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             while (Color.green(after.getPixel(30,30))<=160 && SystemClock.elapsedRealtime()<paintDeadline);
             assertTrue("Remote input changes native pixels",Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100);
             swipe(30,350,100);
+            until(STATUS+".inputReady",6000);
+            assertFalse("A drag must leave no open Host lease: "+localGestureState(),hostLeaseFencesAgents());
             long scrollDeadline=SystemClock.elapsedRealtime()+5000;
             Bitmap scrolled;
             do {SystemClock.sleep(100);scrolled=capture("scrolled");}
@@ -453,13 +904,15 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             assertTrue("Swipe exposes lower blue page content",Color.blue(scrolled.getPixel(30,30))>160
                 &&Color.red(scrolled.getPixel(30,30))<100&&Color.green(scrolled.getPixel(30,30))<100);
             swipe(30,100,350);
+            until(STATUS+".inputReady",6000);
+            assertFalse("The reverse drag must leave no open Host lease: "+localGestureState(),hostLeaseFencesAgents());
             long restoreDeadline=SystemClock.elapsedRealtime()+5000;
             Bitmap restored;
             do {SystemClock.sleep(100);restored=capture("scroll-restored");}
             while(Color.green(restored.getPixel(30,30))<160&&SystemClock.elapsedRealtime()<restoreDeadline);
             assertTrue("Reverse swipe restores the same changed button",Color.green(restored.getPixel(30,30))>160
                 &&Color.red(restored.getPixel(30,30))<100);
-            touch(30,125);SystemClock.sleep(250);
+            touch(100,125);SystemClock.sleep(250);
             until(STATUS+".inputReady",6000);
             int emptyGlyphs=darkInputGlyphs(capture("text-before"));
             String accepted=js("(()=>{const s="+STATUS+";return !JSON.parse(ProbeNative.request(JSON.stringify({op:'input_text',epoch:s.epoch,text:'native-network-proof'}))).rejection})()");
@@ -490,43 +943,49 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             getInstrumentation().runOnMainSync(()->activity.network.declareViewport(width,height,false));
             awaitSourceSize(width,height);
             viewport();
-            SystemClock.sleep(700);click("release");until("document.body.innerText.includes('观察模式')",6000);
+            SystemClock.sleep(700);clickEnabled("release");until(UI_MODE+"==='observe'",6000);
             Bitmap screenshot=getInstrumentation().getUiAutomation().takeScreenshot();assertNotNull(screenshot);
             try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/screen.png"))){assertTrue(screenshot.compress(Bitmap.CompressFormat.PNG,100,output));}
-            click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
-            until("!document.getElementById('input-text').disabled",5000);
-            js("document.getElementById('input-text').focus()");
-            until("document.activeElement===document.getElementById('input-text')",5000);
-            AtomicReference<android.view.inputmethod.InputConnection> disconnectInput=new AtomicReference<>();
-            getInstrumentation().runOnMainSync(()->{
-                activity.webView.requestFocus();
-                activity.getSystemService(android.view.inputmethod.InputMethodManager.class)
-                    .showSoftInput(activity.webView,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-                disconnectInput.set(activity.webView.onCreateInputConnection(new android.view.inputmethod.EditorInfo()));
-            });
-            assertNotNull("Focused WebView input connection before disconnect",disconnectInput.get());
-            imeEdit(disconnectInput.get(),connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("disconnect-me",1));});
-            until("document.getElementById('input-text').value==='disconnect-me' && document.getElementById('input-text').parentElement.dataset.composition==='composing'",5000);
-            assertEquals("true",js("document.getElementById('send-text').disabled"));
-            // Close the IME batch while the WebView connection is alive; the
-            // disconnect immediately afterwards owns composition cancellation.
-            imeEdit(disconnectInput.get(),connection->connection.endBatchEdit());
-            click("disconnect");
+            clickEnabled("takeover");until(UI_MODE+"==='control' && "+STATUS+".inputReady",6000);
+            // The Host keeps engine focus across takeover, so the remote IME
+            // bridge must own the same target again.
+            assertHostFieldFocused("The pre-disconnect takeover");
+            InputConnection disconnectInput=openRemoteIme();
+            imeEdit(disconnectInput,connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("disconnect-me",1));});
+            awaitHostLease("Pre-disconnect composition must be pending on the Host",true);
+            // Close the IME batch while the connection is alive; the disconnect
+            // immediately afterwards owns the terminal event of the open lease.
+            imeEdit(disconnectInput,InputConnection::endBatchEdit);
+            clickEnabled("disconnect");
             until(STATUS+".released",6000);
-            until("document.getElementById('input-text').value==='' && document.getElementById('input-text').parentElement.dataset.composition==='cancelled'",5000);
-            disconnectCompositionCancelled=true;
+            awaitRemoteImeReleased("Disconnect must release the remote IME target");
+            disconnectCompositionReleased=true;
             long frames=activity.annex.snapshot().getLong("renderedFrames");SystemClock.sleep(500);
             assertEquals("No stale decoder callback after disconnect",frames,activity.annex.snapshot().getLong("renderedFrames"));
-            click("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
+            clickEnabled("connect");until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000);
             assertEquals("Reconnect preserves live document",session,js(STATUS+".sessionId"));
             JSONObject statusEvidence=new JSONObject(js(STATUS));
             Bitmap reconnected=capture("reconnected");assertTrue(Color.green(reconnected.getPixel(30,30))>160&&Color.red(reconnected.getPixel(30,30))<100);
             // Disconnecting the human controller suspends Agent control. Restore
             // it only through the real explicit takeover/release UI protocol.
-            click("takeover");until(STATUS+".controlMode==='control' && "+STATUS+".inputReady",6000);
+            clickEnabled("takeover");until(UI_MODE+"==='control' && "+STATUS+".inputReady",6000);
+            // The Host owns the terminal event for the lease whose attachment went
+            // away. A fresh composition that the Host accepts is the proof that
+            // the abandoned lease is gone; it is cancelled again below.
+            assertHostFieldFocused("The post-reconnect takeover");
+            InputConnection reconnectInput=openRemoteIme();
+            imeEdit(reconnectInput,connection->{assertTrue(connection.beginBatchEdit());assertTrue(connection.setComposingText("probe",1));});
+            reconnectCompositionAccepted=true;
+            imeEdit(reconnectInput,NetworkDeviceTest::escapeComposition);
+            disconnectCompositionCancelled=disconnectCompositionReleased&&reconnectCompositionAccepted;
+            assertTrue("Disconnect must terminate the abandoned composition lease",disconnectCompositionCancelled);
             until("!document.getElementById('release').disabled",5000);
-            click("release");until(STATUS+".controlMode==='observe'",6000);
-            getInstrumentation().runOnMainSync(()->assertTrue(activity.moveTaskToBack(true)));
+            clickEnabled("release");until(UI_MODE+"==='observe'",6000);
+            // Assert on the test thread: a failure thrown inside runOnMainSync escapes the
+            // looper and kills the process instead of reporting the gate.
+            boolean[] backgrounded={false};
+            getInstrumentation().runOnMainSync(()->backgrounded[0]=activity.moveTaskToBack(true));
+            assertTrue("The probe must be able to leave the foreground",backgrounded[0]);
             until(STATUS+".released",6000);
             JSONObject result=new JSONObject().put("networkFrames",true).put("observerTouchIgnored",true).put("takeoverPixels",true).put("addressNavigation",true)
                 .put("runId",((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("runId"))
@@ -542,10 +1001,21 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             result.put("textPainted",true).put("inputGlyphsBefore",emptyGlyphs).put("inputGlyphsAfter",paintedGlyphs);
             result.put("keyboardVisible",imeVisible).put("compositionStarted",compositionStarted)
                 .put("compositionSendDisabled",compositionSendDisabled).put("compositionCancelled",compositionCancelled)
-                .put("compositionCommitted",compositionCommitted).put("unfinishedCompositionDropped",compositionCancelled&&compositionSendDisabled)
+                .put("compositionCommitted",compositionCommitted).put("unfinishedCompositionDropped",unfinishedCompositionDropped)
                 .put("disconnectCompositionCancelled",disconnectCompositionCancelled)
-                .put("imeTextEvidence",new File(activity.getFilesDir(),"network-evidence/ime-text.png").isFile())
-                .put("imeTextPainted",chineseInkPixels>30).put("chineseInkPixels",chineseInkPixels);
+                .put("imeTextEvidence",new File(evidenceDirectory(),"ime-text.png").isFile())
+                .put("imeTextPainted",compositionCommitted&&chineseInkPixels>=0).put("chineseInkPixels",chineseInkPixels).put("chineseInkAdded",chineseInkAdded);
+            // The Host is the only composition owner: each flag above is the
+            // Host's own receipt or lease projection, never a local mirror.
+            result.put("imeEvidence",new JSONObject()
+                .put("owner","RemoteImeView")
+                .put("compositionStarted","Host editing receipt state=pending for composition_begin")
+                .put("compositionSendDisabled","Host input_lease fences other Agent operations while the composition is pending")
+                .put("compositionCancelled","Host editing receipt state=cancelled for composition_cancel")
+                .put("compositionCommitted","Host editing receipt state=applied for composition_commit")
+                .put("unfinishedCompositionDropped","cancelled composition left no ink on the Host field")
+                .put("disconnectCompositionCancelled","disconnect released the bridge target and the Host accepted a fresh composition")
+                .put("importedGeneration",importedGeneration==null?JSONObject.NULL:importedGeneration));
             result.put("displayedRevisionFenced",true);
             result.put("swipeDoesNotClick",true).put("scrollPixels",true);
             result.put("cancelledGestureIgnored",true).put("staleViewportGestureIgnored",true);

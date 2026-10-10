@@ -24,6 +24,7 @@ final class RemoteImeView extends View {
     private final Host host;
     private final InputMethodManager inputMethodManager;
     private boolean active;
+    private boolean inputConnectionReady;
     private String connectionIdentity;
     private Connection connection;
 
@@ -49,21 +50,26 @@ final class RemoteImeView extends View {
             connectionIdentity = identity;
             active = true;
             requestFocus();
-            post(() -> {
-                if (active && host.eligible()) inputMethodManager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
-            });
+            post(this::showInputWhenReady);
         } else if (!eligible && active) {
             deactivate();
             connectionIdentity = null;
         } else if (active && identity != null && !identity.equals(connectionIdentity)) {
             connectionIdentity = identity;
             if (connection != null) connection.abandonComposition();
-            inputMethodManager.restartInput(this);
+            if (inputConnectionReady) inputMethodManager.restartInput(this);
+        }
+    }
+
+    private void showInputWhenReady() {
+        if (active && host.eligible() && inputConnectionReady) {
+            inputMethodManager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
         }
     }
 
     void deactivate() {
         active = false;
+        inputConnectionReady = false;
         if (connection != null) connection.abandonComposition();
         inputMethodManager.hideSoftInputFromWindow(getWindowToken(), 0);
         clearFocus();
@@ -78,12 +84,15 @@ final class RemoteImeView extends View {
         if (connection != null && connection.hasDifferentCompositionTarget(context))
             connection.abandonComposition();
         if (!onCheckIsTextEditor() || context == null || !context.writable()) {
+            inputConnectionReady = false;
             connection = null;
             return null;
         }
         outAttrs.inputType = RemoteInput.editorInputType(context);
         outAttrs.imeOptions = RemoteInput.imeOptions(context);
         connection = new Connection();
+        inputConnectionReady = true;
+        post(this::showInputWhenReady);
         return connection;
     }
 

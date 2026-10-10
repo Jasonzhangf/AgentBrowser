@@ -1,4 +1,9 @@
 """Real installed APK + private Host fixture + independent DOM evidence."""
+import sys
+
+# The replay imports one sibling module; keep its bytecode cache out of the tree.
+sys.dont_write_bytecode = True
+
 import json
 import base64
 import hashlib
@@ -6,8 +11,8 @@ import os
 import pathlib
 import select
 import subprocess
-import sys
 import time
+import urllib.parse
 import uuid
 
 from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
@@ -20,6 +25,27 @@ evidence.mkdir(parents=True)
 print(f"Network replay evidence: {evidence}", flush=True)
 serial = os.environ["ANDROID_SERIAL"]
 protocol = pathlib.Path(os.environ["OBSCURA_PROTOCOL_ROOT"]).resolve(strict=True)
+
+
+def adb_reverse_list():
+    return subprocess.run(["adb", "-s", serial, "reverse", "--list"], check=True,
+                          capture_output=True, text=True).stdout
+
+
+def reverse_rows(listing, port):
+    """Exact reverse rows for one device-side port on the selected device."""
+    device = f"tcp:{port}"
+    return [
+        line.strip()
+        for line in listing.splitlines()
+        if len(line.split()) == 3
+        # `adb -s <serial> reverse --list` scopes the listing to this device, but
+        # recent adb servers print a host-local alias such as `host-19` instead of
+        # the remote serial. The command scope is the ownership proof.
+        and (line.split()[0] == serial or line.split()[0].startswith("host-"))
+        and line.split()[1] == device
+        and line.split()[2] == device
+    ]
 
 
 def write_network_path_evidence(session_id, instrumentation):
@@ -86,6 +112,10 @@ for package, relative in [
     installed[package] = digest
 (evidence / "installed-apks.json").write_text(json.dumps({"runId": run_id, "serial": serial, "sha256": installed}, indent=2)+"\n")
 patch = "patch.crates-io.obscura-host-protocol.path=" + json.dumps(str(protocol))
+# Each run must produce its own app evidence: a stale artifact from an earlier run
+# would otherwise be pulled when this run fails before writing it.
+subprocess.run(["adb", "-s", serial, "shell", "run-as", "com.agentbrowser.probe",
+                "rm", "-rf", "files/network-evidence"], check=True)
 subprocess.run(["cargo", "build", "--release", "--locked", "-p", "agentbrowser-android", "--example", "device_fixture", "--config", patch], cwd=root, check=True)
 
 def record(process, seconds):
@@ -104,13 +134,41 @@ with (evidence / "network-host.log").open("wb") as log:
     fixture = subprocess.Popen([str(root / "target/release/examples/device_fixture")], cwd=root,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log)
     pairing = None
+    reverse_port = None
+    passed = False
     try:
         ready = record(fixture, 15)
         pairing = ready["fixture"]
+        bundle = pathlib.Path(ready["bundle"]).resolve(strict=True)
+        bundle_sha256 = hashlib.sha256(bundle.read_bytes()).hexdigest()
+        # The fixture binds loopback on this host, so the device reaches it only
+        # through its own loopback while adb owns the exact reverse mapping.
+        endpoint = urllib.parse.urlsplit(ready["endpoint"])
+        if endpoint.port is None or not 1 <= endpoint.port <= 65535:
+            raise RuntimeError(f"Fixture endpoint has no usable TCP port: {ready['endpoint']}")
+        reverse_port = endpoint.port
+        if reverse_rows(adb_reverse_list(), reverse_port):
+            raise RuntimeError(f"Device-side tcp:{reverse_port} already has reverse mappings")
+        subprocess.run(["adb", "-s", serial, "reverse", f"tcp:{reverse_port}", f"tcp:{reverse_port}"], check=True)
+        reverse_mapping = reverse_rows(adb_reverse_list(), reverse_port)
+        if len(reverse_mapping) != 1:
+            raise RuntimeError(f"adb reverse tcp:{reverse_port} was not confirmed: {reverse_mapping}")
+        (evidence / "adb-reverse.json").write_text(json.dumps({
+            "runId": run_id, "serial": serial, "port": reverse_port, "mapping": reverse_mapping[0],
+        }, indent=2) + "\n")
+        (evidence / "fixture-pairing.json").write_text(json.dumps({
+            "runId": run_id,
+            "fixture": pairing,
+            "deviceId": ready["deviceId"],
+            "endpoint": ready["endpoint"],
+            "bundleSha256": bundle_sha256,
+            "session": ready["session"],
+        }, indent=2) + "\n")
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
         subprocess.run(["bash", "scripts/device.sh", "prepare"], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
-            EXPECTED_TEST_CLASS, "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
+            EXPECTED_TEST_CLASS, "-e", "bundleSha256", bundle_sha256,
+            "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)
         (evidence / "network-test.log").write_bytes(result.stdout)
@@ -126,20 +184,51 @@ with (evidence / "network-host.log").open("wb") as log:
             raise RuntimeError(f"IME composition evidence incomplete: {instrumentation}")
         fixture.stdin.write(b"inspect\n"); fixture.stdin.flush()
         response = record(fixture, 10)
+        if "error" in response:
+            raise RuntimeError(f"Independent Host DOM inspection was refused at the end state: {response['error']}")
         dom = json.loads(response["result"]["value"])
-        if (dom.get("clicked") != 1 or dom.get("text") != "native-network-proof中文"
+        # The commit inserts the committed text exactly once at the caret, so the
+        # independent Host check asserts exact-once insertion plus the preserved
+        # surrounding text, not a fixed insertion offset.
+        text = dom.get("text") or ""
+        if (dom.get("clicked") != 1 or text.count("中文") != 1
+                or text.replace("中文", "") != "native-network-proof"
                 or dom.get("scrollY") != 0 or dom.get("maxScroll", 0) < 240):
             raise RuntimeError(f"Host DOM mismatch: {dom}")
         (evidence / "network-dom.json").write_text(json.dumps({"session":ready["session"],"dom":dom},indent=2)+"\n")
-        for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png", "text-before.png", "text-after.png", "ime-text.png", "scrolled.png", "scroll-restored.png", "landscape.png", "portrait-restored.png"]:
+        for name in ["result.json", "screen.png", "before.png", "after.png", "reconnected.png", "text-before.png", "text-after.png", "ime-text.png", "ime-trace.txt", "scrolled.png", "scroll-restored.png", "landscape.png", "portrait-restored.png"]:
             result = subprocess.run(["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", f"files/network-evidence/{name}"],
-                                    stdout=subprocess.PIPE, check=True)
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+            if result.returncode or not result.stdout or result.stdout.startswith(b"cat: "):
+                continue
             if name == "result.json" and json.loads(result.stdout).get("runId") != run_id:
                 raise RuntimeError("Instrumentation evidence is not from this replay")
             (evidence / f"network-{name}").write_bytes(result.stdout)
         write_network_path_evidence(str(ready["session"]), instrumentation)
-        print("Network device + independent Host DOM replay PASS")
+        passed = True
     finally:
+        # Preserve app evidence even when instrumentation fails. This runs before fixture
+        # teardown, so diagnostic traces and screenshots remain available for diagnosis.
+        for name in ["result.json", "ime-trace.txt", "chrome-touch.txt", "rotation-visual.txt", "cancel-before.png", "cancel-after.png", "landscape.png", "portrait-restored.png", "text-before-composition.png", "text-after-cancel.png", "ime-text.png", "scrolled.png", "scroll-restored.png"]:
+            pulled = subprocess.run(["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", f"files/network-evidence/{name}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if pulled.returncode == 0 and pulled.stdout and not pulled.stdout.startswith(b"cat: "):
+                (evidence / f"network-{name}").write_bytes(pulled.stdout)
+        # The ordered IME trace is a required evidence artifact for the composition
+        # gates. The device log always carries it, so record it separately from the
+        # app file and never let a missing app file drop the evidence.
+        logs = subprocess.run(["adb", "-s", serial, "logcat", "-d", "-t", "5000"], stdout=subprocess.PIPE, check=False).stdout
+        lines = b"\n".join(line for line in logs.splitlines() if b"IME_DIAGNOSTIC_TRACE" in line)
+        if lines:
+            (evidence / "network-ime-trace.logcat.txt").write_bytes(lines + b"\n")
+            if not (evidence / "network-ime-trace.txt").exists():
+                (evidence / "network-ime-trace.txt").write_bytes(lines + b"\n")
+        if not passed and fixture.poll() is None:
+            try:
+                fixture.stdin.write(b"inspect\n"); fixture.stdin.flush()
+                inspect = record(fixture, 10)
+                (evidence / "network-dom-failing.json").write_text(json.dumps(inspect, indent=2)+"\n")
+            except Exception as failure:
+                (evidence / "network-dom-failing-error.txt").write_text(str(failure)+"\n")
         try:
             # device_fixture's quit performs CloseSession and waits for Closed before it exits.
             if fixture.poll() is None:
@@ -153,5 +242,17 @@ with (evidence / "network-host.log").open("wb") as log:
             if fixture.returncode:
                 raise RuntimeError(f"Fixture failed: {fixture.returncode}")
         finally:
+            if reverse_port is not None:
+                subprocess.run(["adb", "-s", serial, "reverse", "--remove", f"tcp:{reverse_port}"], check=True)
+                if reverse_rows(adb_reverse_list(), reverse_port):
+                    raise RuntimeError(f"adb reverse tcp:{reverse_port} survived cleanup")
             if pairing:
                 subprocess.run([sys.executable, "scripts/device-pairing.py", "remove", pairing], cwd=root, check=True)
+
+# The ordered IME trace is required evidence for the composition gates, so a run
+# without it is not accepted as a pass.
+trace = evidence / "network-ime-trace.txt"
+if not trace.is_file() or trace.stat().st_size == 0:
+    raise RuntimeError(f"Required IME trace artifact is missing from {evidence}")
+if passed:
+    print("Network device + independent Host DOM replay PASS")

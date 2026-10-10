@@ -113,7 +113,9 @@ final class NetworkSession {
         if(!gestureEligible(operationId))throw new IllegalStateException("REMOTE_GESTURE_NOT_ELIGIBLE");
         if(eventSequence==0){
             gestureOperationId=operationId;
-            gestureSessionId=gestureSessionId;
+            // The parameter shadows the field, so bind the field explicitly: the
+            // terminal cancel must carry the session id that opened the Host lease.
+            this.gestureSessionId=gestureSessionId;
         }
         return submitNative(epoch,operationId,eventSequence,RemoteInput.gestureBinding(gestureSessionId),event,false);
     }
@@ -158,6 +160,7 @@ final class NetworkSession {
                 if(openOperationId==null){
                     gestureOperationId=null;
                     gestureSessionId=null;
+                    flushViewport();
                 }
             }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_EDITING_RECEIPT",invalid);}
             return result;
@@ -211,7 +214,11 @@ final class NetworkSession {
         return viewportNeedsSubmission(requested,submitted,rejected)?CommandAdvance.SUBMIT_VIEWPORT:CommandAdvance.IDLE;
     }
     private synchronized void flushViewport(){
-        if(!connected()||commandPending||!viewportNeedsSubmission(requestedViewport,submittedViewport,rejectedViewport))return;
+        // A new viewport must not be applied before the current operation ends: the
+        // operation keeps one fencing for its whole life, and a mid-operation viewport
+        // change would make its terminal event unstoppable.
+        if(!connected()||commandPending||openOperationId!=null
+                ||!viewportNeedsSubmission(requestedViewport,submittedViewport,rejectedViewport))return;
         Viewport viewport=requestedViewport;
         command(6,0,viewport.width(),viewport.height(),viewport.landscape()?1:0,0,"");
     }
