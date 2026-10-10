@@ -1,6 +1,6 @@
 # Task-7 first-connect receipt
 
-Status: **INCOMPLETE / EVIDENCED PARTIAL**. Admission is proven. Browse evidence is retained from the fixture-host fallback; system Chinese IME and same-session lifecycle browse remain incomplete.
+Status: **INCOMPLETE / EVIDENCED PARTIAL**. Ordinary admission is proven against the Service-lifecycle Host and over the Tailscale endpoint. Browse is proven against the fixture-launched r8 Host and, for video plus a real click, over the Tailscale endpoint. Same-session lifecycle browse, system Chinese IME, and cross-node Tailscale remain unproven.
 
 ## Current consolidated gate results
 
@@ -9,12 +9,15 @@ Status: **INCOMPLETE / EVIDENCED PARTIAL**. Admission is proven. Browse evidence
 | Ordinary DocumentsUI picker | PASS | UiDevice instrumentation; `OK (1 test)`; `task7-instrumented-retry-20261010T1650/` |
 | Protected dialog and real IMPORT | PASS | `am instrument` exit 0; configured + active-generation-change assertions |
 | Service-lifecycle admission | PASS | bundle SHA `a5e7970747f1a119110e3b74c989635f77cbd04147163021159a322166a92cb5`; device SHA identical |
-| Fixture-host remote video | PASS | `task7-browse-only-20261010T1720/network-result.json`: `frameAck.renderedFrames=3`, `displayed=true`, `networkFrames=true` |
-| Fixture-host real click | PASS | `network-dom-failing.json`: Host DOM `clicked=1` |
-| Fixture-host drag-scroll | operation PASS; document delta UNPROVEN | `scrollPixels=true`, `swipeDoesNotClick=true`; Host DOM `scrollY=0`, `maxScroll=250`; no before/after scrollY delta |
+| Fixture-host remote video | PASS | `task7-scroll-delta-verified-20261010T1740/network-result.json`: `frameAck.renderedFrames=3`, `displayed=true`, `networkFrames=true` |
+| Fixture-host real click | PASS | `task7-scroll-delta-verified-20261010T1740/network-dom.json`: Host DOM `clicked=1` |
+| Fixture-host drag-scroll | PASS (document delta proven) | `task7-scroll-delta-verified-20261010T1740/network-scroll-trace.json`: Host DOM `scrollTrace=[0,250,0]`, `maxScroll=250`, `finalScrollY=0`, `restoredToZero=true` |
 | Fixture-host observe/takeover | PASS | `observerTouchIgnored=true`, `takeoverPixels=true`, operation receipts succeeded |
-| System IME focus | UNKNOWN | no raw `dumpsys input_method` capture in fixture browse run; prior task-4 raw focus was `mInputShown=false`, `mServedInputConnection=null` |
-| Chinese composition | UNKNOWN (environment-blocked) | emulator has no zh-capable IME subtype/package; controlled RemoteIme composition is not a system IME proof |
+| Tailscale ordinary admission | PASS | bundle SHA `22220a52b5a81b7d93653aa7efbda3072bed57be7baf578c26e1330c3b67fc95`; device SHA identical; `task8-android-final-20261010T1640/` |
+| Tailscale ordinary connect + remote video | PASS | `task8-browse-20261010T1645/tailscale-browse-click.json`: endpoint `wss://100.66.1.82:51881/`, `connected`, `renderedFrames=2`, `displayedTicket=42` |
+| Tailscale real click | PASS (Host-applied repaint) | same file: `redBeforeClick=true`, `limeAfterClick=true`; no independent Host DOM read-back exists for a service-lifecycle Host |
+| System IME focus | FAIL (raw) | `evidence/user-slice/android/ime-20261010T1705/input-method-focus.txt`: `mInputShown=false`, `mServedInputConnection=null` |
+| Chinese composition | UNKNOWN (environment-blocked) | `ime-subtype-zh-count.txt`: `zh_subtype_count=0`; only Gboard + Google Voice Typing installed; controlled RemoteIme composition is not a system IME proof |
 | Cross-node Tailscale | UNKNOWN | designated 15T `100.104.163.65` offline |
 
 Browse was proven against the fixture-launched r8 Host, while pairing/admission
@@ -22,7 +25,13 @@ was proven against the Service-lifecycle Host. It is not a same-session browse
 claim. Automated code entry (`setText`/instrumentation argument) stood in for
 human typing.
 
-Screen recording: `evidence/user-slice/first-connect/task7-recording-20261010T1730/ordinary-flow.mp4` (SHA-256 `4bea683553cda2997bf2e92465a9eeea65eaa3715faf053dc69fe54f07bd3397`).
+Screen recording: `evidence/user-slice/first-connect/task7-recording-20261010T1730/ordinary-flow-sanity.mp4`
+(1080x2400, 14.47 s, 48 frames, SHA-256
+`8a95dac96ca0f59bd0be53a736e5f03d8d68c77c03b48337ece55b51d901a1a`). It covers
+app launch, the drawer, `配置连接` and the import picker interaction only. It
+does **not** cover the protected dialog or `IMPORT`. The earlier
+`ordinary-flow.mp4` in the same directory is truncated (`ffprobe: moov atom not
+found`) and must not be cited as evidence.
 
 ## Instrumented ordinary admission
 
