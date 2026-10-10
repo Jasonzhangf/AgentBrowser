@@ -15,27 +15,13 @@ import time
 import urllib.parse
 import uuid
 
-from instrumentation_result import (
-    EXPECTED_TEST_CLASS,
-    InstrumentationExpectation,
-    parse_instrumentation_result,
-)
+from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
 
-# The browse gate collects exactly these two entries. Argument-dependent tests
-# that need a protected transfer code are deliberately not collected here. An
-# explicit method list may narrow the run for one diagnostic; the parser below
-# then requires exactly the narrowed entries, so a narrowed run cannot pass as
-# the full gate.
-_selected = os.environ.get("NETWORK_REPLAY_METHODS")
-REPLAY_METHODS = tuple(_selected.split(",")) if _selected else ("testImeCompositionCancel", "testRealNetworkControlAndFrames")
+# The replay collects exactly these two entries. The argument-dependent tests
+# that need a protected transfer code are deliberately not collected, so the
+# parser's fixed two-test contract still describes this run.
+REPLAY_METHODS = ("testImeCompositionCancel", "testRealNetworkControlAndFrames")
 REPLAY_SELECTOR = ",".join(f"{EXPECTED_TEST_CLASS}#{method}" for method in REPLAY_METHODS)
-REPLAY_EXPECTATION = InstrumentationExpectation(
-    test_class=EXPECTED_TEST_CLASS,
-    test_count=len(REPLAY_METHODS),
-    summary=f"OK ({len(REPLAY_METHODS)} test{'s' if len(REPLAY_METHODS) != 1 else ''})",
-    instrumentation_code=-1,
-    test_entries=tuple((EXPECTED_TEST_CLASS, method) for method in REPLAY_METHODS),
-)
 
 
 root = pathlib.Path(__file__).resolve().parent.parent
@@ -192,7 +178,7 @@ with (evidence / "network-host.log").open("wb") as log:
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)
         (evidence / "network-test.log").write_bytes(result.stdout)
-        if not parse_instrumentation_result(result.stdout, REPLAY_EXPECTATION).ok:
+        if not parse_instrumentation_result(result.stdout).ok:
             raise RuntimeError(f"Network instrumentation failed; see {evidence / 'network-test.log'}")
         instrumentation = json.loads(subprocess.check_output(
             ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", "files/network-evidence/result.json"]
