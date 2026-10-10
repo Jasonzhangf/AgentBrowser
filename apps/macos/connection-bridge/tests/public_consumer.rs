@@ -15,6 +15,8 @@
 
 use std::{
     io::{Read, Write},
+    os::unix::net::UnixListener,
+    path::PathBuf,
     process::{Command, Stdio},
 };
 
@@ -25,12 +27,21 @@ struct Bridge {
 
 impl Bridge {
     fn start() -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_agentbrowser-macos-bridge"))
+        Self::start_with(|command| {
+            // A real authority path is never inherited by accident; the
+            // availability tests below set it explicitly.
+            command.env_remove("AGENTBROWSER_MAC_ADMIN_SOCKET");
+        })
+    }
+
+    fn start_with(configure: impl FnOnce(&mut Command)) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_agentbrowser-macos-bridge"));
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn bridge");
+            .stderr(Stdio::null());
+        configure(&mut command);
+        let child = command.spawn().expect("spawn bridge");
         Self { child, next_id: 0 }
     }
 
@@ -175,4 +186,61 @@ fn status_without_session_reports_observe() {
     assert_eq!(snapshot["inputReady"], false);
     assert!(snapshot.get("editorContext").is_none());
     assert!(snapshot.get("inputLease").is_none());
+}
+
+fn unique_path(tag: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "agentbrowser-macos-bridge-{tag}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    path
+}
+
+#[test]
+fn provisioning_unavailable_without_admin_socket() {
+    let mut bridge = Bridge::start();
+    let value = bridge.request("{\"op\":\"status\"}");
+    let snapshot: serde_json::Value = serde_json::from_str(&value).expect("snapshot json");
+    assert_eq!(
+        snapshot["provisioningAvailable"],
+        serde_json::json!(false),
+        "an absent admin socket must not report local provisioning available"
+    );
+    // Remote pairing truth is a separate concern and keeps its own value.
+    assert_eq!(snapshot["networkConfigured"], serde_json::json!(false));
+}
+
+#[test]
+fn provisioning_unavailable_for_stale_socket_path() {
+    // A plain file at the declared path is not a live authority. Existence
+    // alone must never be treated as an available admin socket.
+    let path = unique_path("stale");
+    std::fs::write(&path, b"not a socket").expect("write stale path");
+    let mut bridge = Bridge::start_with(|command| {
+        command.env("AGENTBROWSER_MAC_ADMIN_SOCKET", &path);
+    });
+    let value = bridge.request("{\"op\":\"status\"}");
+    let snapshot: serde_json::Value = serde_json::from_str(&value).expect("snapshot json");
+    assert_eq!(snapshot["provisioningAvailable"], serde_json::json!(false));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn provisioning_available_requires_connectable_authority() {
+    // A real listening local control socket at the declared path is the one
+    // condition that reports the capability available. This proves only the
+    // transport probe; it is not a host-admin authority, a provisioning
+    // success, or an exported bundle.
+    let path = unique_path("live");
+    let listener = UnixListener::bind(&path).expect("bind admin socket");
+    let mut bridge = Bridge::start_with(|command| {
+        command.env("AGENTBROWSER_MAC_ADMIN_SOCKET", &path);
+    });
+    let value = bridge.request("{\"op\":\"status\"}");
+    let snapshot: serde_json::Value = serde_json::from_str(&value).expect("snapshot json");
+    assert_eq!(snapshot["provisioningAvailable"], serde_json::json!(true));
+    drop(listener);
+    let _ = std::fs::remove_file(&path);
 }

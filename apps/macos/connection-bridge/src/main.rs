@@ -6,6 +6,7 @@
 
 use std::{
     io::{self, BufRead, BufReader, BufWriter, Write},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     sync::{mpsc as std_mpsc, Arc},
     thread,
@@ -116,6 +117,7 @@ struct AppState {
     lifecycle: Lifecycle,
     error: Option<String>,
     pairing_available: bool,
+    provisioning_available: bool,
 }
 
 impl AppState {
@@ -127,6 +129,7 @@ impl AppState {
             lifecycle: Lifecycle::Idle,
             error: None,
             pairing_available: pairing_dir().is_some_and(|path| path.is_dir()),
+            provisioning_available: admin_socket_available(),
         }
     }
 }
@@ -501,6 +504,7 @@ async fn dispatch(
         | "account_logout" => account_command(object),
         "status" => {
             fields(object, &["op"], &["op"])?;
+            app.provisioning_available = admin_socket_available();
             refresh_status(app).await;
             Ok(snapshot(app))
         }
@@ -1088,6 +1092,11 @@ fn snapshot(app: &AppState) -> String {
         displayed_ticket,
         displayed_document_revision,
         displayed_viewport_revision,
+        active_tab_id,
+        viewport_pending,
+        displayed_generation,
+        displayed_session_id,
+        displayed_tab_id,
         editor_context,
         input_lease,
         session_error,
@@ -1126,6 +1135,25 @@ fn snapshot(app: &AppState) -> String {
                     .displayed
                     .as_ref()
                     .map(|frame| frame.frame.viewport_revision),
+                Some(session.status.active_tab_id.as_str()),
+                session.status.viewport_pending,
+                session
+                    .displayed
+                    .as_ref()
+                    // The native view fences decoded frames by the app-level
+                    // (client) generation carried on the frame header, which is
+                    // the same value as the snapshot's `generation`; the stored
+                    // `frame.generation` is the transport generation used only
+                    // for input fencing.
+                    .map(|_| session.client_generation),
+                session
+                    .displayed
+                    .as_ref()
+                    .map(|frame| frame.frame.session_id.as_str()),
+                session
+                    .displayed
+                    .as_ref()
+                    .map(|frame| frame.frame.tab_id.as_str()),
                 editor_context_json(session.status.editor_context.as_ref()),
                 input_lease_json(session.status.input_lease.as_ref()),
                 session.error.as_deref(),
@@ -1148,6 +1176,11 @@ fn snapshot(app: &AppState) -> String {
             None,
             None,
             None,
+            None,
+            false,
+            None,
+            None,
+            None,
             serde_json::Value::Null,
             serde_json::Value::Null,
             None,
@@ -1165,6 +1198,7 @@ fn snapshot(app: &AppState) -> String {
         "controlMode": control_mode,
         "pending": pending,
         "networkConfigured": app.pairing_available,
+        "provisioningAvailable": app.provisioning_available,
         "inputReady": input_ready,
         "epoch": epoch,
         "sessionId": session_id,
@@ -1174,6 +1208,11 @@ fn snapshot(app: &AppState) -> String {
         "displayedTicket": displayed_ticket,
         "displayedDocumentRevision": displayed_document_revision,
         "displayedViewportRevision": displayed_viewport_revision,
+        "activeTabId": active_tab_id,
+        "viewportPending": viewport_pending,
+        "displayedGeneration": displayed_generation,
+        "displayedSessionId": displayed_session_id,
+        "displayedTabId": displayed_tab_id,
         "editorContext": editor_context,
         "inputLease": input_lease,
     });
@@ -1205,6 +1244,10 @@ fn omit_optional_nulls(value: &mut serde_json::Value) {
             "displayedTicket",
             "displayedDocumentRevision",
             "displayedViewportRevision",
+            "activeTabId",
+            "displayedGeneration",
+            "displayedSessionId",
+            "displayedTabId",
             "editorContext",
             "inputLease",
         ] {
@@ -1420,6 +1463,23 @@ fn account_snapshot(state: &str, error: Option<&str>) -> String {
 
 fn pairing_dir() -> Option<PathBuf> {
     std::env::var_os("AGENTBROWSER_MAC_PAIRING").map(PathBuf::from)
+}
+
+/// Real declared local-authority probe for the new local-provisioning
+/// capability. The path is the service-owned `<socket_dir>/host-admin.sock`,
+/// supplied by the native host after it reads the service's typed `status`.
+/// A connectable local control socket is required; file or directory
+/// existence alone never reports available, so a stale socket file, a plain
+/// path, or an absent path stays explicitly unavailable. Existing remote
+/// pairing truth (`pairing_available`) is a separate concern.
+fn admin_socket_available() -> bool {
+    let Some(path) = std::env::var_os("AGENTBROWSER_MAC_ADMIN_SOCKET") else {
+        return false;
+    };
+    if path.is_empty() {
+        return false;
+    }
+    UnixStream::connect(Path::new(&path)).is_ok()
 }
 
 fn load_pairing() -> Result<Pairing, String> {

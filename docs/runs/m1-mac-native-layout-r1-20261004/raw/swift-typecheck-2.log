@@ -1,0 +1,18 @@
+apps/macos/Sources/main.swift:1276:30: warning: use '#selector' instead of explicitly constructing a 'Selector'
+1274 |                 editMarkedRange = NSRange(location: NSNotFound, length: 0)
+1275 |             }
+1276 |         } else if command == Selector("paste:") {
+     |                              `- warning: use '#selector' instead of explicitly constructing a 'Selector'
+1277 |             guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+1278 |             _ = submitStandaloneEdit(event: json([
+
+apps/macos/Sources/main.swift:1534:35: warning: 'javaScriptEnabled' was deprecated in macOS 11.0: Use WKWebpagePreferences.allowsContentJavaScript to disable content JavaScript on a per-navigation basis [#DeprecatedDeclaration]
+1532 |
+1533 |         let configuration = WKWebViewConfiguration()
+1534 |         configuration.preferences.javaScriptEnabled = true
+     |                                   `- warning: 'javaScriptEnabled' was deprecated in macOS 11.0: Use WKWebpagePreferences.allowsContentJavaScript to disable content JavaScript on a per-navigation basis [#DeprecatedDeclaration]
+1535 |         let userScriptSource = "window.ProbeNative={request:function(raw){var value=window.prompt('AgentBrowser.Native',raw);return value===null?JSON.stringify({rejection:'NATIVE_PROMPT_CANCELLED'}):value;}};"
+1536 |         let userScript = WKUserScript(source: userScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+EXIT:0

@@ -41,12 +41,42 @@ private struct Snapshot: Decodable {
     let connectionState: String?
     let controlMode: String?
     let sessionId: String?
+    let documentRevision: UInt64?
+    let viewportRevision: UInt64?
     let displayedTicket: UInt64?
     let epoch: UInt64?
     let inputReady: Bool
     let editorContext: EditorContext?
     let inputLease: InputLease?
     let editingOutcome: EditingEnvelope?
+    let activeTabId: String?
+    let viewportPending: Bool?
+    let displayedGeneration: UInt64?
+    let displayedSessionId: String?
+    let displayedTabId: String?
+    let displayedDocumentRevision: UInt64?
+    let displayedViewportRevision: UInt64?
+    let provisioningAvailable: Bool?
+}
+
+private enum PresentationState: String {
+    case browsing
+    case overlay
+}
+
+private struct PresentationRequest {
+    let id: String
+    let state: PresentationState
+}
+
+private struct AppliedLayout: Equatable {
+    let drawableWindowRect: NSRect
+    let safeContentRect: NSRect
+    let advertisedViewportRect: NSRect
+    let presentedContentRect: NSRect
+    let chromeRect: NSRect
+    let webRect: NSRect
+    let presentation: PresentationState
 }
 
 private struct SelectionRange: Decodable {
@@ -239,8 +269,9 @@ private final class NativeBridge {
 
     var onFrame: ((FrameHeader, Data) -> Void)?
     var onSnapshot: ((String) -> Void)?
+    var responseTransform: ((String) -> String)?
 
-    init(helperURL: URL, pairingDirectory: String?) throws {
+    init(helperURL: URL, pairingDirectory: String?, adminSocketPath: String?) throws {
         process = Process()
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -253,6 +284,9 @@ private final class NativeBridge {
         var environment = ProcessInfo.processInfo.environment
         if let pairingDirectory {
             environment["AGENTBROWSER_MAC_PAIRING"] = pairingDirectory
+        }
+        if let adminSocketPath {
+            environment[hostServiceAdminSocketEnvironment] = adminSocketPath
         }
         process.environment = environment
         try process.run()
@@ -296,8 +330,9 @@ private final class NativeBridge {
         guard let value else {
             return rejection(stillAlive ? "NATIVE_BRIDGE_TIMEOUT" : "NATIVE_BRIDGE_CLOSED")
         }
-        onSnapshot?(value)
-        return value
+        let projected = responseTransform?(value) ?? value
+        onSnapshot?(projected)
+        return projected
     }
 
     func close() {
@@ -378,6 +413,17 @@ private let videoToolboxCallback: VTDecompressionOutputCallback = {
     view.decoded(status: status, imageBuffer: imageBuffer, presentationTimeStamp: presentationTimeStamp, token: token)
 }
 
+private final class BrowserContentView: NSView {
+    var onLayout: (() -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
 private final class VideoSurfaceView: NSView, NSTextInputClient {
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var decompressionSession: VTDecompressionSession?
@@ -425,12 +471,14 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     private var pendingPointer: PendingPointer?
     private var editingActivated = false
 
+    private(set) var displayedViewport: NSRect?
     var onDisplayed: ((UInt64) -> Void)?
     var onDecodeError: ((UInt64, String) -> Void)?
     var onInput: ((String) -> Void)?
     var onEdit: ((String) -> String?)?
     var currentEpoch: (() -> UInt64)?
     var inputReady: (() -> Bool)?
+    var nativeVideoInputEnabled: (() -> Bool)?
 
     override var isFlipped: Bool { true }
 
@@ -496,6 +544,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         inputControlMode = nil
         invalidateDecoder(clearParameterSets: false)
         image = nil
+        displayedViewport = nil
         visibleWidth = 0
         visibleHeight = 0
         activeSessionID = nil
@@ -572,7 +621,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard inputReady?() == true, let epoch = currentEpoch?() else { return }
+        guard nativeVideoInputEnabled?() == true, inputReady?() == true, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point) else { return }
         let operationId = nextOperationId(prefix: "pointer")
@@ -600,7 +649,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard inputReady?() == true, var pending = pendingPointer, let epoch = currentEpoch?() else { return }
+        guard nativeVideoInputEnabled?() == true, inputReady?() == true, var pending = pendingPointer, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point) else { return }
         guard coordinates.x != pending.lastX || coordinates.y != pending.lastY else {
@@ -631,7 +680,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard inputReady?() == true, let epoch = currentEpoch?() else { return }
+        guard nativeVideoInputEnabled?() == true, inputReady?() == true, let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard let coordinates = pageCoordinates(point) else {
             releaseHeldInput()
@@ -654,6 +703,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        guard nativeVideoInputEnabled?() == true else { return }
         let ready = inputReady?() == true
         guard let epoch = currentEpoch?() else { return }
         let point = convert(event.locationInWindow, from: nil)
@@ -1075,12 +1125,32 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.activeGeneration == token.generation else { return }
             self.image = cgImage
+            self.displayedViewport = nil
             self.visibleWidth = token.visibleWidth
             self.visibleHeight = token.visibleHeight
             self.needsDisplay = true
             self.onDisplayed?(token.ticket)
         }
         _ = presentationTimeStamp
+    }
+
+    func hasFrame(matching viewport: NSRect) -> Bool {
+        return image != nil && displayedViewport == viewport
+    }
+
+    func recordDisplayed(viewport: NSRect) {
+        guard image != nil else { return }
+        displayedViewport = viewport
+    }
+
+    func setPresentationInteractive(_ active: Bool) {
+        if active {
+            if editingActive {
+                activateEditing()
+            }
+        } else {
+            deactivateEditing()
+        }
     }
 
     private func invalidateDecoder(clearParameterSets: Bool = true) {
@@ -1419,22 +1489,648 @@ private extension VideoSurfaceView {
     }
 }
 
+// MARK: - Local provisioning producer
+
+private let hostServiceLauncherResource = "host-service/host-service"
+private let hostServiceRootEnvironment = "AGENTBROWSER_HOST_SERVICE_ROOT"
+private let hostServiceLauncherEnvironment = "AGENTBROWSER_HOST_SERVICE_LAUNCHER"
+private let hostServiceAdminSocketEnvironment = "AGENTBROWSER_MAC_ADMIN_SOCKET"
+
+private struct HostProvisioningError: Error {
+    let code: String
+    let message: String
+
+    init(_ code: String, _ message: String) {
+        self.code = code
+        self.message = message
+    }
+}
+
+/// The single explicit locator for the project's existing service launcher and
+/// service root. The launcher is packaged inside the app bundle; the root is
+/// the service's own declared default or an explicit override. No fallback
+/// search, no mirrored service config, and no second lifecycle are introduced.
+private struct HostServiceLocator {
+    let launcherURL: URL?
+    let root: String
+
+    static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> HostServiceLocator {
+        let launcher: URL?
+        if let override = environment[hostServiceLauncherEnvironment], !override.isEmpty {
+            launcher = URL(fileURLWithPath: override)
+        } else if let resources = Bundle.main.resourceURL {
+            launcher = resources.appendingPathComponent(hostServiceLauncherResource)
+        } else {
+            launcher = nil
+        }
+        let root: String
+        if let override = environment[hostServiceRootEnvironment], !override.isEmpty {
+            root = override
+        } else {
+            root = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/AgentBrowser/host-service")
+                .path
+        }
+        return HostServiceLocator(launcherURL: launcher, root: root)
+    }
+}
+
+/// Private native bridge to the frozen `host-service` CLI. It owns no lifecycle
+/// and mirrors no service config: it only invokes the declared typed commands
+/// and returns their exact result. A command the local service has not bound
+/// yet fails explicitly; nothing here fabricates a receipt or a bundle.
+private final class HostProvisioningBridge {
+    private let launcherURL: URL?
+    private let root: String
+
+    init(locator: HostServiceLocator) {
+        self.launcherURL = locator.launcherURL
+        self.root = locator.root
+    }
+
+    /// Read the service-owned socket directory from the service's own typed
+    /// `status` result. The Mac never guesses the runtime path and never reads
+    /// the service config or state files directly.
+    func adminSocketPath() -> String? {
+        guard case .success(let status) = invoke(["status"], timeout: 15),
+              status["state"] as? String == "running",
+              let socketDir = status["socket_dir"] as? String,
+              !socketDir.isEmpty else {
+            return nil
+        }
+        return (socketDir as NSString).appendingPathComponent("host-admin.sock")
+    }
+
+    func listProfiles() -> Result<[String: Any], HostProvisioningError> {
+        return invoke(["admin", "catalog", "list"], timeout: 20)
+    }
+
+    func createProfile(displayName: String, makeDefault: Bool, expectedRevision: Int?) -> Result<[String: Any], HostProvisioningError> {
+        var arguments = ["admin", "catalog", "create", "--display-name", displayName]
+        if makeDefault {
+            arguments.append("--default")
+        }
+        appendRevision(expectedRevision, to: &arguments)
+        return invoke(arguments, timeout: 20)
+    }
+
+    func selectProfile(profileId: String, expectedRevision: Int?) -> Result<[String: Any], HostProvisioningError> {
+        var arguments = ["admin", "catalog", "select", "--profile-id", profileId]
+        appendRevision(expectedRevision, to: &arguments)
+        return invoke(arguments, timeout: 20)
+    }
+
+    func enrollDevice(label: String, scopes: [String], profileId: String) -> Result<[String: Any], HostProvisioningError> {
+        var arguments = ["trust", "provision", "--label", label, "--initial-profile", "profile_id:\(profileId)"]
+        for scope in scopes {
+            arguments.append(contentsOf: ["--scope", scope])
+        }
+        return invoke(arguments, timeout: 60)
+    }
+
+    func grantMembership(profileId: String, deviceId: String, expectedRevision: Int?) -> Result<[String: Any], HostProvisioningError> {
+        var arguments = [
+            "admin", "membership", "set",
+            "--intent", "grant",
+            "--owner-device-id", "local",
+            "--profile-id", profileId,
+            "--device-id", deviceId,
+            "--member", "local",
+            "--member", deviceId,
+        ]
+        appendRevision(expectedRevision, to: &arguments)
+        return invoke(arguments, timeout: 30)
+    }
+
+    func refreshEndpoint(timeout: Int) -> Result<[String: Any], HostProvisioningError> {
+        return invoke(["trust", "endpoint-refresh", "--timeout", String(timeout)], timeout: Double(timeout) + 10)
+    }
+
+    func verifyEndpoint() -> Result<[String: Any], HostProvisioningError> {
+        return invoke(["trust", "status"], timeout: 20)
+    }
+
+    func exportBundle(deviceId: String, outputPath: String) -> Result<[String: Any], HostProvisioningError> {
+        return invoke(["trust", "export", "--device-id", deviceId, "--output", outputPath], timeout: 60)
+    }
+
+    private func appendRevision(_ revision: Int?, to arguments: inout [String]) {
+        guard let revision else { return }
+        arguments.append(contentsOf: ["--expected-catalog-revision", String(revision)])
+    }
+
+    private func invoke(_ arguments: [String], timeout: TimeInterval) -> Result<[String: Any], HostProvisioningError> {
+        guard let launcherURL, FileManager.default.isExecutableFile(atPath: launcherURL.path) else {
+            return .failure(HostProvisioningError("HOST_SERVICE_LOCATOR_UNAVAILABLE", "host-service launcher is not packaged"))
+        }
+        let process = Process()
+        process.executableURL = launcherURL
+        process.arguments = arguments + ["--root", root]
+        let standardOutput = Pipe()
+        let standardError = Pipe()
+        process.standardOutput = standardOutput
+        process.standardError = standardError
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return .failure(HostProvisioningError("HOST_SERVICE_LAUNCH_FAILED", "cannot start host-service"))
+        }
+        // Drain both pipes off the caller thread so a full pipe cannot deadlock
+        // a command that is still running.
+        let buffer = ServiceOutputBuffer()
+        let drain = DispatchGroup()
+        drain.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            buffer.stdout = (try? standardOutput.fileHandleForReading.readToEnd()) ?? Data()
+            buffer.stderr = (try? standardError.fileHandleForReading.readToEnd()) ?? Data()
+            drain.leave()
+        }
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let timedOut = process.isRunning
+        if timedOut {
+            process.terminate()
+        }
+        process.waitUntilExit()
+        drain.wait()
+        if timedOut {
+            return .failure(HostProvisioningError("HOST_SERVICE_TIMEOUT", "host-service did not return"))
+        }
+        let stdoutText = String(data: buffer.stdout, encoding: .utf8) ?? ""
+        let stderrText = String(data: buffer.stderr, encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            if let typed = HostProvisioningBridge.parseServiceError(stderrText) {
+                return .failure(typed)
+            }
+            if process.terminationStatus == 2 {
+                return .failure(HostProvisioningError("HOST_SERVICE_COMMAND_UNAVAILABLE", firstLine(stderrText)))
+            }
+            return .failure(HostProvisioningError("HOST_SERVICE_COMMAND_FAILED", firstLine(stderrText)))
+        }
+        guard let data = stdoutText.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .failure(HostProvisioningError("HOST_SERVICE_OUTPUT_MALFORMED", "host-service did not return a JSON object"))
+        }
+        return .success(object)
+    }
+
+    private static func parseServiceError(_ text: String) -> HostProvisioningError? {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = object["error"] as? [String: Any],
+              let code = error["code"] as? String, !code.isEmpty else {
+            return nil
+        }
+        return HostProvisioningError(code, (error["message"] as? String) ?? code)
+    }
+}
+
+private final class ServiceOutputBuffer {
+    var stdout = Data()
+    var stderr = Data()
+}
+
+private func firstLine(_ text: String) -> String {
+    for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+    }
+    return "host-service returned no result"
+}
+
+/// Native AppKit provisioning sheet. It reads/creates/selects a profile,
+/// chooses the device label and explicit scopes, enrolls the device, writes the
+/// grant membership, refreshes and verifies the endpoint, saves the bundle
+/// through `NSSavePanel`, and shows the one-time transfer code in a native
+/// modal. Secrets never enter the WebView, snapshots, logs, or argv.
+private final class ProvisioningSheetController: NSWindowController, NSWindowDelegate {
+    private let provisioning: HostProvisioningBridge
+    private let provisioningAvailable: Bool
+    private let onClose: () -> Void
+
+    private var statusLabel: NSTextField!
+    private var profilePopUp: NSPopUpButton!
+    private var displayNameField: NSTextField!
+    private var defaultButton: NSButton!
+    private var deviceLabelField: NSTextField!
+    private var scopeButtons: [(scope: String, button: NSButton)] = []
+    private var createButton: NSButton!
+    private var exportButton: NSButton!
+
+    private var catalogRevision: Int?
+    private var profiles: [[String: Any]] = []
+    private var createdProfileId: String?
+    private var busy = false
+    private var closed = false
+
+    init(provisioning: HostProvisioningBridge, available: Bool, onClose: @escaping () -> Void) {
+        self.provisioning = provisioning
+        self.provisioningAvailable = available
+        self.onClose = onClose
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "配置手机连接"
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        buildContent()
+        begin()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("ProvisioningSheetController is created in code")
+    }
+
+    private func buildContent() {
+        guard let window else { return }
+        statusLabel = NSTextField(wrappingLabelWithString: "")
+        statusLabel.preferredMaxLayoutWidth = 520
+
+        profilePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+        profilePopUp.target = self
+        profilePopUp.action = #selector(profileSelectionChanged(_:))
+
+        displayNameField = NSTextField(string: "")
+        displayNameField.placeholderString = "新配置名称"
+
+        defaultButton = NSButton(checkboxWithTitle: "设为默认配置", target: nil, action: nil)
+
+        deviceLabelField = NSTextField(string: "Android phone")
+        deviceLabelField.placeholderString = "设备名称"
+
+        scopeButtons = ["observe_human_control", "profile_read", "profile_create", "profile_select"].map { scope in
+            let button = NSButton(checkboxWithTitle: scope, target: nil, action: nil)
+            button.state = .on
+            return (scope, button)
+        }
+        let scopeStack = NSStackView(views: scopeButtons.map { $0.button })
+        scopeStack.orientation = .horizontal
+        scopeStack.spacing = 8
+
+        createButton = NSButton(title: "创建 / 选择配置", target: self, action: #selector(createOrSelectProfile(_:)))
+        exportButton = NSButton(title: "登记并导出…", target: self, action: #selector(beginEnrollment(_:)))
+        let cancelButton = NSButton(title: "取消", target: self, action: #selector(cancel(_:)))
+        cancelButton.keyEquivalent = "\u{1b}"
+
+        let grid = NSGridView(views: [
+            [gridLabel("状态"), statusLabel],
+            [gridLabel("配置"), profilePopUp],
+            [gridLabel("名称"), displayNameField],
+            [gridLabel("设备名称"), deviceLabelField],
+            [gridLabel("权限"), scopeStack],
+            [NSGridCell.emptyContentView, defaultButton],
+        ])
+        grid.rowSpacing = 10
+        grid.columnSpacing = 12
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 1).xPlacement = .fill
+
+        let buttonRow = NSStackView(views: [createButton, exportButton, cancelButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 10
+        buttonRow.distribution = .fillEqually
+
+        let stack = NSStackView(views: [grid, buttonRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = NSView(frame: window.contentLayoutRect)
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+        ])
+        window.contentView = content
+    }
+
+    private func gridLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.alignment = .right
+        return label
+    }
+
+    private func begin() {
+        if !provisioningAvailable {
+            setStatus("本机管理服务不可用。请先安装并运行 Host 服务。", code: "HOST_PROVISIONING_UNAVAILABLE")
+            setBusy(false)
+            return
+        }
+        refreshProfiles()
+    }
+
+    private func refreshProfiles() {
+        setBusy(true)
+        setStatus("正在读取配置…", code: nil)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.provisioning.listProfiles()
+            DispatchQueue.main.async {
+                self.setBusy(false)
+                switch result {
+                case .success(let payload):
+                    self.applyCatalog(payload)
+                case .failure(let error):
+                    self.setStatus("读取配置失败。", code: error.code)
+                    self.setBusy(false)
+                }
+            }
+        }
+    }
+
+    private func applyCatalog(_ payload: [String: Any]) {
+        catalogRevision = payload["catalog_revision"] as? Int
+        let rawProfiles = payload["profiles"] as? [[String: Any]] ?? []
+        profiles = rawProfiles
+        profilePopUp.removeAllItems()
+        var selectedIndex = 0
+        for (index, profile) in rawProfiles.enumerated() {
+            let title = (profile["display_name"] as? String) ?? (profile["profile_id"] as? String) ?? "profile"
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.representedObject = profile["profile_id"] as? String
+            profilePopUp.menu?.addItem(item)
+            if let created = createdProfileId, created == (profile["profile_id"] as? String) {
+                selectedIndex = index
+            }
+        }
+        if !rawProfiles.isEmpty {
+            profilePopUp.menu?.addItem(.separator())
+        }
+        profilePopUp.menu?.addItem(NSMenuItem(title: "新建配置…", action: nil, keyEquivalent: ""))
+        if !rawProfiles.isEmpty {
+            profilePopUp.selectItem(at: selectedIndex)
+        } else {
+            profilePopUp.selectItem(at: 0)
+        }
+        profileSelectionChanged(nil)
+        setStatus("已读取 \(rawProfiles.count) 个配置。", code: nil)
+        setBusy(false)
+    }
+
+    @objc private func profileSelectionChanged(_ sender: Any?) {
+        let creating = profilePopUp.indexOfSelectedItem >= profiles.count
+        displayNameField.isEnabled = creating && !busy
+        defaultButton.isEnabled = creating && !busy
+        createButton.title = creating ? "创建配置" : "选择配置"
+    }
+
+    @objc private func createOrSelectProfile(_ sender: Any?) {
+        guard !busy else { return }
+        if profilePopUp.indexOfSelectedItem >= profiles.count {
+            let name = displayNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else {
+                setStatus("请输入配置名称。", code: "PROFILE_NAME_REQUIRED")
+                return
+            }
+            runCreate(displayName: name, makeDefault: defaultButton.state == .on)
+        } else if let profileId = profilePopUp.selectedItem?.representedObject as? String {
+            runSelect(profileId: profileId)
+        } else {
+            setStatus("请选择配置。", code: "PROFILE_REQUIRED")
+        }
+    }
+
+    private func runCreate(displayName: String, makeDefault: Bool) {
+        setBusy(true)
+        setStatus("正在创建配置…", code: nil)
+        let revision = catalogRevision
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.provisioning.createProfile(displayName: displayName, makeDefault: makeDefault, expectedRevision: revision)
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let payload):
+                    self.createdProfileId = (payload["profile"] as? [String: Any])?["profile_id"] as? String
+                        ?? payload["profile_id"] as? String
+                    self.refreshProfiles()
+                case .failure(let error):
+                    self.setBusy(false)
+                    self.setStatus("创建配置失败。", code: error.code)
+                }
+            }
+        }
+    }
+
+    private func runSelect(profileId: String) {
+        setBusy(true)
+        setStatus("正在选择配置…", code: nil)
+        let revision = catalogRevision
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.provisioning.selectProfile(profileId: profileId, expectedRevision: revision)
+            DispatchQueue.main.async {
+                self.setBusy(false)
+                switch result {
+                case .success:
+                    self.createdProfileId = profileId
+                    self.setStatus("已选择配置。", code: nil)
+                case .failure(let error):
+                    self.setStatus("选择配置失败。", code: error.code)
+                }
+            }
+        }
+    }
+
+    @objc private func beginEnrollment(_ sender: Any?) {
+        guard !busy else { return }
+        guard profilePopUp.indexOfSelectedItem < profiles.count,
+              let profileId = profilePopUp.selectedItem?.representedObject as? String else {
+            setStatus("请先选择或创建配置。", code: "PROFILE_REQUIRED")
+            return
+        }
+        let label = deviceLabelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, label.count <= 64 else {
+            setStatus("请输入 1–64 个字符的设备名称。", code: "DEVICE_LABEL_INVALID")
+            return
+        }
+        let scopes = scopeButtons.filter { $0.button.state == .on }.map { $0.scope }
+        guard !scopes.isEmpty else {
+            setStatus("请至少选择一项权限。", code: "REGISTRY_SCOPE_REQUIRED")
+            return
+        }
+        setBusy(true)
+        setStatus("正在登记设备…", code: nil)
+        let revision = catalogRevision
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.runEnrollmentFlow(label: label, scopes: scopes, profileId: profileId, revision: revision)
+        }
+    }
+
+    private func runEnrollmentFlow(label: String, scopes: [String], profileId: String, revision: Int?) {
+        guard let enroll = unwrap(provisioning.enrollDevice(label: label, scopes: scopes, profileId: profileId), step: "登记设备") else { return }
+        guard let deviceId = enroll["device_id"] as? String, !deviceId.isEmpty else {
+            return fail("登记设备", "HOST_SERVICE_OUTPUT_MALFORMED")
+        }
+        guard unwrap(provisioning.grantMembership(profileId: profileId, deviceId: deviceId, expectedRevision: revision), step: "写入授权") != nil else {
+            return
+        }
+        guard let refresh = unwrap(provisioning.refreshEndpoint(timeout: 30), step: "刷新端点"),
+              refresh["status"] as? String == "refreshed" else {
+            return fail("刷新端点", "ENDPOINT_NOT_REFRESHED")
+        }
+        guard let verify = unwrap(provisioning.verifyEndpoint(), step: "校验端点"),
+              verify["authorization_state"] as? String == "refreshed" else {
+            return fail("校验端点", "ENDPOINT_NOT_REFRESHED")
+        }
+        // The save panel must run on the main thread; cancel keeps every
+        // committed upstream receipt and never repeats an unknown mutation.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard let outputPath = self.chooseOutputPath() else {
+                self.setBusy(false)
+                self.setStatus("已取消导出。已提交的登记与授权保持不变。", code: nil)
+                return
+            }
+            self.setStatus("正在导出连接包…", code: nil)
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self else { return }
+                let export = self.provisioning.exportBundle(deviceId: deviceId, outputPath: outputPath)
+                DispatchQueue.main.async {
+                    self.setBusy(false)
+                    switch export {
+                    case .success(let payload):
+                        guard let code = payload["transfer_code"] as? String, !code.isEmpty else {
+                            self.setStatus("连接包已写出，但服务未返回一次性传输码。", code: "HOST_SERVICE_TRANSFER_CODE_UNAVAILABLE")
+                            return
+                        }
+                        self.setStatus("连接包已保存。", code: nil)
+                        self.showTransferCode(code)
+                    case .failure(let error):
+                        self.setStatus("导出失败。", code: error.code)
+                    }
+                }
+            }
+        }
+    }
+
+    private func unwrap(_ result: Result<[String: Any], HostProvisioningError>, step: String) -> [String: Any]? {
+        switch result {
+        case .success(let payload):
+            return payload
+        case .failure(let error):
+            fail(step, error.code)
+            return nil
+        }
+    }
+
+    private func fail(_ step: String, _ code: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.setBusy(false)
+            self?.setStatus("\(step)失败。", code: code)
+        }
+    }
+
+    private func chooseOutputPath() -> String? {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "agentbrowser.abconnection"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return url.path
+    }
+
+    private func showTransferCode(_ code: String) {
+        // Shown only in this native modal. Never written to the WebView,
+        // snapshots, logs, argv, or evidence.
+        let alert = NSAlert()
+        alert.messageText = "一次性传输码"
+        alert.informativeText = "请在手机上输入此传输码。关闭此窗口后不会再显示。"
+        let field = NSTextField(labelWithString: code)
+        field.font = NSFont.monospacedSystemFont(ofSize: 18, weight: .semibold)
+        field.isSelectable = true
+        alert.accessoryView = field
+        alert.addButton(withTitle: "完成")
+        alert.runModal()
+    }
+
+    private func setStatus(_ text: String, code: String?) {
+        if let code {
+            statusLabel.stringValue = "\(text)\n\(code)"
+        } else {
+            statusLabel.stringValue = text
+        }
+    }
+
+    private func setBusy(_ busy: Bool) {
+        self.busy = busy
+        let creating = profilePopUp.indexOfSelectedItem >= profiles.count
+        createButton.isEnabled = !busy && provisioningAvailable
+        exportButton.isEnabled = !busy && provisioningAvailable && !profiles.isEmpty
+        profilePopUp.isEnabled = !busy && provisioningAvailable
+        displayNameField.isEnabled = !busy && provisioningAvailable && creating
+        defaultButton.isEnabled = !busy && provisioningAvailable && creating
+        deviceLabelField.isEnabled = !busy && provisioningAvailable
+        for (_, button) in scopeButtons {
+            button.isEnabled = !busy && provisioningAvailable
+        }
+    }
+
+    @objc private func cancel(_ sender: Any?) {
+        requestClose()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        requestClose()
+    }
+
+    private func requestClose() {
+        guard !closed else { return }
+        closed = true
+        onClose()
+    }
+}
+
 private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+    private static let chromeHeightPoints: CGFloat = 56
+
     private var window: NSWindow!
+    private var contentView: BrowserContentView!
     private var webView: WKWebView!
     private var videoView: VideoSurfaceView!
     private var bridge: NativeBridge?
+    private var hostProvisioning: HostProvisioningBridge?
+    private var provisioningSheet: ProvisioningSheetController?
+    private var provisioningMenuItem: NSMenuItem?
     private var latestSnapshot: Snapshot?
+    private var presentationState: PresentationState = .browsing
+    private var layoutRevision: UInt64 = 0
+    private var appliedLayout: AppliedLayout?
+    private var lastAdvertisedViewport: NSRect?
+    private var viewportTimer: Timer?
+    private var webViewAboveVideo = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
+        installMainMenu()
         let pairingDirectory = commandLineValue("--pairing-dir")
         let helperURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("AgentBrowserMacBridge")
-        bridge = try? NativeBridge(helperURL: helperURL, pairingDirectory: pairingDirectory)
+        // The local-provisioning capability is projected from the service's own
+        // typed `status` socket directory and a real `host-admin.sock` connect
+        // probe inside the bridge; it is never inferred from directory
+        // existence and never replaces the remote pairing truth.
+        let hostProvisioning = HostProvisioningBridge(locator: HostServiceLocator.resolve())
+        self.hostProvisioning = hostProvisioning
+        bridge = try? NativeBridge(
+            helperURL: helperURL,
+            pairingDirectory: pairingDirectory,
+            adminSocketPath: hostProvisioning.adminSocketPath()
+        )
 
         videoView = VideoSurfaceView(frame: .zero)
         videoView.onDisplayed = { [weak self] ticket in
             guard let self else { return }
+            self.videoView.recordDisplayed(viewport: self.appliedLayout?.presentedContentRect ?? .zero)
+            self.applyLayout(revision: true)
             _ = self.bridge?.request("{\"op\":\"ack_frame\",\"ticket\":\(ticket)}")
         }
         videoView.onDecodeError = { [weak self] ticket, error in
@@ -1451,6 +2147,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         }
         videoView.currentEpoch = { [weak self] in self?.currentEpoch() ?? 0 }
         videoView.inputReady = { [weak self] in self?.isInputReady() ?? false }
+        videoView.nativeVideoInputEnabled = { [weak self] in self?.shouldRouteNativeVideoInput() ?? false }
 
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptEnabled = true
@@ -1462,22 +2159,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
 
-        let split = NSSplitViewController()
-        let videoController = NSViewController()
-        videoController.view = videoView
-        let webController = NSViewController()
-        webController.view = webView
-        let videoItem = NSSplitViewItem(viewController: videoController)
-        let webItem = NSSplitViewItem(viewController: webController)
-        videoItem.minimumThickness = 320
-        webItem.minimumThickness = 320
-        split.addSplitViewItem(videoItem)
-        split.addSplitViewItem(webItem)
+        contentView = BrowserContentView(frame: .zero)
+        contentView.onLayout = { [weak self] in self?.applyLayout(revision: true) }
+        contentView.addSubview(videoView)
+        contentView.addSubview(webView)
 
-        window = NSWindow(contentViewController: split)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.contentView = contentView
         window.title = "AgentBrowser"
-        window.setContentSize(NSSize(width: 1180, height: 760))
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -1490,8 +2179,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             guard let data = raw.data(using: .utf8), let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
             DispatchQueue.main.async {
                 self?.latestSnapshot = snapshot
+                self?.provisioningMenuItem?.isEnabled = snapshot.provisioningAvailable ?? false
                 self?.videoView.apply(snapshot: snapshot)
+                self?.applyLayout(revision: true)
             }
+        }
+        bridge?.responseTransform = { [weak self] raw in
+            guard let self, let data = raw.data(using: .utf8),
+                  var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["state"] != nil,
+                  let layout = self.layoutProjection() else {
+                return raw
+            }
+            object["layout"] = layout
+            guard let projected = try? JSONSerialization.data(withJSONObject: object),
+                  let encoded = String(data: projected, encoding: .utf8) else {
+                return raw
+            }
+            return encoded
         }
 
         guard let uiURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "ui") else {
@@ -1499,13 +2204,56 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             return
         }
         webView.loadFileURL(uiURL, allowingReadAccessTo: uiURL.deletingLastPathComponent())
+        applyLayout(revision: true)
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.updateViewport() }
+        viewportTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        viewportTimer?.invalidate()
+        viewportTimer = nil
         bridge?.close()
         return .terminateNow
+    }
+
+    private func installMainMenu() {
+        let mainMenu = NSMenu()
+
+        let applicationItem = NSMenuItem()
+        mainMenu.addItem(applicationItem)
+        let applicationMenu = NSMenu()
+        applicationMenu.addItem(withTitle: "关于 AgentBrowser", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(withTitle: "退出 AgentBrowser", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        applicationItem.submenu = applicationMenu
+
+        let connectionItem = NSMenuItem()
+        mainMenu.addItem(connectionItem)
+        let connectionMenu = NSMenu(title: "连接")
+        let provisionItem = NSMenuItem(title: "配置手机连接…", action: #selector(beginProvisioning(_:)), keyEquivalent: "p")
+        provisionItem.target = self
+        // Disabled until the real declared local authority probe reports
+        // available; the bridge never sets this true from a guessed path.
+        provisionItem.isEnabled = false
+        connectionMenu.addItem(provisionItem)
+        connectionItem.submenu = connectionMenu
+        provisioningMenuItem = provisionItem
+
+        NSApplication.shared.mainMenu = mainMenu
+    }
+
+    @objc private func beginProvisioning(_ sender: Any?) {
+        guard let window, let hostProvisioning, provisioningSheet == nil else { return }
+        let available = latestSnapshot?.provisioningAvailable ?? false
+        let controller = ProvisioningSheetController(provisioning: hostProvisioning, available: available) { [weak self] in
+            guard let self, let sheet = self.provisioningSheet?.window else { return }
+            self.window.endSheet(sheet)
+            self.provisioningSheet = nil
+        }
+        provisioningSheet = controller
+        guard let sheet = controller.window else { return }
+        window.beginSheet(sheet, completionHandler: nil)
     }
 
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
@@ -1513,6 +2261,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             completionHandler(nil)
             return
         }
+        if let request = parsePresentationRequest(defaultText) {
+            guard let result = applyPresentation(request) else {
+                completionHandler(presentationRejection(id: request.id, reason: "GEOMETRY_UNAVAILABLE"))
+                return
+            }
+            completionHandler(result)
+            return
+        }
+        // Stay on the main thread so the presentation projection in
+        // `responseTransform` only ever reads AppKit state on its owning thread.
         completionHandler(bridge?.request(defaultText) ?? rejection("NATIVE_BRIDGE_UNAVAILABLE"))
     }
 
@@ -1521,12 +2279,191 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
     }
 
     private func updateViewport() {
-        guard let bridge, videoView.bounds.width > 0, videoView.bounds.height > 0 else { return }
-        let scale = window.backingScaleFactor
-        let width = max(1, Int((videoView.bounds.width * scale).rounded()))
-        let height = max(1, Int((videoView.bounds.height * scale).rounded()))
+        guard let bridge, let layout = appliedLayout else { return }
+        // A disconnected probe owns no Host viewport; clearing the fence lets the
+        // first declaration after reconnect through instead of being suppressed.
+        guard latestSnapshot?.sessionId != nil else {
+            lastAdvertisedViewport = nil
+            return
+        }
+        let viewport = layout.advertisedViewportRect
+        guard viewport.width > 0, viewport.height > 0, viewport != lastAdvertisedViewport else { return }
+        let width = max(1, Int(viewport.width.rounded()))
+        let height = max(1, Int(viewport.height.rounded()))
         let orientation = width >= height ? "landscape" : "portrait"
         _ = bridge.request("{\"op\":\"viewport\",\"width\":\(width),\"height\":\(height),\"orientation\":\"\(orientation)\"}")
+        lastAdvertisedViewport = viewport
+    }
+
+    private func applyLayout(revision: Bool) {
+        guard let contentView, contentView.bounds.width > 0, contentView.bounds.height > 0 else { return }
+        let drawable = contentView.bounds
+        // Mac has no system bars or soft keyboard: the drawable content view is
+        // the safe content once, and advertised == presented in AppKit points.
+        let safeContent = drawable
+        // Thin chrome matches the frozen UI's `.browser-chrome` 56pt bar.
+        let chromeHeight = min(Self.chromeHeightPoints, safeContent.height)
+        let chromeRect = NSRect(x: safeContent.minX, y: safeContent.minY, width: safeContent.width, height: chromeHeight)
+        let contentRect = NSRect(
+            x: safeContent.minX,
+            y: safeContent.minY + chromeHeight,
+            width: safeContent.width,
+            height: max(0, safeContent.height - chromeHeight)
+        )
+        let nativeVideo = nativeVideoVisible(for: contentRect)
+        let videoVisible = nativeVideo && presentationState == .browsing
+        // No valid matching displayed frame, geometry mismatch or overlay: the
+        // WebView owns the full drawable content. Browsing native video: the
+        // WebView shrinks to the thin chrome and the video fills the content.
+        let webRect = videoVisible ? chromeRect : drawable
+        let layout = AppliedLayout(
+            drawableWindowRect: drawable,
+            safeContentRect: safeContent,
+            advertisedViewportRect: contentRect,
+            presentedContentRect: contentRect,
+            chromeRect: chromeRect,
+            webRect: webRect,
+            presentation: presentationState
+        )
+        if appliedLayout != layout, revision {
+            layoutRevision += 1
+        }
+        appliedLayout = layout
+        videoView.frame = contentRect
+        webView.frame = webRect
+        videoView.isHidden = !videoVisible
+        setWebViewAboveVideo(!videoVisible)
+        videoView.setPresentationInteractive(videoVisible)
+    }
+
+    private func setWebViewAboveVideo(_ above: Bool) {
+        guard webViewAboveVideo != above else { return }
+        webViewAboveVideo = above
+        contentView.addSubview(webView, positioned: above ? .above : .below, relativeTo: videoView)
+    }
+
+    /// Visibility is owned by the displayed frame identity plus the local
+    /// geometry match. `inputReady`/`controlMode`/pending operations never enter
+    /// this decision; the connection lifecycle only supplies the outer fence.
+    private func nativeVideoVisible(for contentRect: NSRect) -> Bool {
+        guard let snapshot = latestSnapshot, snapshot.connectionState == "connected" else { return false }
+        guard snapshot.viewportPending != true else { return false }
+        guard let displayedGeneration = snapshot.displayedGeneration,
+              let displayedSessionId = snapshot.displayedSessionId,
+              let displayedTabId = snapshot.displayedTabId,
+              let activeTabId = snapshot.activeTabId,
+              let documentRevision = snapshot.documentRevision,
+              let viewportRevision = snapshot.viewportRevision else {
+            return false
+        }
+        guard displayedGeneration == snapshot.generation,
+              displayedSessionId == snapshot.sessionId,
+              displayedTabId == activeTabId,
+              snapshot.displayedDocumentRevision == documentRevision,
+              snapshot.displayedViewportRevision == viewportRevision else {
+            return false
+        }
+        return videoView.hasFrame(matching: contentRect)
+    }
+
+    private func shouldUseNativeVideo() -> Bool {
+        guard let contentRect = appliedLayout?.presentedContentRect else { return false }
+        return nativeVideoVisible(for: contentRect)
+    }
+
+    private func shouldRouteNativeVideoInput() -> Bool {
+        return presentationState == .browsing && shouldUseNativeVideo()
+    }
+
+    private func parsePresentationRequest(_ raw: String) -> PresentationRequest? {
+        guard let data = raw.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              value["op"] as? String == "set_presentation",
+              let id = value["id"] as? String,
+              let stateRaw = value["state"] as? String,
+              let state = PresentationState(rawValue: stateRaw) else {
+            return nil
+        }
+        return PresentationRequest(id: id, state: state)
+    }
+
+    private func layoutProjection() -> [String: Any]? {
+        guard let layout = appliedLayout else { return nil }
+        let nativeVideo = nativeVideoVisible(for: layout.presentedContentRect)
+        var projection: [String: Any] = [
+            "drawableWindowRect": rectJSON(layout.drawableWindowRect),
+            "safeContentRect": rectJSON(layout.safeContentRect),
+            "advertisedViewportRect": rectJSON(layout.advertisedViewportRect),
+            "presentedContentRect": rectJSON(layout.presentedContentRect),
+            "chromeRect": rectJSON(layout.chromeRect),
+            "webRect": rectJSON(layout.webRect),
+            "visibleContent": nativeVideo ? "native-video" : "webview",
+            "currentTabId": latestSnapshot?.activeTabId as Any? ?? NSNull(),
+            "presentationViewport": rectJSON(layout.presentedContentRect),
+            "geometryMatches": nativeVideo,
+            "presentation": layout.presentation.rawValue,
+            "revision": layoutRevision,
+        ]
+        if let displayedFrame = displayedFrameProjection() {
+            projection["displayedFrame"] = displayedFrame
+        }
+        return projection
+    }
+
+    private func displayedFrameProjection() -> [String: Any]? {
+        guard let snapshot = latestSnapshot,
+              let generation = snapshot.displayedGeneration,
+              let sessionId = snapshot.displayedSessionId,
+              let tabId = snapshot.displayedTabId else {
+            return nil
+        }
+        return [
+            "generation": generation,
+            "sessionId": sessionId,
+            "tabId": tabId,
+            "documentRevision": snapshot.displayedDocumentRevision as Any? ?? UInt64(0),
+            "viewportRevision": snapshot.displayedViewportRevision as Any? ?? UInt64(0),
+        ]
+    }
+
+    private func applyPresentation(_ request: PresentationRequest) -> String? {
+        guard contentView != nil, window != nil else { return nil }
+        presentationState = request.state
+        applyLayout(revision: true)
+        guard let layout = appliedLayout else { return nil }
+        let result: [String: Any] = [
+            "id": request.id,
+            "op": "set_presentation",
+            "status": "applied",
+            "geometry": [
+                "webRect": rectJSON(layout.webRect),
+                "revision": layoutRevision,
+            ],
+        ]
+        return encodeJSON(result)
+    }
+
+    private func presentationRejection(id: String, reason: String) -> String {
+        return encodeJSON([
+            "id": id,
+            "op": "set_presentation",
+            "status": "rejected",
+            "reason": reason,
+        ]) ?? rejection(reason)
+    }
+
+    private func encodeJSON(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func rectJSON(_ rect: NSRect) -> [String: Double] {
+        return [
+            "x": Double(rect.minX),
+            "y": Double(rect.minY),
+            "width": Double(rect.width),
+            "height": Double(rect.height),
+        ]
     }
 
     private func currentEpoch() -> UInt64 {
