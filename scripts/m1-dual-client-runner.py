@@ -28,6 +28,10 @@ import time
 import uuid
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+# The candidate's own Git status is evidence, so loading a shared helper must
+# not leave an untracked ``__pycache__`` entry behind.
+sys.dont_write_bytecode = True
+
 from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
 
 
@@ -60,15 +64,7 @@ def _load_direct_replay() -> Any:
     # while the direct replay module is being imported.  Register the module
     # before executing it, just as the normal import machinery does.
     sys.modules[spec.name] = module
-    # Loading the shared helper must not dirty a clean candidate with an
-    # untracked ``__pycache__`` entry.  The runner records candidate status as
-    # evidence, so a helper import must be observationally side-effect free.
-    write_bytecode = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.dont_write_bytecode = write_bytecode
+    spec.loader.exec_module(module)
     return module
 
 
