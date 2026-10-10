@@ -25,6 +25,15 @@ sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
 
+def stage_record(**results: str) -> dict[str, dict[str, Any]]:
+    """The stage record shape the runner writes, for tests that build evidence directly."""
+
+    return {
+        name: {"result": result, "started_at": None, "finished_at": None, "details": {}, "first_failure": None}
+        for name, result in results.items()
+    }
+
+
 def check(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -193,7 +202,7 @@ def test_combined_side_evidence_does_not_promote_bridge_ack_to_display() -> None
         "cross_side": {},
         "required_claims": {},
         "unknown": [],
-        "stages": {"mac_reconnect": {"result": "passed"}},
+        "stages": stage_record(correlation="not_run", mac_reconnect="passed"),
     }
     combined._write_json = lambda name, value: None
     combined.build_side_evidence()
@@ -243,7 +252,7 @@ def test_reconnect_frame_correlation_survives_final_disconnect() -> None:
         "cross_side": {},
         "required_claims": {},
         "unknown": [],
-        "stages": {"mac_reconnect": {"result": "not_run"}},
+        "stages": stage_record(correlation="not_run", mac_reconnect="not_run"),
     }
     combined._write_json = lambda name, value: None
 
@@ -502,6 +511,63 @@ def test_operation_receipts_claim_follows_exported_receipts() -> None:
     )
 
 
+def test_claim_set_decision_never_hides_failures() -> None:
+    claims = {name: {"status": "proved", "field": name, "values": {"host": 1, "android": 1}} for name in ("same_session", "three_side_viewport_revision")}
+    claims.update(
+        {name: runner.unknown(f"{name} is not emitted by every side") for name in runner.TRANSPORT_MILESTONE_EXCLUDED_CLAIMS}
+    )
+    decision = runner.claim_set_decision(claims)
+    check(decision["decision"] == "transport_milestone_bar_satisfied", "proved in-bar claims must satisfy the transport milestone bar")
+    check(
+        all(value.get("status") == "unknown" and value.get("reason") for value in decision["excluded_unknown_claims"].values()),
+        "excluded claims must keep their unknown status and raw reason",
+    )
+    check("never reported as pass" in decision["note"], "the decision must state that excluded claims are never reported as pass")
+
+    incomplete = dict(claims, same_session=runner.unknown("no shared session"))
+    check(
+        runner.claim_set_decision(incomplete)["decision"] == "transport_milestone_bar_incomplete",
+        "an unproved in-bar claim must keep the transport milestone bar incomplete",
+    )
+
+    hidden_failure = dict(claims, three_side_frame_ack=runner.failed("side values differ"))
+    check(
+        runner.claim_set_decision(hidden_failure)["decision"] == "failed",
+        "a failed claim must fail the decision even when the claim is excluded",
+    )
+
+
+def test_correlation_stage_is_recorded_as_run() -> None:
+    class Bridge:
+        active_generation = 0
+        acked_tickets: set[Any] = set()
+        frames: list[Any] = []
+
+    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
+    combined.host_statuses = [{"value": {}}]
+    combined.android_result = {}
+    combined.bridge = Bridge()
+    combined.mac_operations = []
+    combined.first_failure = None
+    combined.evidence = {
+        "sides": {},
+        "cross_side": {},
+        "required_claims": {},
+        "unknown": [],
+        "stages": stage_record(**{name: "not_run" for name in runner.STAGES}),
+    }
+    combined._write_json = lambda name, value: None
+    combined.build_side_evidence()
+    stage = combined.evidence["stages"]["correlation"]
+    check(stage["result"] != "not_run", "correlation must be recorded as a run stage, not left not_run")
+    check(stage["started_at"] is not None and stage["finished_at"] is not None, "correlation must record start and finish times")
+    check(stage["details"].get("decision") == combined.evidence["claim_set_decision"]["decision"], "the stage must carry the claim-set decision")
+    check(
+        set(combined.evidence["claim_set_decision"]["excluded_unknown_claims"]) == set(runner.TRANSPORT_MILESTONE_EXCLUDED_CLAIMS),
+        "only the declared claims may be excluded from the transport milestone bar",
+    )
+
+
 def test_write_exclusive() -> None:
     with tempfile.TemporaryDirectory(prefix="m1-dual-write-") as raw:
         root = pathlib.Path(raw)
@@ -622,6 +688,8 @@ def main() -> int:
         test_result_classification,
         test_control_epoch_observation_point,
         test_operation_receipts_claim_follows_exported_receipts,
+        test_claim_set_decision_never_hides_failures,
+        test_correlation_stage_is_recorded_as_run,
         test_write_exclusive,
         test_schema_dry_run_switch,
         test_dry_run,

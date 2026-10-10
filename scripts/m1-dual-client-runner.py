@@ -52,6 +52,18 @@ STAGES = (
     "cleanup",
 )
 
+# Claims that need an emission no side in this milestone produces: the Host
+# SessionStatus has no encoded source dimensions, neither the Host nor the Mac
+# bridge has a native display acknowledgement, and the Mac bridge has no rotation
+# identity. They stay `unknown` with their raw reasons and stay outside the
+# Android + Mac transport milestone bar. They are never reported as pass.
+TRANSPORT_MILESTONE_EXCLUDED_CLAIMS = (
+    "viewport_and_source_dimensions",
+    "three_side_source_dimensions",
+    "three_side_frame_ack",
+    "rotation",
+)
+
 
 def _load_direct_replay() -> Any:
     """Load the existing bridge process/framing owner without executing main."""
@@ -271,6 +283,32 @@ def operation_receipts_claim(actions: Mapping[str, Mapping[str, Any]], owner: st
     return {"status": "unknown", "reason": f"{owner} typed receipts are incomplete"}
 
 
+def claim_set_decision(claims: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Record which claims carry the Android + Mac transport milestone bar.
+
+    The excluded claims keep their raw unknown reasons and are never reported as
+    pass. A failed claim anywhere still fails the decision, so exclusion cannot
+    hide a real failure. The overall run result stays `partial` while any claim,
+    excluded or not, is unproved.
+    """
+
+    excluded = {name: dict(claims.get(name, {})) for name in TRANSPORT_MILESTONE_EXCLUDED_CLAIMS}
+    in_bar = {name: dict(value) for name, value in claims.items() if name not in TRANSPORT_MILESTONE_EXCLUDED_CLAIMS}
+    if any(value.get("status") == "failed" for value in claims.values()):
+        decision = "failed"
+    elif in_bar and all(value.get("status") == "proved" for value in in_bar.values()):
+        decision = "transport_milestone_bar_satisfied"
+    else:
+        decision = "transport_milestone_bar_incomplete"
+    return {
+        "milestone": "android-mac-transport",
+        "decision": decision,
+        "excluded_unknown_claims": excluded,
+        "in_bar_claims": {name: value.get("status") for name, value in in_bar.items()},
+        "note": "Excluded claims stay unknown with their raw reasons and are never reported as pass; full M1 and the user-slice gates remain incomplete.",
+    }
+
+
 def classify_result(first_failure: Optional[Mapping[str, Any]], claims: Mapping[str, Mapping[str, Any]]) -> str:
     if first_failure is not None:
         return "failed"
@@ -326,6 +364,9 @@ def schema_document() -> dict[str, Any]:
             },
             "cross_side": {"type": "object"},
             "required_claims": {"type": "object"},
+            "claim_set_decision": {
+                "description": "Explicit Android + Mac transport milestone claim-set decision; excluded claims stay unknown and are never reported as pass",
+            },
         },
         "additionalProperties": True,
     }
@@ -1425,6 +1466,7 @@ class CombinedRunner:
         self.stage_finish("mac_reconnect", "passed", {"reconnect": reconnected, "frames": len(self.bridge.frames) if self.bridge else 0, "acks": len(self.bridge.acked_tickets) if self.bridge else 0})
 
     def build_side_evidence(self) -> None:
+        self.stage_start("correlation")
         host = self.host_statuses[-1]["value"] if self.host_statuses else None
         if not isinstance(host, Mapping):
             host_side = {field: unknown("Host status was not observed") for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "control_epoch_at_completion", "frame_ack")}
@@ -1666,8 +1708,29 @@ class CombinedRunner:
             if value.get("status") == "unknown"
         )
         required_for_pass = self.evidence["required_claims"]
+        self.evidence["claim_set_decision"] = claim_set_decision(required_for_pass)
         self.evidence["result"] = classify_result(self.first_failure, required_for_pass)
-        self._write_json("correlation.json", {"sides": self.evidence["sides"], "cross_side": self.evidence["cross_side"], "required_claims": self.evidence["required_claims"], "result": self.evidence["result"]})
+        self._write_json(
+            "correlation.json",
+            {
+                "sides": self.evidence["sides"],
+                "cross_side": self.evidence["cross_side"],
+                "required_claims": self.evidence["required_claims"],
+                "claim_set_decision": self.evidence["claim_set_decision"],
+                "result": self.evidence["result"],
+            },
+        )
+        self.stage_finish(
+            "correlation",
+            "passed" if self.evidence["claim_set_decision"]["decision"] == "transport_milestone_bar_satisfied" else "completed_with_unknown_claims",
+            {
+                "decision": self.evidence["claim_set_decision"]["decision"],
+                "result": self.evidence["result"],
+                "unknown_claims": [
+                    name for name, value in required_for_pass.items() if value.get("status") != "proved"
+                ],
+            },
+        )
 
     def dry_run(self) -> int:
         self.stage_start("preflight")
