@@ -1,0 +1,14 @@
+install_rc=0
+bootstrap_rc=0
+print_first_rc=0
+kickstart_rc=0
+print_second_rc=0
+bootout_rc=0
+status_after_bootout_rc=1
+cleanup_stop_rc=0
+print_after_rc=113
+first_pid=39591
+first_session=e05527e9-e09e-4d0c-8770-8f74105cee77
+second_pid=40240
+second_session=407884ae-161d-40e3-861d-3ff29c3696fa
+absence_rc=0

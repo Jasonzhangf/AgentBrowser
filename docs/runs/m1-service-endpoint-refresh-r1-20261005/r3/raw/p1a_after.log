@@ -1,0 +1,4 @@
+{"base": "/private/tmp/m1r3-p1a-after", "case": "p1a", "expect": "after"}
+{"case": "p1a.dns_locator_preserved", "ok": true, "expected": {"host": "rot.test", "kind": "dns"}, "actual": {"host": "rot.test", "kind": "dns"}}
+{"case": "p1a.rotating_resolution", "ok": true, "expected": {"authorization_state": "refreshed", "bound_address": "127.0.0.1:53018", "generation": 1, "status_authorization_state": "refreshed"}, "actual": {"rc": 0, "error": null, "document": {"authorization_revision": 1, "authorization_state": "refreshed", "bound_address": "127.0.0.1:53018", "endpoint_generation": 1, "endpoint_pid": 504, "projection_sha256": "3726269b772662823aacc8d258603dee4151a0934ca2f9ecbd72de6b59474095", "registry_sha256": "2499e348d5d984d92820421f9e14907febab295304bb9e399a54f112d0e75098", "state": "refreshed"}, "generation": 1, "receipt": true, "status_authorization_state": "refreshed", "status_endpoint_pid": 504}}
+FINDINGS_HARNESS_PASS

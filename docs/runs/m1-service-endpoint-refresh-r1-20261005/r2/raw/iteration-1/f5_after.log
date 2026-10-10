@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r2f5-V38y1a", "finding": "f5", "expect": "after"}
+{"case": "f5.cancel_keeps_endpoint", "ok": true, "expected": {"cancel_observed": true, "waiter_exited": true, "endpoint_pid_alive": true, "record_pid": 85458, "runtime_survived": true, "lock_released": true}, "actual": {"cancel_observed": true, "waiter_exited": true, "waiter_returncode": -2, "endpoint_pid_alive": true, "record_pid": 85458, "runtime_survived": true, "lock_released": true}}
+FINDINGS_HARNESS_PASS

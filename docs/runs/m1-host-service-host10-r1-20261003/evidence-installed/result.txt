@@ -1,0 +1,13 @@
+install_rc=0
+start_rc=0
+status_running_rc=0
+attach_rc=0
+status_after_detach_rc=0
+restart_rc=0
+status_restarted_rc=0
+stop_rc=0
+status_stopped_rc=0
+first_pid=29275
+first_session=d3a88243-41a4-4aa3-a7fa-d997db632e33
+second_pid=30172
+second_session=73db6635-11b6-47f0-80ec-aea1e62eafaa

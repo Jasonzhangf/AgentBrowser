@@ -1,0 +1,76 @@
+gui/501/com.agentbrowser.launchd.h10.39323 = {
+	active count = 1
+	path = /private/tmp/abhs-h10-launchd-plists-39323/com.agentbrowser.launchd.h10.39323.plist
+	type = LaunchAgent
+	state = running
+
+	program = /opt/homebrew/opt/python@3.14/bin/python3.14
+	arguments = {
+		/opt/homebrew/opt/python@3.14/bin/python3.14
+		/Volumes/Intel/playground/agentbrowser/m1-host-service-host10-r1-20261003/docs/runs/m1-host-service-host10-r1-20261003/installed/host_service.py
+		launchd
+		--root
+		/private/tmp/abhs-h10-launchd-e2e-39323
+	}
+
+	working directory = /private/tmp/abhs-h10-launchd-e2e-39323
+
+	stdout path = /private/tmp/abhs-h10-launchd-e2e-39323/logs/host.log
+	stderr path = /private/tmp/abhs-h10-launchd-e2e-39323/logs/host.log
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.eb1VISxs96/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => com.agentbrowser.launchd.h10.39323
+	}
+
+	domain = gui/501 [100002]
+	asid = 100002
+	minimum runtime = 5
+	exit timeout = 5
+	runs = 1
+	pid = 39591
+	immediate reason = speculative
+	forks = 0
+	execs = 3
+	initialized = 1
+	trampolined = 1
+	started suspended = 0
+	proxy started suspended = 0
+	checked allocations = 0 (queried = 1)
+	checked allocations reason = no host
+	checked allocations flags = 0x0
+	last exit code = (never exited)
+
+	resource coalition = {
+		ID = 755120
+		type = resource
+		state = active
+		active count = 1
+		name = com.agentbrowser.launchd.h10.39323
+	}
+
+	jetsam coalition = {
+		ID = 755121
+		type = jetsam
+		state = active
+		active count = 1
+		name = com.agentbrowser.launchd.h10.39323
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+
+	properties = keepalive | runatload | inferred program
+}

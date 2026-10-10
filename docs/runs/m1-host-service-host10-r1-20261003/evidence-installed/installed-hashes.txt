@@ -1,0 +1,2 @@
+03fca07b71d92d027089218132250f3e8b54386a1522cbd3a141c3cc07b5f671  docs/runs/m1-host-service-host10-r1-20261003/installed/host-service
+8f83c424201e79251729fd531871ee605214061244096788d06df0f15604a6a3  docs/runs/m1-host-service-host10-r1-20261003/installed/host_service.py

@@ -1,0 +1,5 @@
+root=/private/tmp/abhs-h10-smoke-37081
+runtime=/private/tmp/abhs-h10-smoke-rt-37081
+launchd=/private/tmp/abhs-h10-smoke-launchd-37081
+label=com.agentbrowser.smoke.h10.37081
+binary=/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-host

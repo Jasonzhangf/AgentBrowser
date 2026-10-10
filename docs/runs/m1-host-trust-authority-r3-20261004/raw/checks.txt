@@ -1,0 +1,15 @@
+date: 2026-10-04T16:11:32Z
+HEAD-parent: 03e25581763176a2c2f35b96cb6083c03d5753fb
+branch: codex/m1-host-trust-authority-r3-20261004
+python: Python 3.14.6
+openssl: OpenSSL 3.6.3 9 Jun 2026 (Library: OpenSSL 3.6.3 9 Jun 2026)
+npm: 10.9.7
+node: v22.22.2
+--- source hashes ---
+214020b2eab6cf42cbda26c607a128405dea54ae694fe3a88b8f94c3ba6f3120  scripts/host-service/host_service.py
+3a6daa9487a3fce61e4c2fb616fffe051fc78a6eb19e791a2bb771eff434001a  scripts/host-service/test_host_trust_public.py
+c91223fd877ee81b306f523906d5656ed767a8c0d30b0fca88d6985073f3fd6a  docs/host-service.md
+--- py_compile ---
+py_compile exit=0
+--- git diff --check ---
+diff-check exit=0

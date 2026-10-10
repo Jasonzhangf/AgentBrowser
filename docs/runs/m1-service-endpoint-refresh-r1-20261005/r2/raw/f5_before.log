@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r2-f5-before", "finding": "f5", "expect": "before"}
+{"case": "f5.cancel_keeps_endpoint", "ok": true, "expected": "old CASE 9 proves only timeout survival: no cancel was performed", "actual": {"cancel_observed": false, "endpoint_pid_alive": true, "record_pid": 97095}}
+FINDINGS_HARNESS_PASS

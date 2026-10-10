@@ -1,0 +1,161 @@
+{
+  "$id": "https://appsdk.local/contracts/records/test-scenario-result-record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "evidence_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "planned"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "evidence_id"
+          ]
+        }
+      }
+    }
+  ],
+  "properties": {
+    "candidate_commit": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "cleanup_result": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "not_required",
+            "blocked"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "effect_authorization_id": {
+      "pattern": "^[a-z][a-z0-9-]+$",
+      "type": "string"
+    },
+    "entrypoint": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "environment": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "evidence_id": {
+      "pattern": "^[a-z][a-z0-9-]+$",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "graph_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "graph_version": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "object_id": {
+      "pattern": "^[a-z][a-z0-9-]+$",
+      "type": "string"
+    },
+    "producer": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "identity": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter",
+        "identity"
+      ],
+      "type": "object"
+    },
+    "result_id": {
+      "pattern": "^[a-z][a-z0-9-]+$",
+      "type": "string"
+    },
+    "scenario_id": {
+      "pattern": "^[a-z][a-z0-9-]+$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "started_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "planned",
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "result_id",
+    "object_id",
+    "scenario_id",
+    "graph_id",
+    "graph_version",
+    "candidate_commit",
+    "status",
+    "entrypoint",
+    "environment",
+    "cleanup_result",
+    "producer",
+    "started_at",
+    "finished_at"
+  ],
+  "type": "object"
+}

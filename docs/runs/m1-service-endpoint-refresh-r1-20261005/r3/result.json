@@ -1,0 +1,74 @@
+{
+  "node": "m1-service-endpoint-refresh-r3-20261005",
+  "role": "gcm-author",
+  "status": "AUTHOR_COMPLETE",
+  "review_closed": "m1-service-endpoint-refresh-r1-20261005-r2",
+  "base_candidate": "7d5e46ba28eb7ae3f299d1a5fdf0bc93bbe0a54d",
+  "base_tree": "ecd05e48b8eec3dff775e5aa611d58028cbfce9a",
+  "branch": "codex/m1-service-endpoint-refresh-r1-20261005",
+  "findings_closed": [
+    {"id": "R2-P1-a", "title": "preflight, start and receipt verification use one declared bind basis", "result": "closed"},
+    {"id": "R2-P1-b", "title": "filesystem OSError at the acceptance boundary returns typed not_refreshed partial facts", "result": "closed"},
+    {"id": "R2-P1-c", "title": "process-record write failure regression exercises the real persistence path", "result": "closed"},
+    {"id": "R2-P2", "title": "public consumer reclaims its short temporary runtime", "result": "closed"}
+  ],
+  "delta_sha256": {
+    "scripts/host-service/host_service.py": "69e5b86d4074c0c359cfcdc6309b34d96baaf305a4fe1c214610fff609310745",
+    "scripts/host-service/test_host_trust_public.py": "927b4e8e1ed28c9064688a67a25ccbe071a33c1757a59934ee0043410f528332",
+    "docs/host-service.md": "529cdf3e206f4af07e9a9aa4647627489b66f568d3630077e362597bae293d7e",
+    "docs/runs/m1-service-endpoint-refresh-r1-20261005/r3/findings_harness.py": "84c3d53693010c93069147109c3c00c14ea016f83e805ee14e0585149cee2f38",
+    "docs/runs/m1-service-endpoint-refresh-r1-20261005/r3/run.sh": "d89fa4879664072ef2bd7332d741b705e3576a78d565fde443f86e27693949e0"
+  },
+  "before_candidates": {
+    "r1": {
+      "path": "/private/tmp/m1r3-before-r1-service/host_service.py",
+      "sha256": "43d1e41a7b110cb23ace5a02426d1ccf379b099f1190e3049db2760b21e1633e"
+    },
+    "r2": {
+      "path": "/private/tmp/m1r3-before-r2-service/host_service.py",
+      "sha256": "c678ab15f929e5c73c29123b34f92edac13592341a00412ac3a493348f8ce342"
+    }
+  },
+  "binaries": {
+    "obscura-host": "6335a174287c917f7947f080a6087f7dcb8f613de361baf11db325cb59b23dab",
+    "obscura-endpoint": "4c281713e6dae8918cbdafd255f527b2e3c02bc01bd7c42b232f0c0eee0f9318",
+    "obscura-media": "2ee0166fa4b45b634bce9dc6d51ea132da5b3e7d902e00fd3980e4cfeea9af80"
+  },
+  "protocol_version": 11,
+  "commands": {
+    "accept_public_consumer": 0,
+    "accept_dev_fixture_matrix": 0,
+    "accept_verify_host_service": 0,
+    "accept_real_refresh_e2e": 0,
+    "accept_npm_verify_local": 0,
+    "git_diff_check": 0,
+    "p1a_before": 1,
+    "p1a_after": 0,
+    "p1b_before": 1,
+    "p1b_after": 0,
+    "p1c_before": 1,
+    "p1c_after": 0,
+    "p2_before": 1,
+    "p2_after": 0
+  },
+  "finding_pairs": [
+    {"id": "R2-P1-a", "before": "raw/p1a_before", "after": "raw/p1a_after", "assertion": "rotating DNS answer must not reject a correct receipt"},
+    {"id": "R2-P1-b", "before": "raw/p1b_before", "after": "raw/p1b_after", "assertion": "real registry read OSError at acceptance must be typed not_refreshed"},
+    {"id": "R2-P1-c", "before": "raw/p1c_before", "after": "raw/p1c_after", "assertion": "real process-record write failure must reclaim PID, listener and runtime"},
+    {"id": "R2-P2", "before": "raw/p2_before", "after": "raw/p2_after", "assertion": "public consumer must reclaim its r2mb-* runtime"}
+  ],
+  "not_executed": [
+    "installation",
+    "daemon restart",
+    "OTA",
+    "merge",
+    "push",
+    "remote receipt",
+    "independent architecture review",
+    "downstream service real admin E2E fix node",
+    "Mac",
+    "Android",
+    "first-user delivery"
+  ],
+  "controller_next_action": "fetch latest origin/main, run independent architecture review on this candidate, then on PASS commit/merge/push and verify remote receipt"
+}

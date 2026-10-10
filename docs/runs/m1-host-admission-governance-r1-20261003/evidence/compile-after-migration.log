@@ -1,0 +1,36 @@
+{
+  "artifact_hash": "sha256:c70b9eef84b4bd0a67cc6ec2c6aae203976549602b3e8ed02a2ac155172fa13d",
+  "artifact_paths": [
+    "host-service",
+    "host_service.py"
+  ],
+  "artifact_schema": 1,
+  "artifacts": [
+    {
+      "hash": "sha256:03fca07b71d92d027089218132250f3e8b54386a1522cbd3a141c3cc07b5f671",
+      "path": "host-service"
+    },
+    {
+      "hash": "sha256:8f83c424201e79251729fd531871ee605214061244096788d06df0f15604a6a3",
+      "path": "host_service.py"
+    }
+  ],
+  "build": {
+    "args": [
+      "scripts/host-service/build-host-service"
+    ],
+    "program": "bash",
+    "working_directory": "."
+  },
+  "contract_hash": "sha256:eff67655ad6173450c74676652ccc1040f7301e42cf4ac9118e9cea1eb0c17c8",
+  "dependency_hashes": [],
+  "deployment_operations": [
+    "install",
+    "restart"
+  ],
+  "module_id": "host-service",
+  "public_api_hash": "sha256:4ca4e96267e5b643760aead6e24de1cdc0619fb0009a76d89b4e687e90e6e4f8",
+  "source_hash": "sha256:99c54b4a011d9ff7392ab6ded94d31d7f1e38cc31ff8803f786d92f66185997c",
+  "stage": "contract_bound"
+}
+EXIT=0

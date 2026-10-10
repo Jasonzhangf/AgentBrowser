@@ -23,6 +23,11 @@ assert.equal(process.platform, 'darwin', 'Real user launchd required');
 assert(!['main', 'master'].includes(git('branch', '--show-current')), 'Owner branch required');
 assert.equal(git('status', '--porcelain'), '', 'Commit complete candidate before admission');
 assert(process.env.OBSCURA_HOST_BINARY, 'Explicit validated Host binary required');
+const protocolText = process.env.OBSCURA_HOST_PROTOCOL_VERSION ?? '';
+assert(/^[1-9][0-9]*$/.test(protocolText), 'Explicit positive u32 Host protocol version required');
+const expectedProtocolVersion = Number(protocolText);
+assert(Number.isSafeInteger(expectedProtocolVersion) && expectedProtocolVersion <= 0xffffffff,
+  'Explicit positive u32 Host protocol version required');
 const binary = resolve(process.env.OBSCURA_HOST_BINARY), binaryHash = hash(readFileSync(binary));
 const head = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
 const base = git('merge-base', 'HEAD', 'origin/main'), prefix = head.slice(0, 12);
@@ -71,7 +76,7 @@ async function ready(previous) {
     // replacement. Only that declared transient state may continue polling.
     assert.equal(result.status, last.state === 'stale' ? 1 : 0, JSON.stringify(last));
     if (last.state === 'running') {
-      assert.equal(last.protocol_version, 4);
+      assert.equal(last.protocol_version, expectedProtocolVersion);
       assert(Number.isSafeInteger(last.pid) && last.pid > 0);
       assert.equal(typeof last.session_id, 'string');
       assert(last.session_id.length > 0);
@@ -104,7 +109,7 @@ async function observe(state) {
       } catch (error) { socket.destroy(); reject(error); }
     });
   });
-  assert.equal(replies[0].type, 'ready'); assert.equal(replies[0].version, 4);
+  assert.equal(replies[0].type, 'ready'); assert.equal(replies[0].version, expectedProtocolVersion);
   assert.equal(replies[0].session_id, state.session_id);
   assert.equal(replies[1].id, 1); assert.equal(replies[1].type, 'result');
   assert.equal(replies[1].value.session_id, state.session_id);
@@ -114,7 +119,8 @@ async function observe(state) {
 }
 let installTime, restartTime, blackTime, loadAttempted = false;
 try {
-  const installation = manager('install', '--binary', binary, '--runtime-root', runtime, '--service-label', label);
+  const installation = manager('install', '--binary', binary, '--runtime-root', runtime, '--service-label', label,
+    '--protocol-version', protocolText);
   assert.equal(installation.launchd_loaded, false);
   assert.equal(`sha256:${installation.binary_sha256}`, binaryHash);
   persist(`${directory}/install.json`, {installation, installed, hashes}); installTime = now();

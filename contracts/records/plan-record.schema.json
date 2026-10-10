@@ -1,0 +1,162 @@
+{
+  "$id": "https://appsdk.local/contracts/records/plan-record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "goal_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "mode": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "module_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "objective": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "plan_hash": {
+      "pattern": "^sha256:",
+      "type": "string"
+    },
+    "plan_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "record_type": {
+      "const": "PlanRecord"
+    },
+    "rule_context": {
+      "additionalProperties": false,
+      "properties": {
+        "goal_hash": {
+          "pattern": "^sha256:",
+          "type": "string"
+        },
+        "guidance_manifest_hash": {
+          "pattern": "^sha256:",
+          "type": "string"
+        },
+        "owner": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "project_contract_hash": {
+          "pattern": "^sha256:",
+          "type": "string"
+        },
+        "rule_sources": {
+          "type": "array"
+        },
+        "scope_hash": {
+          "pattern": "^sha256:",
+          "type": "string"
+        },
+        "scope_state_hash": {
+          "pattern": "^sha256:",
+          "type": "string"
+        },
+        "source_commit": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_tree_hash": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_contract_hash",
+        "goal_hash",
+        "guidance_manifest_hash",
+        "rule_sources",
+        "source_commit",
+        "source_tree_hash",
+        "scope_hash",
+        "scope_state_hash",
+        "owner"
+      ],
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "scope_paths": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "steps": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_evidence": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "node_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "owner": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "step_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id",
+          "node_id",
+          "action",
+          "owner",
+          "expected_evidence"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "task_id": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "record_type",
+    "plan_id",
+    "task_id",
+    "goal_id",
+    "module_id",
+    "mode",
+    "objective",
+    "scope_paths",
+    "steps",
+    "rule_context",
+    "plan_hash",
+    "created_at"
+  ],
+  "title": "AppSDK active PlanRecord",
+  "type": "object"
+}

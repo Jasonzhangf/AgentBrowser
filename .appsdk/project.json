@@ -56,6 +56,7 @@
       "contracts/records/merge-queue-state.schema.json",
       "contracts/records/integration-record.schema.json",
       "contracts/records/mainline-receipt-record.schema.json",
+      "contracts/records/collab-live-closure-record.schema.json",
       "contracts/records/merge-record.schema.json",
       "contracts/records/promotion-record.schema.json",
       "contracts/records/regression-report.schema.json",
@@ -468,6 +469,6 @@
     "bundle_manifest": ".appsdk/contracts/sdk-bundle.manifest.json",
     "name": "appsdk",
     "resource_record": ".appsdk/sdk-resources.json",
-    "version": "0.1.6"
+    "version": "0.1.0010"
   }
 }

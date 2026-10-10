@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r3-p1c-after", "case": "p1c", "expect": "after"}
+{"case": "p1c.record_write_failure", "ok": true, "expected": {"code": "ENDPOINT_NOT_REFRESHED", "last_step": "persist_endpoint_record", "pid_exited": true, "listener_released": true, "no_orphan_runtime": true, "no_record": true}, "actual": {"error_type": "ServiceError", "code": "ENDPOINT_NOT_REFRESHED", "facts": {"authorization_state": "not_refreshed", "error": "ENDPOINT_NOT_REFRESHED", "cause": "endpoint_record_write_failed", "last_step": "persist_endpoint_record", "endpoint_generation": 1, "endpoint_pid": 2706, "bound_address": null}, "orphan_pids": [], "record_exists": false, "runtime_dirs": [], "listener_free": true, "generation": 1}}
+FINDINGS_HARNESS_PASS

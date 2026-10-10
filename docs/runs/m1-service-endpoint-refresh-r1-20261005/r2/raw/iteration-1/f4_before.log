@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r2f4b-kWV19i", "finding": "f4", "expect": "before"}
+{"case": "f4.missing_sibling_binary", "ok": true, "expected": "old behavior returns an untyped text error after the generation advanced", "actual": {"rc": 2, "typed": false, "generation": 1, "stderr": "host-service: endpoint binary is not executable: /private/tmp/m1r2f4b-kWV19i/private-bin/obscura-endpoint\n"}}
+FINDINGS_HARNESS_PASS

@@ -1,0 +1,101 @@
+# Migration diff: HEAD 6e4e087 -> working tree (pre-commit)
+
+## reason
+installed appsdk 0.1.0010 vs project pin 0.1.6; canonical record set + declared root records must match the installed binary (real compile-module gate)
+
+## stat
+ .../communication-capabilities.schema.json         |   76 ++
+ .../communication/communication-event.schema.json  | 1275 ++++++++++++++++++++
+ .../communication-request.schema.json              |  716 +++++++++++
+ .appsdk/contracts/dagpipe/fix-lifecycle.graph.json |   80 ++
+ .appsdk/contracts/dagpipe/notification.graph.json  |   24 +
+ .../lifecycle-state-machines.manifest.json         |    7 +-
+ .appsdk/contracts/maps/function-map.json           |   10 +-
+ .appsdk/contracts/maps/mainline-call-map.json      |   13 +-
+ .appsdk/contracts/maps/resource-map.json           |   18 +-
+ .appsdk/contracts/maps/verification-map.json       |   15 +
+ .../0.1.0007/governance-maps/function-map.json     |   35 +
+ .../governance-maps/mainline-call-map.json         |   90 ++
+ .../0.1.0007/governance-maps/resource-map.json     |   63 +
+ .../0.1.0007/governance-maps/verification-map.json |   72 ++
+ .../0.1.0008/governance-maps/function-map.json     |   37 +
+ .../governance-maps/mainline-call-map.json         |   93 ++
+ .../0.1.0008/governance-maps/resource-map.json     |   66 +
+ .../0.1.0008/governance-maps/verification-map.json |   76 ++
+ .../0.1.0009/governance-maps/function-map.json     |   37 +
+ .../governance-maps/mainline-call-map.json         |   93 ++
+ .../0.1.0009/governance-maps/resource-map.json     |   66 +
+ .../0.1.0009/governance-maps/verification-map.json |   76 ++
+ .../0.1.6/governance-maps/function-map.json        |   34 +
+ .../0.1.6/governance-maps/mainline-call-map.json   |   86 ++
+ .../0.1.6/governance-maps/resource-map.json        |   61 +
+ .../0.1.6/governance-maps/verification-map.json    |   68 ++
+ .../migrations/sdk-0.1.0007-to-0.1.0008.json       |   43 +
+ .../migrations/sdk-0.1.0008-to-0.1.0009.json       |   43 +
+ .../migrations/sdk-0.1.0009-to-0.1.0010.json       |   43 +
+ .../contracts/migrations/sdk-0.1.5-to-0.1.6.json   |    9 +-
+ .../migrations/sdk-0.1.6-to-0.1.0007.json          |   43 +
+ .appsdk/contracts/project.schema.json              |  263 +++-
+ .../records/collab-live-closure-record.schema.json |  149 +++
+ .../contracts/records/evidence-record.schema.json  |    4 +-
+ .../contracts/records/promotion-record.schema.json |    9 +-
+ .../contracts/records/record-graph.contract.json   |    2 +-
+ .../contracts/records/review-record.schema.json    |    2 +-
+ .../test-scenario-result-record.schema.json        |   66 +
+ .../contracts/records/worktree-record.schema.json  |   19 +-
+ .appsdk/contracts/sdk-bundle.manifest.json         |   40 +-
+ .appsdk/contracts/test-governance.schema.json      |  181 +++
+ .../transitions/zone-transition.manifest.json      |    2 +-
+ .appsdk/docs/design/apps-sdk-communication.md      |  395 ++++++
+ .appsdk/docs/design/appsdk-global-registry.md      |  206 ++++
+ .appsdk/docs/design/appsdk-project-integration.md  |  120 +-
+ .appsdk/docs/design/fix-lifecycle-v2.md            |   35 +
+ .appsdk/docs/design/optional-test-governance.md    |   73 ++
+ .../0.1.0009-to-0.1.0010/maps/function-map.json    |   30 +
+ .../maps/mainline-call-map.json                    |   80 ++
+ .../0.1.0009-to-0.1.0010/maps/resource-map.json    |   55 +
+ .../maps/verification-map.json                     |   61 +
+ .../migrations/0.1.0009-to-0.1.0010/record.json    |   44 +
+ .appsdk/project.json                               |    3 +-
+ .appsdk/rules/appsdk-project-governance.md         |  679 +++++++----
+ .appsdk/sdk-resources.json                         |  266 +++-
+ .appsdk/sdk.lock                                   |   51 +-
+ .appsdk/skills/appsdk-migration/SKILL.md           |  413 +++++++
+ .appsdk/skills/appsdk-project-governance/SKILL.md  |  679 +++++++----
+ .../appsdk-project-governance/appsdk-guidance.json |   24 +-
+ .../references/bootstrap-migration.md              |  324 ++++-
+ .../references/command-surface.md                  |  109 ++
+ .../references/goal-prompt.md                      |   30 +
+ .../references/init-prompts.md                     |  242 ++++
+ .../references/state-paths.md                      |  162 +++
+ .../references/subagents-config.md                 |  134 ++
+ .appsdk/skills/project-memory/SKILL.md             |    2 +-
+ .../records/collab-live-closure-record.schema.json |  149 +++
+ contracts/records/evidence-record.schema.json      |    4 +-
+ contracts/records/plan-record.schema.json          |  162 +++
+ contracts/records/plan-revision-record.schema.json |   62 +
+ contracts/records/promotion-record.schema.json     |  223 +---
+ contracts/records/record-graph.contract.json       |    2 +-
+ contracts/records/review-record.schema.json        |    2 +-
+ .../records/step-execution-record.schema.json      |   72 ++
+ .../test-scenario-result-record.schema.json        |  161 +++
+ contracts/records/worktree-record.schema.json      |   19 +-
+ .../transitions/zone-transition-manifest.json      |    2 +-
+ .../evidence/compile-after-migration.log           |   36 +
+ .../evidence/green-compile.log                     |    1 +
+ .../evidence/pin-lock.log                          |    2 +
+ .../evidence/pin-mismatch-compile.log              |    2 +
+ .../evidence/red-compile.log                       |    1 +
+ .../evidence/sdk-identity.log                      |   10 +
+ .../evidence/verify-after-migration.log            |    6 +
+ .../evidence/verify-local.log                      |   75 ++
+ .../notes.md                                       |   35 +
+ 86 files changed, 8729 insertions(+), 719 deletions(-)
+
+## changed-path classification
+[governance control] .appsdk/project.json, .appsdk/sdk.lock, .appsdk/sdk-resources.json
+[sdk-owned managed contracts bundle] .appsdk/contracts/**, .appsdk/docs/**, .appsdk/rules/**, .appsdk/skills/**
+[project records root] contracts/records/collab-live-closure-record.schema.json, plan-record, plan-revision-record, step-execution-record, test-scenario-result-record (new canonical); evidence/promotion/record-graph/review/worktree (refreshed)
+[transition] contracts/transitions/zone-transition-manifest.json (canonical promotion record_required)
+[migration witness] .appsdk/migrations/0.1.0009-to-0.1.0010/**
+[this task evidence] docs/runs/m1-host-admission-governance-r1-20261003/**

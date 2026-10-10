@@ -1,0 +1,5 @@
+final source hashes @ 2026-10-04T16:11:32Z
+214020b2eab6cf42cbda26c607a128405dea54ae694fe3a88b8f94c3ba6f3120  scripts/host-service/host_service.py
+3a6daa9487a3fce61e4c2fb616fffe051fc78a6eb19e791a2bb771eff434001a  scripts/host-service/test_host_trust_public.py
+c91223fd877ee81b306f523906d5656ed767a8c0d30b0fca88d6985073f3fd6a  docs/host-service.md
+9fdbcb23bb1342c9f393f7fa8822ad93a49c9742b21b0f6dcbee06327a9e22d9  docs/runs/m1-host-trust-authority-r3-20261004/source-trace.md

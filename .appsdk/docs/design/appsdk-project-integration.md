@@ -19,6 +19,15 @@ to be frozen before it reads or creates publication records. Frozen dependencies
 retain the existing immutable artifact verification; development compilation
 does not manufacture a FreezeRecord or alter Active/Protected.
 
+If a clean checkout is missing a retained frozen projection, restore it with
+the explicit `appsdk rehydrate-frozen --module <id>` command. The command
+validates the retained freeze/promotion graph and rebuilds the generated
+projection under the current project root. `verify`, `compile`, and Active
+index generation remain read-only with respect to protected/history state and
+must not silently copy artifacts or publish a replacement. Only after the
+rehydration receipt is present may the invalidated compile and downstream
+verification stages be rerun.
+
 ```text
 external AppSDK installation
   -> versioned Bundle: CLI / compiler / contracts / docs / rules / skills
@@ -83,7 +92,7 @@ inspect AppSDK truth + every Collab initialization root
   -> verify one owner/one truth, then zero runtime state
 ```
 
-Do not directly merge `.agent-collab` directories or hand-edit task, claim,
+Do not directly merge Collab persistence directories or hand-edit task, claim,
 mailbox, identity, migration, hash, Active, or Protected records. A Collab-only
 object without an authorized owner receives a proposed disposition and mapping
 route; it is not automatically adopted or deleted. A conflict requires the
@@ -182,6 +191,27 @@ custom map must still match its recorded target digest. A repeated pin uses the
 same previous-bundle witness; missing witnesses, malformed digests, altered
 snapshots and changed live maps fail explicitly.
 
+## Optional black-box test governance
+
+AppSDK is the only owner of optional black-box test governance selection,
+scope confirmation, scenario contracts, trusted runner references, effect
+authorization, result evidence binding and final object admission. Missing or
+`mode: "off"` test governance is compatible with the current project schema
+and does not make `compile` or ordinary `verify` depend on a test manifest.
+When `mode` is `selected`, the project contract requires a committed manifest
+path under `contracts/test-governance.schema.json`, and selected scenario
+results live under
+`.appsdk/records/test-scenario-results/<object_id>/<scenario_id>.json`.
+
+`appsdk verify --test-admission` lists selected object status without executing
+tests. `appsdk verify --admission` applies the selected-object test-admission
+gate; ordinary `appsdk verify` reports `not_selected`, `passed`, or `blocked`
+without requiring tests to pass. `compile` intentionally does not load the
+optional test manifest. Governance records and result records never include
+executable shell strings; scenarios are bound only to trusted `runner_ref`
+entries. DAGpipe CLI remains graph-only and is not a substitute for AppSDK test
+evidence or admission. Existing module blackbox gates are unchanged.
+
 ## Runtime boundary
 
 Runtime may consume only the compiled manifest and verified Active artifact. Runtime must not scan `.appsdk-control/`, Playground, Protected source, or arbitrary instruction files to reconstruct capability.
@@ -231,20 +261,22 @@ project-local Skill and machine contract, and
 `appsdk guide compile` and `appsdk verify`. This setup proposal is project-level
 and must not be replaced by a task PlanProposal.
 
-`appsdk init` is also the single Collab bootstrap entry for a live tmux Agent.
+`appsdk init` is also the single Collab bootstrap entry for a live Codex App
+Server Agent.
 After AppSDK-owned resources are installed, it invokes the official
 `collab init` once with the same process environment. Collab—not AppSDK—resolves
-the project root from tmux pane cwd, starts or reuses the single daemon,
+the project root from the exact process cwd, starts or reuses the single daemon,
 registers the current peer, and creates or refreshes its finite default
 `direct-message` subscription. Do not follow `appsdk init` with a second
 `collab init`, `collab whoami`, or manual ordinary-message subscription.
 
-Without `TMUX_PANE`, no Agent peer exists to register. AppSDK keeps governance
-initialization usable and prints an explicit Collab-pending result; it does not
-fabricate identity/subscription state. In a live tmux context, missing Collab or
-a failed official Collab initialization reports `COLLAB_INIT_*` and collaboration
-unavailable. Independent AppSDK work continues; dependent shared writes wait for
-reliable task/file ownership. No failed registration is reported as successful.
+Without a live Codex App Server sessionID binding, no Agent peer exists to
+register. AppSDK keeps governance initialization usable and prints an explicit
+Collab-pending result; it does not fabricate identity/subscription state. In a
+live App Server context, missing Collab or a failed official Collab
+initialization reports `COLLAB_INIT_*` and collaboration unavailable.
+Independent AppSDK work continues; dependent shared writes wait for reliable
+task/file ownership. No failed registration is reported as successful.
 
 Frozen artifacts must be reproducible across clean worktree locations. The canonical module build runner appends a Rust `--remap-path-prefix` from the current project root to a stable logical path while preserving existing `RUSTFLAGS`. This removes absolute checkout paths from compiler metadata without changing source, payload, or lifecycle hashes. `rehydrate-frozen` and normal module compilation use the same runner; a path-dependent artifact is rejected rather than reconciled by copying or editing a frozen hash.
 
@@ -262,6 +294,28 @@ AI 使用 `.appsdk-prepare.json` 模板向用户确认：这是新项目、模�
 当前 SDK 的 Guide 等 bundle 资源。此路径以现有项目合同作为 root 真源，不要求重新
 创建 preparation record，也不覆盖项目合同或 lifecycle truth。新建、迁移到新 root、
 或通过 `--project-root` 创建尚不存在的治理根仍必须走 confirmed preparation。
+
+如果旧 migration witness、reset receipt 或 control-plane 记录已经阻断当前 `verify`，
+且用户明确选择“忽略历史包袱、按当前版本重新开始”，使用显式 fresh 初始化入口：
+
+```bash
+appsdk init ./existing-project --fresh --discard-legacy
+```
+
+这不是普通 `init` 的隐式行为。它只接受已有 `.appsdk/project.json` 的项目，并且必须在
+clean、非 `main`/`master` worktree 执行；缺少 `--discard-legacy`、项目不存在、主分支或
+dirty worktree 都 fail-closed，拒绝写入。命令只通过 AppSDK 的 canonical reset owner
+移除旧的 `.appsdk/` 控制面、`.appsdk-control/` 和声明的 generated root；它会先验证并
+把现有 `.appsdk/project.json` 的项目合同语义带入新的 `.appsdk`；支持的旧 SDK pin 只在 staging
+中规范为当前 SDK 版本，不会用 `change-me/app-core` scaffold 覆盖项目身份、模块 owner、build 或生命周期边界。业务源码、
+runtime、`active/`、`protected/` 与人类文档继续保留，随后重建当前 `.appsdk` contract 和
+`contracts/records/**`、`contracts/transitions/**` projection，并写入
+`.appsdk/records/reset-governance-record.json`（`mode: "fresh_init"`）。
+
+fresh 初始化不会复制旧 migration witness、reset receipt、PASS、hash、review 或
+lifecycle record；新的 `verify`、`guide compile`、`compile` 和下游 candidate evidence
+必须从当前版本重新产生。重复执行仍然是一次新的、明确授权的 reset，普通 `init` 和
+`reset-governance --discard-legacy` 的既有幂等语义不变。
 
 对已有工作区，confirmed preparation 后必须先进入旧状态迁移预检：
 
@@ -284,7 +338,7 @@ confirmed preparation
 appsdk init ./existing-workspace --project-root new-code
 ```
 
-`init` 的第一个参数是已有工作区，`--project-root` 是新 AppSDK 项目的相对根目录。这样旧代码可以留在工作区，新代码和治理面进入独立子目录。它是幂等操作：创建 `playground/`、`active/lib/`、`protected/`、`generated/`、`.appsdk/` 和 `.appsdk-control/`，只补齐缺失的治理合同，并向新项目根目录的 `.gitignore` 追加一次 SDK 管理区块。在 live tmux Agent 中，它还以同一环境调用一次官方 `collab init`，由 Collab 完成 daemon、peer 与默认 `direct-message` 订阅；不需要第二次初始化。它不覆盖已有项目文件，也不覆盖已有 Git 忽略规则；绝对路径和 `..` 路径会被拒绝。
+`init` 的第一个参数是已有工作区，`--project-root` 是新 AppSDK 项目的相对根目录。这样旧代码可以留在工作区，新代码和治理面进入独立子目录。它是幂等操作：创建 `playground/`、`active/lib/`、`protected/`、`generated/`、`.appsdk/` 和 `.appsdk-control/`，只补齐缺失的治理合同，并向新项目根目录的 `.gitignore` 追加一次 SDK 管理区块。在 live Codex App Server Agent 中，它还以同一环境调用一次官方 `collab init`，由 Collab 完成 daemon、peer 与默认 `direct-message` 订阅；不需要第二次初始化。它不覆盖已有项目文件，也不覆盖已有 Git 忽略规则；绝对路径和 `..` 路径会被拒绝。
 
 新项目执行：
 
@@ -327,9 +381,11 @@ clean owner worktree + candidate commit
 
 Each adapter is rerunnable for the same candidate without changing a PASS
 record. A changed candidate, artifact, environment, entrypoint, or input starts
-a new evidence set and invalidates the old one. No adapter may accept a
-hand-entered hash, relabel whitebox output as blackbox output, or use an
-artifact from another worktree/project/version.
+a new evidence set and invalidates the old one. A valid PASS projection skips
+the external action that produced it; the adapter still performs the lightweight
+identity, scope, integrity, and freshness checks required to trust the record.
+No adapter may accept a hand-entered hash, relabel whitebox output as blackbox
+output, or use an artifact from another worktree/project/version.
 
 For the downstream lifecycle records, the typed AppSDK adapter is
 `produce-lifecycle-chain`. It is invoked once per phase (`architecture`,
@@ -341,6 +397,37 @@ evidence, or treat the observation declaration as evidence. A missing or stale
 upstream record fails closed. Freeze and Active publication remain owned by the
 existing lifecycle adapter, which performs their real artifact and VCS gates.
 
+#### Stage execution, re-entry, and reuse
+
+The chain is a sequence of independently persisted phases. A phase has one
+projection and an input identity covering the candidate/tree, module scope,
+dependency records, artifact and environment bindings, map hashes, evidence
+references, and (where applicable) the mainline or cleanup identity.
+
+On every invocation AppSDK first validates the current projection and the
+upstream graph. If the projection is PASS, the identity is unchanged, and all
+referenced evidence is still valid, it returns `"reused": true` and skips the
+external phase action. This is a cache hit for that exact phase identity; it is
+not a claim that tests or deployment were executed again. `verify` remains a
+read-only integrity/freshness check and may read the whole graph without
+rerunning those external actions.
+
+If an input, dependency, map, artifact, environment, or evidence freshness
+changes, the current phase and its downstream phases are no longer reusable.
+The immutable PASS projection is retained and the adapter fails closed until a
+new candidate-bound projection is produced. A non-PASS projection is never a
+PASS cache entry: the same identity returns `LIFECYCLE_CHAIN_STAGE_NOT_PASS`,
+while a changed identity archives the old attempt and permits a new phase
+attempt. Attempts are append-only under
+`.appsdk/records/attempts/<module>/<phase>.jsonl`; malformed or conflicting
+entries fail closed.
+
+The initial `produce-lifecycle-records` phase follows the same rule for its
+Worktree, Reproduction, and baseline EvidenceRecord set. All three records
+must be present and match the complete declaration, identity, command, and
+freshness checks before the baseline command is skipped. A partial set is an
+explicit error; it is never silently completed from a cache.
+
 `produce-lifecycle-records` accepts a declaration containing the confirmed
 `goal_id`, the module and issue scope, bug-triage evidence, and a baseline
 command with a non-zero expected exit status plus an `expected_error_token`.
@@ -351,9 +438,10 @@ match, and its output is hashed, before the three records are written. The
 caller’s result, timestamps, record IDs, input hashes, producer identity, and
 Git fields are never trusted: timestamps, input hashes, path-safe IDs, and the
 fixed `appsdk-lifecycle-record-producer` identity are generated after those
-observations. Existing targets fail with `LIFECYCLE_RECORD_EXISTS`. Records
-are installed with create-new semantics as a group; validation, command, or
-installation failure leaves no newly published record.
+observations. Records are installed with create-new semantics as a group. A
+complete matching set is reused; a partial set, identity drift, expired
+evidence, validation failure, or installation failure remains an explicit error
+and does not publish a new record.
 
 For an upgrade, run `appsdk prepare`/`init` idempotently, inspect and snapshot
 the old project and legacy roots, obtain explicit ownership-transfer approval,

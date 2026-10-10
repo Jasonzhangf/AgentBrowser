@@ -1,0 +1,10 @@
+# installed AppSDK identity
+d7a67ef2db80c9721b1d68e595e9f51e24e1d879f3de8397f1cc525338c5a160  /Users/fanzhang/.cargo/bin/appsdk
+appsdk 0.1.0010 (rust)
+
+# project pin before migration
+{'bundle_manifest': '.appsdk/contracts/sdk-bundle.manifest.json', 'name': 'appsdk', 'resource_record': '.appsdk/sdk-resources.json', 'version': '0.1.6'}
+
+# canonical SDK source
+61e8c534b5295fb0f60a6634ad3cf99d99f12a4c
+0.1.0010

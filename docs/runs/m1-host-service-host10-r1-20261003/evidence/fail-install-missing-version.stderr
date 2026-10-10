@@ -1,0 +1,8 @@
+usage: host_service.py install [-h] [--root ROOT] --binary BINARY
+                               --protocol-version PROTOCOL_VERSION
+                               [--runtime-root RUNTIME_ROOT]
+                               [--launchd-root LAUNCHD_ROOT]
+                               [--service-label SERVICE_LABEL]
+                               [--profile-id PROFILE_ID]
+                               [--allow-private-network]
+host_service.py install: error: the following arguments are required: --protocol-version
