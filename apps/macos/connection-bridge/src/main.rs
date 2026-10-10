@@ -925,6 +925,8 @@ fn presented_frame(app: &AppState) -> Option<PresentedFrame> {
     Some(PresentedFrame {
         generation: displayed.frame.generation,
         session_id: displayed.frame.session_id.clone(),
+        tab_id: displayed.frame.tab_id.clone(),
+        presentation_revision: displayed.frame.presentation_revision,
         frame_sequence: displayed.frame_sequence,
         document_revision: displayed.frame.document_revision,
         viewport_revision: displayed.frame.viewport_revision,
