@@ -562,6 +562,7 @@ class CombinedRunner:
         self.android_process: Optional[subprocess.Popen[bytes]] = None
         self.android_log_handle: Optional[Any] = None
         self.fixture_root: Optional[pathlib.Path] = None
+        self.bundle_sha256: Optional[str] = None
         self.adb_path: Optional[pathlib.Path] = None
         self.adb_reverse_port: Optional[int] = None
         self.adb_reverse_owned: Optional[dict[str, Any]] = None
@@ -860,8 +861,24 @@ class CombinedRunner:
                 self.abort("PAIRING_ENDPOINT_MISMATCH", "endpoint.txt does not match ready endpoint", owner="fixture endpoint owner", next_action="keep pairing endpoint and ready record identical", stage="fixture_start")
         except OSError as error:
             self.abort("PAIRING_FILE_MISSING", bounded_text(error), owner="fixture endpoint owner", next_action="preserve all fixture pairing files", stage="fixture_start")
+        # The Android instrumentation imports the same bundle this fixture emitted,
+        # so the digest the app compares against its staged file is computed here,
+        # from the ready record's own bundle path, and never re-derived downstream.
+        bundle_raw = ready.get("bundle")
+        if not isinstance(bundle_raw, str) or not bundle_raw:
+            self.abort("PAIRING_BUNDLE_MISSING", f"ready record has no bundle path: {ready!r}", owner="AgentBrowser fixture owner", next_action="emit the frozen pairing bundle path in the ready record", stage="fixture_start")
+        bundle = pathlib.Path(bundle_raw).expanduser().resolve(strict=False)
+        if bundle.parent != fixture_root or not bundle.is_file():
+            self.abort("PAIRING_BUNDLE_INVALID", f"bundle is not a file inside the fixture root: {bundle}", owner="AgentBrowser fixture owner", next_action="emit the owned bundle path inside the fixture root", stage="fixture_start")
+        bundle_digest = file_sha256(bundle)
+        if bundle_digest is None:
+            self.abort("PAIRING_BUNDLE_UNREADABLE", str(bundle), owner="AgentBrowser fixture owner", next_action="preserve the emitted bundle bytes for hashing", stage="fixture_start")
+        bundle_sha256 = bundle_digest.removeprefix("sha256:")
+        if len(bundle_sha256) != 64:
+            self.abort("PAIRING_BUNDLE_DIGEST_INVALID", f"{bundle}: {bundle_digest}", owner="AgentBrowser fixture owner", next_action="hash the emitted bundle bytes with SHA-256", stage="fixture_start")
+        self.bundle_sha256 = bundle_sha256
         self.fixture_root = fixture_root
-        self.evidence["fixture"].update({"identity": artifact_identity(self.args.fixture_bin), "ready": dict(ready), "root": str(fixture_root), "endpoint": endpoint_raw, "session": session, "endpoint_info": endpoint_info})
+        self.evidence["fixture"].update({"identity": artifact_identity(self.args.fixture_bin), "ready": dict(ready), "root": str(fixture_root), "endpoint": endpoint_raw, "session": session, "endpoint_info": endpoint_info, "bundle": {"path": str(bundle), "sha256": bundle_sha256}})
         self._write_json("fixture-ready.json", self.evidence["fixture"])
         self.record_host_status("fixture_ready", "fixture_start")
         self.stage_finish("fixture_start", "passed", {"pid": self.fixture.pid, "session": session, "endpoint": endpoint_raw})
@@ -1242,6 +1259,8 @@ class CombinedRunner:
         if not isinstance(initial_url, str) or not initial_url:
             self.abort("ANDROID_INITIAL_URL_MISSING", "fixture ready record has no initialUrl", owner="AgentBrowser fixture owner", next_action="emit the exact initial URL for instrumentation", stage="android_replay")
         encoded = base64.b64encode(initial_url.encode()).decode()
+        if not self.bundle_sha256:
+            self.abort("ANDROID_BUNDLE_DIGEST_MISSING", "fixture bundle digest was not computed at fixture start", owner="AgentBrowser fixture owner", next_action="hash the emitted pairing bundle before instrumentation", stage="android_replay")
         command = [
             str(self.adb_path),
             "-s",
@@ -1257,6 +1276,9 @@ class CombinedRunner:
             "-e",
             "initialUrlBase64",
             encoded,
+            "-e",
+            "bundleSha256",
+            self.bundle_sha256,
             "-e",
             "class",
             self.args.android_test_class,
