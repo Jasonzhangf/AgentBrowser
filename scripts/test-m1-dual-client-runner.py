@@ -482,6 +482,26 @@ def test_control_epoch_observation_point() -> None:
     )
 
 
+def test_operation_receipts_claim_follows_exported_receipts() -> None:
+    receipts = {
+        name: runner.known(True, [f"android-result.json:operationReceipts[{name}]"])
+        for name in ("observe", "takeover", "release")
+    }
+    check(
+        runner.operation_receipts_claim(receipts, "Android instrumentation")["status"] == "proved",
+        "exported succeeded receipts must prove the owner's claim",
+    )
+    check(
+        runner.operation_receipts_claim({"observe": runner.known(True, ["receipt"])}, "Android instrumentation")["status"] == "unknown",
+        "missing receipts must stay unknown",
+    )
+    unproved = dict(receipts, release=runner.unknown("Android result omitted the release receipt"))
+    check(
+        runner.operation_receipts_claim(unproved, "Android instrumentation")["status"] == "unknown",
+        "an unproved receipt must never be upgraded to proved",
+    )
+
+
 def test_write_exclusive() -> None:
     with tempfile.TemporaryDirectory(prefix="m1-dual-write-") as raw:
         root = pathlib.Path(raw)
@@ -601,6 +621,7 @@ def main() -> int:
         test_schema_and_comparison,
         test_result_classification,
         test_control_epoch_observation_point,
+        test_operation_receipts_claim_follows_exported_receipts,
         test_write_exclusive,
         test_schema_dry_run_switch,
         test_dry_run,

@@ -263,6 +263,14 @@ def same_point_claim(
     }
 
 
+def operation_receipts_claim(actions: Mapping[str, Mapping[str, Any]], owner: str) -> dict[str, Any]:
+    """Derive one owner's observe/takeover/release claim from its typed receipts."""
+
+    if all(actions.get(name, {}).get("value") is True for name in ("observe", "takeover", "release")):
+        return {"status": "proved", "reason": f"{owner} typed receipts recorded observe, takeover and release"}
+    return {"status": "unknown", "reason": f"{owner} typed receipts are incomplete"}
+
+
 def classify_result(first_failure: Optional[Mapping[str, Any]], claims: Mapping[str, Mapping[str, Any]]) -> str:
     if first_failure is not None:
         return "failed"
@@ -1643,11 +1651,8 @@ class CombinedRunner:
             "three_side_document_revision": self.evidence["cross_side"]["document_revision"],
             "host_android_control_epoch_at_android_completion": self.evidence["cross_side"]["control_epoch_at_android_completion"],
             "three_side_frame_ack": self.evidence["cross_side"]["frame_ack"],
-            "mac_observe_takeover_release": {
-                "status": "proved" if all(mac_side["actions"][name].get("value") is True for name in ("observe", "takeover", "release")) else "unknown",
-                "reason": "Mac bridge typed operation receipts were recorded" if {item.get("operation") for item in self.mac_operations} >= {"takeover", "release"} else "Mac control receipts incomplete",
-            },
-            "android_observe_takeover_release": {"status": "unknown", "reason": "Android instrumentation does not export per-operation receipts"},
+            "mac_observe_takeover_release": operation_receipts_claim(mac_side["actions"], "Mac bridge"),
+            "android_observe_takeover_release": operation_receipts_claim(android_side["actions"], "Android instrumentation"),
             "rotation": {
                 "status": combined_status({"android": android_side["actions"]["rotation"], "mac": mac_side["actions"]["rotation"]}),
                 "android": android_side["actions"]["rotation"],
