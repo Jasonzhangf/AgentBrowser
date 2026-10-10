@@ -2,6 +2,23 @@
 
 Status: **INCOMPLETE**. No first-connect or full-M1 acceptance claim.
 
+## Handoff rerun (fresh protected bundle)
+
+The fresh task-6 handoff bundle was selected through ordinary DocumentsUI and
+reached the real Android transfer-code dialog. The visible field was located by
+UiAutomation; no test hook or adb-side text injection was used. The native Mac
+handoff code was not available through the approved secure live channel during
+this run. Therefore the code was not guessed or entered.
+
+- Bundle: `.../user-slice-host-handoff-20261010T143236/task6-handoff.abconnection`
+- Picker gate: **PASS**
+- Transfer dialog: **PASS** (`code-dialog.png`, `uiautomator-code.xml`)
+- Secure handoff: **FAIL / code unavailable**
+- `code_entered`: `false`
+- Admission/configured: **NOT REACHED**
+- Redacted status: `code-handoff-status.txt`, `code-unavailable.txt`
+
+
 ## Inputs
 
 - Installed task-4 APK was reused; no rebuild or uninstall was performed.
