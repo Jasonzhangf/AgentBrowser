@@ -2250,6 +2250,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        contentView.layoutSubtreeIfNeeded()
+        applyLayout(revision: true)
 
         bridge?.onFrame = { [weak self] header, bytes in
             DispatchQueue.main.async { self?.videoView.accept(header: header, bytes: bytes) }
@@ -2294,9 +2296,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         }
 
         guard let uiURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "ui") else {
+            fputs("MAC_WEBVIEW_ASSET_MISSING bundle=\(Bundle.main.bundlePath)\\n", stderr)
             webView.loadHTMLString("<h1>Mac UI asset missing</h1>", baseURL: nil)
             return
         }
+        fputs("MAC_WEBVIEW_LOAD_REQUEST url=\(uiURL.absoluteString) exists=\(FileManager.default.fileExists(atPath: uiURL.path))\\n", stderr)
         webView.loadFileURL(uiURL, allowingReadAccessTo: uiURL.deletingLastPathComponent())
         applyLayout(revision: true)
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.updateViewport() }
@@ -2368,9 +2372,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         completionHandler(bridge?.request(defaultText) ?? rejection("NATIVE_BRIDGE_UNAVAILABLE"))
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(navigationAction.request.url?.isFileURL == true ? .allow : .cancel)
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        fputs("MAC_WEBVIEW_LOAD_FINISH url=\(webView.url?.absoluteString ?? \"nil\")\\n", stderr)
+        webView.evaluateJavaScript("document.body.innerHTML.length + ':' + document.body.innerText.slice(0,120)") { value, error in
+            fputs("MAC_WEBVIEW_DOM value=\(value ?? \"nil\") error=\(error.map(String.init) ?? \"nil\")\\n", stderr)
+        }
     }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        fputs("MAC_WEBVIEW_LOAD_FAIL url=\(webView.url?.absoluteString ?? \"nil\") error=\(error)\\n", stderr)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        fputs("MAC_WEBVIEW_PROVISIONAL_FAIL url=\(webView.url?.absoluteString ?? \"nil\") error=\(error)\\n", stderr)
+    }
+
 
     private func updateViewport() {
         guard let bridge, let layout = appliedLayout else { return }
