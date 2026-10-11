@@ -1,6 +1,6 @@
 # Task-19 Mac client wire handshake
 
-Status: **INCOMPLETE — initial profile authorization was the first runtime gate; explicit error handling fixed, reconnect proof pending.**
+Status: **CLOSED — valid client error-reporting fix; ordinary Mac connection remains UNKNOWN/FAIL.**
 
 ## Raw first frame
 
@@ -22,7 +22,24 @@ The Mac snapshot fix remains in commit `552c53e`; explicit Host error handling i
 
 The task6 lifecycle catalog was updated through the official service command to grant device `e22b76b6-31ac-487b-9953-13e0d78daec8` membership in profile `default`. Receipt: `evidence/user-slice/mac-client-connect-20261010T1820/task6-membership-grant.json`, catalog revision `32`.
 
-The post-grant native retry did not produce a completed session response before the diagnostic process ended. Endpoint logs show accepted connections and existing media activity, but no durable new Mac session evidence was captured. Therefore the exact first failing gate after the grant is **unknown / reconnect evidence pending**, and no HTTPS/profile/restart claims are made.
+The post-grant ordinary-app run did not produce a session. Endpoint logs show repeated `endpoint connection ended: tls handshake eof` and no identifiable new Mac session. The app's AX tree exposed no connection/status nodes during the 24-second observation, so the in-app state could not be observed. This is an observability gap: the ordinary app exposes no usable status surface for this path. The first failing gate is therefore **UNKNOWN/FAIL, not PASS**. No HTTPS/profile/restart claims are made.
+
+## Gate table
+
+| Gate | Result | Raw evidence |
+| --- | --- | --- |
+| Pairing source and credential load | PASS | `98d7b8f`; pairing files loaded from `AGENTBROWSER_MAC_PAIRING` |
+| UI `连接` to native `connect` mapping | PASS | `main.tsx:542`; `main.swift:2320-2336`; bridge `main.rs:500-515` |
+| Protocol version agreement | PASS | Both sides declare `HOST_PROTOCOL_VERSION=11` |
+| Host error surfaced accurately | PASS | Raw `REMOTE_INITIAL_PROFILE_ACCESS_DENIED` frame; fix `98d7b8f` |
+| Default-profile grant | PASS | lifecycle admin receipt, catalog revision 32 |
+| Ordinary Mac client session after grant | **UNKNOWN/FAIL — first failing gate** | `mac-client-connect-20261010T1845/ordinary-app-poll.txt`; endpoint TLS EOF lines; no identifiable new session |
+| In-app connection observability | **FAIL (product quality)** | AX tree exposed no connection/status nodes during the 24-second run |
+| Real HTTPS page | NOT REACHED | blocked by first failing gate |
+| Durable cookie/localStorage state | NOT REACHED | blocked by first failing gate |
+| Default profile isolation | NOT REACHED | blocked by first failing gate |
+| Formal Host restart | NOT RUN | blocked by first failing gate |
+| Reconnect and state readback | NOT REACHED | blocked by first failing gate |
 
 ## Endpoint identity
 
@@ -38,6 +55,13 @@ SHA-256:
 2f1f1ec76b18f5ca023fccebb2017db922026d30d047cac2c68d2d3658ac6a03
 ```
 
-## Scope
+## Final resource state
 
-Only task6 was used. LAN remained running and untouched. No bundle, transfer code, credential, or identifying cookie value is recorded.
+Both lifecycle instances were stopped through the project entrypoint after evidence capture.
+
+| Service | Stop result | Verification |
+| --- | --- | --- |
+| `com.agentbrowser.lan` | PASS, stopped | `evidence/user-slice/mac-client-connect-20261010T1845/lan-stop/stop.json`; status state `stopped`, pid/endpoint_pid null; `/tmp/abn-lan-runtime/state.json` absent; launchd job absent |
+| `com.agentbrowser.task6` | PASS, stopped | `evidence/user-slice/mac-client-connect-20261010T1845/task6-stop/stop.json`; status state `stopped`, pid/endpoint_pid null; `/tmp/abn-task6-runtime/state.json` absent; launchd job absent |
+
+Only task6 was used for Mac-client work. LAN evidence remained unchanged until the final stop instruction. No bundle, transfer code, credential, or identifying cookie value is recorded.

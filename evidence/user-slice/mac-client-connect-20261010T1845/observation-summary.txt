@@ -1,0 +1,7 @@
+Ordinary app observation run.
+
+Launch: AgentBrowserMac PID 61181 with --pairing-dir /tmp/abn-task16-pairing.
+Actions: opened drawer and pressed visible 连接. App remained alive for 24 seconds.
+Poll samples: ordinary-app-poll.txt contains UTC timestamps at 2-second intervals, but AX tree returned no connection/status nodes after the action. No connection state, transport, path, or error text was observable from AX during this run. app.stdout and app.stderr were empty.
+Host status: task6 running PID 29244, endpoint PID 67508, generation 24, protocol 11; existing service session_id remained unchanged. endpoint-tail.txt shows repeated `endpoint connection ended: tls handshake eof` and existing session media acquire lines, but no identifiable new Mac session.
+Result: inconclusive measurement; no PASS claim. Exact post-grant gate remains UNKNOWN because ordinary app did not expose its snapshot controls in the sampled AX tree. HTTPS/profile/restart not reached.

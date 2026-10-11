@@ -1,0 +1,3 @@
+Lifecycle stop receipt: state=stopped, pid=null, endpoint_pid=null.
+Runtime state file: absent at /tmp/abn-lan-runtime/state.json.
+No com.agentbrowser.lan process remained under the LAN runtime; the launchd plist remains as installed service configuration, but launchd job was not loaded after stop (status reports stopped).
