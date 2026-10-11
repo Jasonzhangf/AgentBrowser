@@ -42,8 +42,9 @@ final class RemoteImeView extends View {
                 if (showAttempts.incrementAndGet() < 25) imeHandler.postDelayed(this,200);
                 return;
             }
-            WindowInsets insets=getRootWindowInsets();
-            if (insets != null && insets.isVisible(WindowInsets.Type.ime())) return;
+            // Insets can remain visible while the IME service is recovering;
+            // spend the bounded budget issuing SHOW requests and let the raw
+            // system gate decide whether the IME actually raised.
             showInputWhenReady();
             if (showAttempts.incrementAndGet() < 25) imeHandler.postDelayed(this,200);
         }

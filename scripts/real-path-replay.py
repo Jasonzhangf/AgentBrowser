@@ -100,6 +100,9 @@ code = None
 try:
     # LAN acceptance must begin with the real empty first-run pairing state.
     if expected_endpoint:
+        # Drop the app as the IME's served client first: clearing its data while
+        # the system IME still holds the connection desyncs the IME service.
+        adb("shell", "am", "force-stop", "com.agentbrowser.probe")
         clear = adb("shell", "pm", "clear", "com.agentbrowser.probe").stdout.decode("utf-8", "replace")
         (evidence / "pm-clear.txt").write_text("adb shell pm clear com.agentbrowser.probe\\n" + clear)
         if "Success" not in clear:
@@ -108,6 +111,26 @@ try:
         (evidence / "empty-pairing-listing.txt").write_text(empty)
         if empty.strip():
             raise SystemExit("app pairing directory is not empty after pm clear")
+
+        # Environment precondition, not a product result: the system IME can
+        # wedge after repeated clear cycles, and the wedge is cross-app (a
+        # standard Settings search field cannot raise it either). Reset the IME
+        # process and record the state before and after.
+        ime_id = shell("settings get secure default_input_method").strip()
+        ime_package = ime_id.split("/")[0]
+        before = shell("dumpsys input_method | grep -E 'mInputShown=|mIsInputViewShown'")
+        adb("shell", "am", "force-stop", ime_package)
+        time.sleep(2)
+        after = shell("dumpsys input_method | grep -E 'mInputShown=|mIsInputViewShown'")
+        selected_after = shell("settings get secure default_input_method").strip()
+        (evidence / "ime-environment-reset.txt").write_text(
+            f"ime={ime_id}\n-- before reset --\n{before}\n"
+            f"adb shell am force-stop {ime_package}\n-- after reset --\n{after}\n"
+            f"selected after reset={selected_after}\n")
+        # The reset must not change the selected IME; the raise itself is proven
+        # by the run's own gate.
+        if selected_after != ime_id:
+            raise SystemExit("the IME environment reset changed the selected input method")
 
     # Loopback runs use adb reverse. LAN runs must prove the selected port has no
     # reverse mapping, so their route remains a real LAN route.

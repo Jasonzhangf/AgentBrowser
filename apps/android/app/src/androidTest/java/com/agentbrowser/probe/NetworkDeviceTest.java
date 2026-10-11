@@ -1205,16 +1205,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             trace.append("elapsedMs=").append(elapsed).append(" imeWindowPresent=").append(keyboardWindow)
                 .append(" ").append(focus).append('\n').append(lines).append('\n');
             boolean flagShown="true".equals(String.valueOf(parsed.opt("mInputShown")));
-            boolean viewShown="true".equals(String.valueOf(parsed.opt("mIsInputViewShown")));
-            // The IME must really be up. When the window-insets path performs the
-            // show, IMMS may leave mInputShown false while the keyboard window is
-            // genuinely raised, so require the live keyboard window as well.
-            if(served&&(flagShown||(viewShown&&keyboardWindow))){
+            boolean servedFocused="true".equals(String.valueOf(parsed.opt("servedViewFocused")));
+            // Strict: the IME is really up AND our served view holds focus.
+            if(served&&servedFocused&&flagShown){
                 writeRaw("dumpsys-input-method.txt",trace.toString());
                 writeRaw("focus-trace.txt",focusTrace.toString());
                 writeRaw("ime-keyboard-raised.txt",rawShell("uiautomator dump /sdcard/ime-raised.xml >/dev/null 2>&1; cat /sdcard/ime-raised.xml"));
                 latest.put("raiseElapsedMs",elapsed)
-                    .put("raiseSignal",flagShown?"mInputShown":"mIsInputViewShown+imeWindow");
+                    .put("raiseSignal","mInputShown+focusedRemoteImeView");
                 return latest;
             }
             SystemClock.sleep(250);
@@ -1242,7 +1240,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             .put("mCurMethodId",orNull(firstMatch(dump,"mCurMethodId=(\\S+)")!=null?firstMatch(dump,"mCurMethodId=(\\S+)"):firstMatch(dump,"mCurId=(\\S+)")))
             .put("mCurFocusedWindow",orNull(firstMatch(dump,"mCurFocusedWindow=(\\S+)")))
             .put("mCurFocusedWindowClient",orNull(firstMatch(dump,"mCurFocusedWindowClient=(\\S+)")))
-            .put("mCurId",orNull(firstMatch(dump,"mCurId=(\\S+)")));
+            .put("mCurId",orNull(firstMatch(dump,"mCurId=(\\S+)")))
+            .put("servedViewFocused",servedViewFocused(dump));
+    }
+    /** The second flag group of the served view carries Android's focused flag. */
+    private static boolean servedViewFocused(String dump){
+        java.util.regex.Matcher matcher=java.util.regex.Pattern
+            .compile("(?m)^\\s*mServedView=\\S*\\{[0-9a-f]+\\s+(\\S+)\\s+(\\S+)").matcher(dump);
+        return matcher.find()&&matcher.group(2).contains("F");
     }
     private static Object orNull(String value){return value==null?JSONObject.NULL:value;}
     private static String firstMatch(String text,String pattern){
