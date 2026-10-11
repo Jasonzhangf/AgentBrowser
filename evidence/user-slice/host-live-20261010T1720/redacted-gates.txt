@@ -15,3 +15,5 @@ membership=PASS; export_eligible
 export=PASS; redacted; bundle_sha256=3a338fae1c37ad0d7e73bdbbfebfbeef3c2b0496bb298e38ff7a6cf317ab60ff
 host_left_running=YES
 transfer_code_present=NO
+emulator_reverse=PASS; adb -s emulator-5554 reverse tcp:51880 tcp:51880; list=host-16 tcp:51880 tcp:51880
+emulator_loopback_probe=PASS; 127.0.0.1:51880 via reverse

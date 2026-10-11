@@ -26,7 +26,7 @@ lifecycle entrypoint and left it RUNNING for the Android ordinary-UI run.
 - Endpoint refresh: **PASS**. Raw line: `"authorization_state": "refreshed", "bound_address": "127.0.0.1:51880", "endpoint_generation": 24, "endpoint_pid": 67508`.
 - LAN bind: **FAIL**. The declared `trust/endpoint.json` reads `endpoint_host=127.0.0.1` and `endpoint_port=51880`; `trust endpoint-refresh` accepts only `--root` and `--timeout`, and `trust init` refuses reinitialization, so the LAN address `192.168.0.3` cannot be bound through the declared lifecycle path.
 - Tailscale bind: **FAIL** for the same reason; live Tailscale IPv4 was `100.66.1.82`.
-- Emulator reachability: **PASS** through the emulator host-loopback alias. Raw line: `EMU_TCP_OK` for `nc -z -w 3 10.0.2.2 51880`.
+- Emulator reachability: **PASS** through two routes. Raw lines: `EMU_TCP_OK` for `nc -z -w 3 10.0.2.2 51880`, and `EMU_LOOPBACK_VIA_REVERSE_OK` for `nc -z -w 3 127.0.0.1 51880` after `adb -s emulator-5554 reverse tcp:51880 tcp:51880` (reverse list shows `host-16 tcp:51880 tcp:51880`). The reverse mapping is the route that matches the bundle's declared `127.0.0.1:51880` endpoint.
 - Provision: **PASS**. Device `89f994d4-e12b-4a26-b7d9-9ac5aad9918c`, scopes `observe_human_control`, `profile_read`, `profile_create`, `profile_select`, `catalog_membership=unavailable` before the explicit grant.
 - Membership: **PASS**. `receipt_type=export_eligible`.
 - Export: **PASS**, redacted (no `--include-transfer-code`). Bundle SHA-256 `3a338fae1c37ad0d7e73bdbbfebfbeef3c2b0496bb298e38ff7a6cf317ab60ff`. The bundle itself stays untracked.
