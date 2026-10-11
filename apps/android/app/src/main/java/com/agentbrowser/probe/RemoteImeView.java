@@ -37,15 +37,9 @@ final class RemoteImeView extends View {
     private boolean restartedForConnection;
     private final Runnable imeRetry = new Runnable() {
         @Override public void run() {
-            // Focus may arrive after the tap, and a later focus change can move
-            // view focus away while this view stays served. Reclaim it.
+            // Focus may arrive after the tap. Only a real attempt spends budget.
             if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) {
                 imeHandler.postDelayed(this,200);
-                return;
-            }
-            if (!hasFocus()) {
-                requestFocus();
-                if (showAttempts.incrementAndGet() < 25) imeHandler.postDelayed(this,200);
                 return;
             }
             WindowInsets insets=getRootWindowInsets();
@@ -92,7 +86,7 @@ final class RemoteImeView extends View {
     }
 
     private void showInputWhenReady() {
-        if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus() || !hasFocus()) return;
+        if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) return;
         // restartInput is a heavy binder round trip; issue it once per
         // connection, never on every retry.
         if (!restartedForConnection) {
