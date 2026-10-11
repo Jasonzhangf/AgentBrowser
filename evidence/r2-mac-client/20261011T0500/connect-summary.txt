@@ -1,0 +1,7 @@
+Controlled owned integration instance:
+- Unrelated installed app PID 93743 and bridge PID 2860 left untouched.
+- Owned integration PID 46086 launched; bridge PID 51743.
+- Full screenshot showed AgentBrowser shell. AX then exposed named drawer controls, including `AXButton title=连接`.
+- AX named connect was activated with swift /tmp/axclick.swift.
+- Raw trace includes MAC_NATIVE_SEND op=connect; MAC_NATIVE_RECV op=connect connectionState=connecting; TASK19_RAW_CONTROL_FRAME ready version=11 session_id=53d8ca48-4713-4ef9-b500-f3c24a1f0186; subsequent connected status and Host result frames.
+- Host later entered error: ENCODER_UNAVAILABLE (H.264 encoder exceeded five second deadline). This is after successful connect and Host session establishment.
