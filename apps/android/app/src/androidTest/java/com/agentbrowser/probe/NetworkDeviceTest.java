@@ -1161,22 +1161,37 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump));
         assertEquals("IME must be hidden before causal remote tap: "+imeLines(dump),"false",String.valueOf(state.opt("mInputShown")));
     }
+    private String selectedImePackage()throws Exception{
+        String selected=rawShell("settings get secure default_input_method").trim();
+        return selected.contains("/")?selected.substring(0,selected.indexOf('/')):selected;
+    }
     private JSONObject pollImeRaised(long timeout)throws Exception{
         long started=SystemClock.elapsedRealtime();
         StringBuilder trace=new StringBuilder();
         JSONObject latest=null;
+        String imePackage=selectedImePackage();
         do{
             String dump=rawShell("dumpsys input_method");
             long elapsed=SystemClock.elapsedRealtime()-started;
             JSONObject parsed=parseImeState(dump);
-            latest=parsed.put("elapsedMs",elapsed);
+            boolean served=String.valueOf(parsed.opt("mServedView")).contains("RemoteImeView")
+                &&parsed.opt("mServedInputConnection")!=JSONObject.NULL;
+            boolean keyboardWindow=device().hasObject(By.pkg(imePackage));
+            latest=parsed.put("elapsedMs",elapsed)
+                .put("imeWindowPresent",keyboardWindow)
+                .put("servedRemoteIme",served);
             String lines=imeLines(dump);
-            trace.append("elapsedMs=").append(elapsed).append('\n').append(lines).append('\n');
-            if("true".equals(String.valueOf(parsed.opt("mInputShown")))
-                &&String.valueOf(parsed.opt("mServedView")).contains("RemoteImeView")
-                &&parsed.opt("mServedInputConnection")!=JSONObject.NULL){
+            trace.append("elapsedMs=").append(elapsed).append(" imeWindowPresent=").append(keyboardWindow).append('\n').append(lines).append('\n');
+            boolean flagShown="true".equals(String.valueOf(parsed.opt("mInputShown")));
+            boolean viewShown="true".equals(String.valueOf(parsed.opt("mIsInputViewShown")));
+            // The IME must really be up. When the window-insets path performs the
+            // show, IMMS may leave mInputShown false while the keyboard window is
+            // genuinely raised, so require the live keyboard window as well.
+            if(served&&(flagShown||(viewShown&&keyboardWindow))){
                 writeRaw("dumpsys-input-method.txt",trace.toString());
-                latest.put("raiseElapsedMs",elapsed);
+                writeRaw("ime-keyboard-raised.txt",rawShell("uiautomator dump /sdcard/ime-raised.xml >/dev/null 2>&1; cat /sdcard/ime-raised.xml"));
+                latest.put("raiseElapsedMs",elapsed)
+                    .put("raiseSignal",flagShown?"mInputShown":"mIsInputViewShown+imeWindow");
                 return latest;
             }
             SystemClock.sleep(250);
@@ -1218,10 +1233,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     private void typeThroughSystemIme(String imePackage,String text)throws Exception{
         StringBuilder trace=new StringBuilder();
         writeRaw("ime-keyboard.txt",rawShell("uiautomator dump /sdcard/ime-window.xml >/dev/null 2>&1; cat /sdcard/ime-window.xml"));
-        if(imePackage==null||imePackage.isEmpty()){
-            String selected=rawShell("settings get secure default_input_method").trim();
-            imePackage=selected.contains("/")?selected.substring(0,selected.indexOf('/')):selected;
-        }
+        if(imePackage==null||imePackage.isEmpty())imePackage=selectedImePackage();
         for(int index=0;index<text.length();index++){
             char character=text.charAt(index);
             UiObject2 key=imeKey(imePackage,character);
