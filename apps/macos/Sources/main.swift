@@ -58,7 +58,10 @@ private struct Snapshot: Decodable {
     let displayedDocumentRevision: UInt64?
     let displayedViewportRevision: UInt64?
     let provisioningAvailable: Bool?
+    let transport: String?
+    let path: String?
 }
+
 
 private enum PresentationState: String {
     case browsing
@@ -2169,6 +2172,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
     private var lastAdvertisedViewport: NSRect?
     private var viewportTimer: Timer?
     private var webViewAboveVideo = true
+    private var connectionStatusSurface: NSTextField!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -2224,6 +2228,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         contentView.onLayout = { [weak self] in self?.applyLayout(revision: true) }
         contentView.addSubview(videoView)
         contentView.addSubview(webView)
+        connectionStatusSurface = NSTextField(labelWithString: "Connection: idle | Transport: unknown | Path: unknown")
+        connectionStatusSurface.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        connectionStatusSurface.textColor = .labelColor
+        connectionStatusSurface.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.92)
+        connectionStatusSurface.drawsBackground = true
+        connectionStatusSurface.wantsLayer = true
+        connectionStatusSurface.layer?.cornerRadius = 6
+        connectionStatusSurface.frame = NSRect(x: 18, y: 18, width: 560, height: 28)
+        connectionStatusSurface.autoresizingMask = [.maxXMargin, .minYMargin]
+        contentView.addSubview(connectionStatusSurface)
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.contentView = contentView
@@ -2240,6 +2254,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             guard let data = raw.data(using: .utf8), let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
             DispatchQueue.main.async {
                 self?.latestSnapshot = snapshot
+                let state = snapshot.connectionState ?? "idle"
+                let transport = snapshot.transport ?? "unknown"
+                let path = snapshot.path ?? "unknown"
+                let error = snapshot.error.map { " | Error: \($0)" } ?? ""
+                self?.connectionStatusSurface?.stringValue = "Connection: \(state) | Transport: \(transport) | Path: \(path)\(error)"
                 self?.provisioningMenuItem?.isEnabled = snapshot.provisioningAvailable ?? false
                 self?.videoView.apply(snapshot: snapshot)
                 self?.applyLayout(revision: true)
@@ -2253,6 +2272,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
                 return raw
             }
             object["layout"] = layout
+            object["macStatusSurface"] = [
+                "connectionState": object["connectionState"] ?? NSNull(),
+                "transport": object["transport"] ?? "unknown",
+                "path": object["path"] ?? "unknown",
+                "error": object["error"] ?? NSNull()
+            ]
             guard let projected = try? JSONSerialization.data(withJSONObject: object),
                   let encoded = String(data: projected, encoding: .utf8) else {
                 return raw
