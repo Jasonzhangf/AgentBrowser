@@ -1,0 +1,1 @@
+start command: scripts/host-service/host-service start --root "$HOME/Library/Application Support/AgentBrowser/host-service-lan"
