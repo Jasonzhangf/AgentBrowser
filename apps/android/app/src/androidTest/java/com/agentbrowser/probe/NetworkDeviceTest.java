@@ -20,6 +20,7 @@ import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
@@ -1506,6 +1507,75 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             assertEquals("A stale generation must not keep the connection", "\"connected\"",js(STATUS+".connectionState"));
             assertEquals("A stale generation must not replace the session",liveSession,js(STATUS+".sessionId"));
             writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+        }finally{
+            rawShell("cmd connectivity airplane-mode disable");
+            getInstrumentation().runOnMainSync(()->activity.finish());
+        }
+    }
+
+    /** Raw transport sample: the app projection plus endpoint reachability. */
+    private JSONObject transportSample(String phase,int index,long startedAt)throws Exception{
+        JSONObject status=new JSONObject(js(STATUS));
+        return new JSONObject().put("phase",phase).put("index",index)
+            .put("elapsedMs",SystemClock.elapsedRealtime()-startedAt)
+            .put("connectionState",status.opt("connectionState")).put("state",status.opt("state"))
+            .put("generation",status.opt("generation")).put("renderedFrames",status.opt("renderedFrames"))
+            .put("inputReady",status.opt("inputReady")).put("error",status.opt("error"))
+            .put("transport",status.opt("transport")).put("sessionId",status.opt("sessionId"))
+            .put("documentRevision",status.opt("documentRevision"));
+    }
+    private String endpointReachability(){
+        try{return rawShell("ping -c 1 -W 2 192.168.0.3 >/dev/null 2>&1; echo $?").trim();}
+        catch(Exception failure){return "unavailable";}
+    }
+
+    /**
+     * BB10 isolation probe: raw transport state across a real network interrupt
+     * and restore. The probe only records, so a stall still leaves the complete
+     * sample series on disk for diagnosis.
+     */
+    public void testBb10TransportProbe() throws Exception{
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        JSONArray samples=new JSONArray();
+        long startedAt=SystemClock.elapsedRealtime();
+        try{
+            until("!!document.getElementById('connect')",10000);
+            clickEnabled("connect");
+            boolean ready=false;
+            for(int i=0;i<40;i++){
+                samples.put(transportSample("connect",i,startedAt));
+                if("true".equals(js(STATUS+".inputReady"))&&Long.parseLong(js(STATUS+".renderedFrames"))>=2){ready=true;break;}
+                SystemClock.sleep(1000);
+            }
+            samples.put(new JSONObject().put("phase","connect-result").put("ready",ready)
+                .put("endpointReachability",endpointReachability()).put("elapsedMs",SystemClock.elapsedRealtime()-startedAt));
+            if(ready){
+                clickEnabled("takeover");
+                long controlDeadline=SystemClock.elapsedRealtime()+20000;
+                while(SystemClock.elapsedRealtime()<controlDeadline){
+                    if("true".equals(js(UI_MODE+"==='control'")))break;
+                    SystemClock.sleep(200);
+                }
+                samples.put(new JSONObject().put("phase","control").put("uiMode",js(UI_MODE))
+                    .put("elapsedMs",SystemClock.elapsedRealtime()-startedAt));
+                samples.put(transportSample("pre-interrupt",0,startedAt)
+                    .put("endpointReachability",endpointReachability()));
+                rawShell("cmd connectivity airplane-mode enable");
+                for(int i=0;i<20;i++){
+                    SystemClock.sleep(1000);
+                    samples.put(transportSample("offline",i,startedAt)
+                        .put("endpointReachability",i%5==0?endpointReachability():JSONObject.NULL));
+                }
+                rawShell("cmd connectivity airplane-mode disable");
+                for(int i=0;i<60;i++){
+                    SystemClock.sleep(1000);
+                    samples.put(transportSample("restore",i,startedAt)
+                        .put("endpointReachability",i%5==0?endpointReachability():JSONObject.NULL));
+                    if("true".equals(js(STATUS+".inputReady")))break;
+                }
+            }
+            writeRaw("bb10-transport.json",samples.toString(2)+"\n");
+            writeRaw("bb10-transport-logcat.txt",rawShell("logcat -d -v threadtime -t 1200"));
         }finally{
             rawShell("cmd connectivity airplane-mode disable");
             getInstrumentation().runOnMainSync(()->activity.finish());

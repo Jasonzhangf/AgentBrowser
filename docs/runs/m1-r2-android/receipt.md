@@ -22,7 +22,7 @@ write, private bridge, mock, URL-label assertion, cookie count, or
 | Case | Result | First failing gate | Owner |
 |---|---|---|---|
 | **BB04 gestures** | **PASS (bounded slice)** | none in `bb04-run2` | Android gesture path |
-| **BB04 re-run after formal restart** | **FAIL** | video precondition `renderedFrames>=2 && inputReady` never satisfied (`bb04-run3`) | Android/Host media-after-restart path |
+| **BB04 re-run after formal restart** | **FAIL** | client gets `Host SESSION_MEDIA_FINALIZE` at connect; `renderedFrames` stays 0 (`probe-2`) | Host session media finalize path (obscura) |
 | **BB10 reconnect** | **FAIL** | network interrupt/restore recovery: client did not return to `connected && inputReady` within 45 s (`bb10-run2`) | Android/Mac reconnect path |
 | **BB08 focus/layout** | **NOT COVERED in this pass** | only the blank-space part was exercised (inside BB04); two-field switch, keyboard dismissal, rotation, second client not run | Android/Mac harness |
 | **BB14 continuous use** | **NOT COVERED in this pass** | no continuous session was run | Android harness |
@@ -77,13 +77,65 @@ INSTRUMENTATION_STATUS: stack=junit.framework.AssertionFailedError: Condition: d
 INSTRUMENTATION_STATUS: stack=junit.framework.AssertionFailedError: Condition: JSON.parse(ProbeNative.request('{"op":"status"}')).renderedFrames>=2 && JSON.parse(ProbeNative.request('{"op":"status"}')).inputReady
 ```
 
-## Environment note after the formal restart
+## Diagnosis of the first failure: Host session media finalize
 
-After the formal Host `restart`, the client still connected but never reached
-`renderedFrames>=2 && inputReady`. The same precondition then also failed for
-the previously passing BB04 slice (`bb04-run3`), with only endpoint generation 5
-(PID 9406) listening on `192.168.0.3:51882`. So the post-restart frame stall is
-not BB10-specific. `bb10-run6` additionally hit the known one-time
+The isolation probe `testBb10TransportProbe` records the app projection plus
+endpoint reachability every second. Raw samples in
+`evidence/r2-android/BB10/probe-2/bb10-transport.json`:
+
+```json
+{"phase": "connect", "index": 2, "elapsedMs": 2160, "connectionState": "error",
+ "renderedFrames": 0, "inputReady": false,
+ "error": "java.lang.IllegalStateException: Host SESSION_MEDIA_FINALIZE"}
+```
+
+The same sample series in `probe-1` surfaced the transport-level form of the
+same failure:
+
+```json
+{"phase": "connect", "index": 5, "elapsedMs": 5234, "connectionState": "error",
+ "renderedFrames": 1, "inputReady": false,
+ "error": "java.lang.IllegalStateException: Transport: IO error: peer closed connection without sending TLS close_notify"}
+```
+
+The Host/endpoint side of the same window
+(`$HOME/Library/Application Support/AgentBrowser/host-service-lan/logs/endpoint.log`)
+shows the media acquire and finalize failures:
+
+```text
+session media acquire: 93a4a3ff-c727-4077-8bb4-232589d37f90 child spawned, supervisor started
+Error: H.264 encoder exceeded five second deadline
+
+Caused by:
+    deadline has elapsed
+session media finalize terminal: Encoder stream ended or invalid header
+Error: ENDPOINT_SESSION_FINALIZE_FAILED: Encoder stream ended or invalid header
+```
+
+Excluded causes, each checked directly:
+
+- Authorization: `trust status` reports `authorization_state=refreshed`,
+  `active_clients=1`, and the device certificate
+  `16cf5f6b...` listed active with scopes `observe_human_control`,
+  `profile_read`, `profile_create`, `profile_select`.
+- Routing: exactly one endpoint listens on `192.168.0.3:51882`
+  (`lsof -nP -iTCP:51882 -sTCP:LISTEN` -> PID 78494), and no `adb reverse`
+  mapping exists for the port.
+- Host runtime: `/tmp/abn-lan-runtime/host-15b71ef7/` contains `frames.sock`,
+  `host.sock`, `host-admin.sock`, `remote-admission.sock`, and the session
+  socket.
+- Encoder toolchain: `--ffmpeg ffmpeg` resolves inside the endpoint's own PATH
+  (`/opt/homebrew/bin/ffmpeg`), and the `obscura-media` binary exists.
+
+So the first failure is the Host session media finalize/encoder path, not the
+Android reconnect logic and not authorization. Owner: obscura Host media path
+(`crates/obscura-host/src/endpoint`, `crates/obscura-media`) in the
+`m1-media-encoder-ownership-fix-r8-20261009` worktree, which is outside this
+Android worktree. Gate B could not be isolated further because the client never
+reaches `inputReady` on this endpoint, so a Gate B rerun would only re-observe
+this first failure.
+
+`bb10-run6` additionally hit the known one-time
 `androidx.test.uiautomator.StaleObjectException` during ordinary DocumentsUI
 admission; the next run passed admission, so that is an environment flake.
 
@@ -93,6 +145,8 @@ admission; the next run passed admission, so that is an environment flake.
   edit termination, release termination, `inputReady` recovery.
 - Confirmed product gap: no recovery after a real network interrupt/restore
   (BB10 Gate B), first failing gate above.
-- Environment: the UiAutomator stale-object flake, and the post-restart frame
-  stall that also blocks the previously passing BB04 slice.
+- Blocking first failure: Host `SESSION_MEDIA_FINALIZE` /
+  `H.264 encoder exceeded five second deadline`, which also blocks the
+  previously passing BB04 slice and any further BB run on this endpoint.
+- Environment: the UiAutomator stale-object flake.
 - Not claimed: BB08, BB14, BB11, Chinese composition.

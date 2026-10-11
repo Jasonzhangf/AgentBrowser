@@ -30,8 +30,12 @@ IME_METHOD = "testOrdinaryRealHttpsAndRemoteIme"
 SLICE_ARTIFACTS = {
     "testBb04GestureSlice": "bb04-gesture.json",
     "testBb10ReconnectSlice": "bb10-reconnect.json",
+    "testBb10TransportProbe": "bb10-transport.json",
     "testBb08FocusLayoutSlice": "bb08-focus-layout.json",
     "testBb14ContinuousSlice": "bb14-continuous.json",
+}
+SLICE_EXTRA_ARTIFACTS = {
+    "testBb10TransportProbe": ("bb10-transport-logcat.txt",),
 }
 
 root = pathlib.Path(__file__).resolve().parent.parent
@@ -239,6 +243,8 @@ try:
         if receipt_name is None:
             raise SystemExit(f"no slice receipt is declared for {REAL_PATH_METHOD}")
         pull(receipt_name)
+        for extra in SLICE_EXTRA_ARTIFACTS.get(REAL_PATH_METHOD, ()):
+            pull(extra)
         receipt = evidence / receipt_name
         if not receipt.is_file() or receipt.stat().st_mtime < run_started_at:
             raise SystemExit(f"current-run slice receipt is missing or stale: {receipt_name}")
