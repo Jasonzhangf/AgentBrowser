@@ -122,11 +122,10 @@ The minimum Mac evidence records separately:
 Formal AppSDK admission uses `scripts/macos-admission.mjs` on a committed owner
 candidate. It compiles the pinned module and its connection dependency, copies
 the exact zip into a private `/tmp` installation, launches only that extracted
-bundle, and records separate install and exact-PID restart receipts. The same
-installed entrypoint is driven through AppKit accessibility actions and native
-scroll events: connect, receive and display H.264, take over, navigate, click,
-enter text, scroll, release, inspect the Host only after release, disconnect,
-reconnect, then restart and reconnect again. Screenshots, fixture DOM evidence,
+bundle, and records separate install and exact-PID restart receipts. The
+installed harness scope is only AppKit accessibility `打开菜单` → `连接`, Host
+session status, and restart. Media/codec, takeover, navigation, remote input,
+disconnect, and reconnect are explicitly outside this harness. Screenshots,
 process identities, artifact hashes, and raw command logs remain under the
 ignored task-local `evidence/` directory. The acceptance fixture and app
 processes are owned by the adapter; cleanup terminates only those exact PIDs.
