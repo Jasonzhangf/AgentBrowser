@@ -34,9 +34,7 @@ SLICE_ARTIFACTS = {
     "testBb08FocusLayoutSlice": "bb08-focus-layout.json",
     "testBb14ContinuousSlice": "bb14-continuous.json",
 }
-SLICE_EXTRA_ARTIFACTS = {
-    "testBb10TransportProbe": ("bb10-transport-logcat.txt",),
-}
+SLICE_EXTRA_ARTIFACTS = {}
 
 root = pathlib.Path(__file__).resolve().parent.parent
 serial = os.environ["ANDROID_SERIAL"]
