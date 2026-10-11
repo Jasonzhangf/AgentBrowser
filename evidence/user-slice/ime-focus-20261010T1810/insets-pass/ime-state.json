@@ -1,0 +1,13 @@
+{
+  "mInputShown": "true",
+  "mIsInputViewShown": "true",
+  "mShowRequested": null,
+  "mServedInputConnection": "RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@8f58800",
+  "mServedView": "com.agentbrowser.probe.RemoteImeView{ab94cef VFED..... .F...... 0,0-1,1 aid=1073741824}",
+  "mCurMethodId": "com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME",
+  "mCurFocusedWindow": null,
+  "mCurFocusedWindowClient": null,
+  "mCurId": "com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME",
+  "elapsedMs": 654,
+  "raiseElapsedMs": 654
+}

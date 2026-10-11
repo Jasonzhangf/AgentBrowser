@@ -1,0 +1,2 @@
+  mCurrentFocus=Window{9f5c120 u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
+  mFocusedApp=ActivityRecord{256203421 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t5}

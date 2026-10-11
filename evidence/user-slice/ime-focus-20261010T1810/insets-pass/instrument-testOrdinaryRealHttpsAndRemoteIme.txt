@@ -1,0 +1,45 @@
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.agentbrowser.probe.NetworkDeviceTest:
+INSTRUMENTATION_STATUS: test=testOrdinaryRealHttpsAndRemoteIme
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=junit.framework.AssertionFailedError: ASCII typing through the raised system IME did not run: The raised system IME has no key for 'h' in com.google.android.inputmethod.latin
+{"pageUrl":"https:\/\/www.selenium.dev\/selenium\/web\/web-form.html","finalUrl":"https:\/\/www.selenium.dev\/selenium\/web\/web-form.html","finalScheme":"https","navigationTitle":"Web form","canGoBack":true,"documentRevisionBefore":3,"documentRevisionAfter":4,"renderedFramesBefore":3,"renderedFramesAfter":5,"renderedFramesAfterTyping":140,"displayedTicket":71,"tapX":170,"tapY":90,"frameChangedAfterTap":true,"editorTargetId":"node-46","editorKind":"input","editorEditable":true,"editorInputType":"text","imeInputShown":"true","imeServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@8f58800","imeServedView":"com.agentbrowser.probe.RemoteImeView{ab94cef VFED..... .F...... 0,0-1,1 aid=1073741824}","imeCurMethodId":"com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME","imeCurFocusedWindow":null,"imeWindowVisible":false,"asciiText":"hello","hostFieldText":"","typingNote":"The raised system IME has no key for 'h' in com.google.android.inputmethod.latin"}
+	at com.agentbrowser.probe.NetworkDeviceTest.testOrdinaryRealHttpsAndRemoteIme(NetworkDeviceTest.java:1085)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: stream=
+Failure in testOrdinaryRealHttpsAndRemoteIme:
+junit.framework.AssertionFailedError: ASCII typing through the raised system IME did not run: The raised system IME has no key for 'h' in com.google.android.inputmethod.latin
+{"pageUrl":"https:\/\/www.selenium.dev\/selenium\/web\/web-form.html","finalUrl":"https:\/\/www.selenium.dev\/selenium\/web\/web-form.html","finalScheme":"https","navigationTitle":"Web form","canGoBack":true,"documentRevisionBefore":3,"documentRevisionAfter":4,"renderedFramesBefore":3,"renderedFramesAfter":5,"renderedFramesAfterTyping":140,"displayedTicket":71,"tapX":170,"tapY":90,"frameChangedAfterTap":true,"editorTargetId":"node-46","editorKind":"input","editorEditable":true,"editorInputType":"text","imeInputShown":"true","imeServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@8f58800","imeServedView":"com.agentbrowser.probe.RemoteImeView{ab94cef VFED..... .F...... 0,0-1,1 aid=1073741824}","imeCurMethodId":"com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME","imeCurFocusedWindow":null,"imeWindowVisible":false,"asciiText":"hello","hostFieldText":"","typingNote":"The raised system IME has no key for 'h' in com.google.android.inputmethod.latin"}
+	at com.agentbrowser.probe.NetworkDeviceTest.testOrdinaryRealHttpsAndRemoteIme(NetworkDeviceTest.java:1085)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: test=testOrdinaryRealHttpsAndRemoteIme
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+Test results for InstrumentationTestRunner=.F
+Time: 52.179
+
+FAILURES!!!
+Tests run: 1,  Failures: 1,  Errors: 0
+
+
+INSTRUMENTATION_CODE: -1

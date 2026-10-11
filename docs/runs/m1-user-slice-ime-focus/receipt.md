@@ -1,41 +1,77 @@
 # Task-13 system IME focus receipt
 
-Run: `evidence/user-slice/ime-focus-20261010T1800/final-pass/`.
-The LAN Host lifecycle was not started, stopped, or refreshed by this run.
+Scope: LAN over the local network (`wss://192.168.0.3:51882/`), one Android
+emulator, the fresh `host-service-lan` root. This run started, stopped, or
+refreshed no Host.
 
-## Environment
+## Environment configuration (not a product result)
 
-- `show_ime_with_hard_keyboard`: previous `0`, changed to `1`; this is an
-  environment configuration step, not a product result.
-- `default_input_method`: Latin IME selected:
-  `com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME`.
-- AVD `ab_m1_n3`: `hw.keyboard=no`, `hw.keyboard.lid=yes`.
-- Enabled IMEs: Latin IME and Google TTS.
+| Item | Value | Evidence |
+| --- | --- | --- |
+| `show_ime_with_hard_keyboard` | previous `0`, changed to `1` | `ime-focus-20261010T1733/show_ime_with_hard_keyboard.before.txt` / `.after.txt` |
+| AVD hardware keyboard | `hw.keyboard=no`, `hw.keyboard.lid=yes` | `ime-focus-20261010T1733/avd-hardware-keyboard.txt` |
+| `default_input_method` | `com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME` | `ime-focus-20261010T1740/default_input_method.before.txt` |
+| Enabled IMEs | Latin IME and Google TTS | `ime-focus-20261010T1740/ime-list.txt` |
+| Pre-app window focus | launcher (`NexusLauncherActivity`), not app focus | `ime-focus-20261010T1740/window-focus.before.txt` |
 
-## Product change
+The selected IME was already Latin, so the environment gap was not a missing
+IME selection. The setting change made `onCreateInputConnection()` run, and it
+is recorded as configuration, not as the fix.
 
-`RemoteImeView.showInputWhenReady()` now uses `showSoftInput(this, 0)`.
-`SHOW_IMPLICIT` was a product defect because it allowed the IME to ignore the
-show request after a real remote-field tap. The change is committed in
-`ed63ae8`. The latest bounded-poll test code is in `74d3692`.
+## Product defects found and fixed
 
-## LAN gates
+1. `RemoteImeView.showInputWhenReady()` used
+   `InputMethodManager.SHOW_IMPLICIT`. A real remote-field tap is an explicit
+   request, and `SHOW_IMPLICIT` let the IME ignore it. Now `showSoftInput(this, 0)`.
+2. `InputMethodManager.showSoftInput` alone is unreliable on API 30+. The
+   supported path is the window-owned `WindowInsetsController.show(Type.ime())`.
+   The request now runs on the main thread only while the view has window focus,
+   with `restartInput` kept on the identity change in `sync()`.
+3. A single fire-and-forget request was not a reliable contract, so the show
+   path retries on a bounded schedule and stops as soon as the real window
+   insets report the IME visible.
+
+Commits in the Android worktree: `ed63ae8`, `2af8511`, `288c0de`.
+
+## Remaining product defect: view focus is lost
+
+The bridge view keeps the IME connection but loses Android *view* focus, and an
+unfocused served view refuses the raise. Raw `mServedView` flag groups separate
+the two outcomes:
+
+- Passing run: `RemoteImeView{... VFED..... .F...... 0,0-1,1}` (focused).
+- Failing runs: `RemoteImeView{... VFED..... ........ 0,0-1,1}` (served, not
+  focused), with `mInputShown=false` for the whole bound.
+
+The naive repair (re-claim focus from the retry loop) re-entered
+`onCreateInputConnection`, re-armed the retry loop, and produced an IME restart
+storm that crashed the app process. That attempt is reverted in `4996d74`; the
+current tree holds the bounded retry without the restart cycle.
+
+## Gates
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Clean first-run state | PASS | `pm-clear.txt`, empty pairing listing |
+| Clean first-run state | PASS | `pm-clear.txt` `Success`, empty pairing listing |
+| No reverse route for the LAN port | PASS | `adb-reverse.json`: no `tcp:51882` mapping |
 | Ordinary LAN admission | PASS | `admission.json`: `wss://192.168.0.3:51882/` |
-| No reverse route for LAN port | PASS | `adb-reverse.json`: no `tcp:51882` mapping |
-| Real HTTPS navigation | PASS | `real-path.json` from the prior complete stage: selenium web form, `https` |
-| Remote video and touch focus | PASS | current instrumentation reached the IME gate after video and Host editor focus |
-| System IME focus | **FAIL** | bounded raw samples in `dumpsys-input-method.txt`: `mInputShown=false` through ~8 seconds; `mCurId=...LatinIME`, served view and connection are `RemoteImeView` |
-| ASCII through raised IME | NOT REACHED | strict IME gate stopped before keyboard taps |
-| Release/disconnect and Host close | NOT REACHED | strict first-failure behavior |
+| Real HTTPS navigation | PASS | `real-path.json`: `https://www.selenium.dev/selenium/web/web-form.html`, scheme `https` |
+| Remote video | PASS | `real-path.json`: rendered frames 3 -> 5, ticket 71 |
+| Real touch focus | PASS | `real-path.json`: Host target `node-46`, kind `input` |
+| Causal pre-tap hidden precondition | PASS | asserted in the run before the tap; the raw pre-tap line is now pulled as `dumpsys-input-method-pre-tap.txt` (the `insets-pass` run predates that pull, so its assertion survives in `instrument-testOrdinaryRealHttpsAndRemoteIme.txt`) |
+| System IME raise | PASS once, then intermittent FAIL | `ime-state.json`: `mInputShown=true`, `raiseElapsedMs=654`; later bounded traces never raise |
+| ASCII through the raised IME | NOT REACHED | the strict raise gate stopped the run before any key tap |
+| Release / disconnect | PASS in the successful run | `release.json`: `disconnected` / `stopped` |
 | Chinese composition | UNKNOWN / separate | no claim |
 
-The exact first failing gate is bounded real system IME visibility. The failure
-is not a parser artifact or a single immediate sample: the current-run raw
-trace samples `mInputShown` every approximately 250 ms for the bounded interval.
-The selected IME and RemoteImeView connection are active, but Android does not
-set `mInputShown=true`. No test-only key injection or local-widget substitution
-was used.
+Authoritative artifacts:
+
+- `ime-focus-20261010T1810/insets-pass/` - the one run with a causal IME raise
+  (`raiseElapsedMs=654`) plus clean release/disconnect.
+- `ime-focus-20261010T1800/final-pass/dumpsys-input-method.txt` and
+  `ime-focus-20261010T1850/ascii-retry/dumpsys-input-method.txt` - bounded raw
+  sample traces where `mInputShown` stays `false` and the keyboard window is
+  absent for the whole bound.
+
+No gate was weakened, skipped, or fabricated. No key-event injection was used
+as a substitute for IME input. The ASCII gate stays unclaimed.
