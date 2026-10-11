@@ -28,7 +28,7 @@ REAL_PATH_METHOD = "testOrdinaryRealHttpsAndRemoteIme"
 
 root = pathlib.Path(__file__).resolve().parent.parent
 serial = os.environ["ANDROID_SERIAL"]
-launcher = root / "scripts/host-service/host-service"
+launcher = pathlib.Path(os.environ.get("HOST_SERVICE_LAUNCHER", str(root / "scripts/host-service/host-service"))).resolve()
 service_root = pathlib.Path(
     os.environ.get("HOST_SERVICE_ROOT", str(pathlib.Path.home() / "Library/Application Support/AgentBrowser/host-service"))
 ).expanduser()
@@ -38,8 +38,11 @@ ascii_text = os.environ.get("REAL_PATH_TEXT", "hello")
 tap_x = os.environ.get("REAL_PATH_TAP_X", "196")
 tap_y = os.environ.get("REAL_PATH_TAP_Y", "107")
 endpoint_port = int(os.environ.get("HOST_ENDPOINT_PORT", "51880"))
+expected_endpoint = os.environ.get("EXPECTED_ENDPOINT", "")
+no_reverse = os.environ.get("NO_ADB_REVERSE", "0") == "1"
 
-run_id = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+run_started_at = time.time()
+run_id = time.strftime("%Y%m%dT%H%M%S", time.localtime(run_started_at))
 evidence = pathlib.Path(
     os.environ.get("REAL_PATH_EVIDENCE_DIR", str(root / "evidence" / "user-slice" / f"real-path-{run_id}"))
 ).resolve()
@@ -95,11 +98,18 @@ private = pathlib.Path(tempfile.mkdtemp(prefix="real-path-"))
 os.chmod(private, 0o700)
 code = None
 try:
-    # The device reaches the loopback-bound Host only through its own loopback.
-    adb("reverse", f"tcp:{endpoint_port}", f"tcp:{endpoint_port}")
-    reverse = adb("reverse", "--list").stdout.decode("utf-8", "replace").strip().splitlines()
+    # Loopback runs use adb reverse. LAN runs must prove the selected port has no
+    # reverse mapping, so their route remains a real LAN route.
+    reverse_before = adb("reverse", "--list").stdout.decode("utf-8", "replace").strip().splitlines()
+    port_mapping = [line for line in reverse_before if f"tcp:{endpoint_port}" in line]
+    if no_reverse and port_mapping:
+        raise SystemExit(f"LAN run refuses existing adb reverse mapping for tcp:{endpoint_port}")
+    if not no_reverse:
+        adb("reverse", f"tcp:{endpoint_port}", f"tcp:{endpoint_port}")
+    reverse_after = adb("reverse", "--list").stdout.decode("utf-8", "replace").strip().splitlines()
     (evidence / "adb-reverse.json").write_text(json.dumps(
-        {"runId": run_id, "serial": serial, "port": endpoint_port, "listing": reverse}, indent=2) + "\n")
+        {"runId": run_id, "serial": serial, "port": endpoint_port,
+         "noReverse": no_reverse, "before": reverse_before, "after": reverse_after}, indent=2) + "\n")
 
     # Step 1: the one-time transfer code, captured in this same shell.
     exported = subprocess.run(
@@ -136,9 +146,13 @@ try:
     if admission_evidence is None:
         admission_evidence = b"{}"
     admission_json = json.loads(admission_evidence)
-    gate("ordinary-admission", admission.ok,
-         f"panel={admission_json.get('panelState')} endpoint={admission_json.get('endpoint')} "
+    admitted_endpoint = str(admission_json.get("endpoint") or "")
+    admission_ok = admission.ok and (not expected_endpoint or expected_endpoint in admitted_endpoint)
+    gate("ordinary-admission", admission_ok,
+         f"panel={admission_json.get('panelState')} endpoint={admitted_endpoint} expected={expected_endpoint or None} "
          f"generation={admission_json.get('activeGeneration')} parser={admission.status}")
+    if not admission_ok:
+        raise SystemExit("ordinary admission did not prove the expected endpoint; stopping before connect/browse")
 
     # Steps 4-9: connect, real HTTPS document, video, real touch, system IME, release.
     real_path = instrumentation(REAL_PATH_METHOD, [
@@ -149,8 +163,11 @@ try:
                  "real-path-before-tap.png", "real-path-after-tap.png", "release.json"]:
         pull(name)
     real_path_json = {}
-    if (evidence / "real-path.json").is_file():
-        real_path_json = json.loads((evidence / "real-path.json").read_text())
+    current_artifacts = [evidence / name for name in
+        ["real-path.json", "dumpsys-input-method.txt", "ime-state.json", "logcat-focus.txt"]]
+    if not all(path.is_file() and path.stat().st_mtime >= run_started_at for path in current_artifacts):
+        raise SystemExit("current-run IME/navigation artifacts are missing or stale")
+    real_path_json = json.loads((evidence / "real-path.json").read_text())
 
     final_scheme = real_path_json.get("finalScheme")
     gate("real-https-navigation", final_scheme == "https",
