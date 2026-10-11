@@ -36,11 +36,28 @@ recorded for comparison only.
 | Mac LAN TCP probe | PASS | `Connection to 192.168.0.3 port 51882 [tcp/*] succeeded!` |
 | Emulator LAN probe without `adb reverse` | PASS | `EMU_LAN_DIRECT_OK`; reverse list contained only `host-16 tcp:51880 tcp:51880`, so no mapping existed for `51882` |
 | Redacted export | PASS | SHA-256 `1f1e2de4053cc2d2d7ebf07596b2a05bbb5726b258f146b0ae2e71c67521656c`, no `--include-transfer-code` |
-| Host left running | PASS | Host PID `2185`, endpoint PID `5534` |
-| Ordinary Android UI connect + browse over LAN | PENDING | owned by the Android replay run |
+| Host left running | PASS | Host PID `2185`, endpoint PID `5534`, `state=running`, `endpoint_generation=1` after the Android run |
+| Ordinary Android UI admission over LAN | PASS | `instrument-testOrdinaryRealPathAdmission.txt` → `OK (1 test)` |
+| Ordinary real HTTPS browse over LAN | PASS | `pageUrl=https://www.selenium.dev/selenium/web/web-form.html`, `finalScheme=https`, `renderedFramesBefore=3`, `renderedFramesAfter=4`, `displayedTicket=27` |
+| Video + touch over LAN | PASS | reported by the Android replay owner for this run |
+| System IME gate | FAIL | `mInputShown=false` with `mCurId=LatinIME`, `mServedView=RemoteImeView`, `mServedInputConnection=RemoteImeView$Connection` |
 
-First failing gate: none reached in this run. The LAN binding gate that failed
-on the task6 root (`bound_address=127.0.0.1:51880`) **PASSES** here.
+Android evidence for these gates lives in the Android worktree at
+`m1-android-navigation-fix-r1-20261009/evidence/user-slice/ime-focus-20261010T1740/final-pass/`.
+
+First failing gate: **system IME**. The raw assertion is:
+
+```text
+junit.framework.AssertionFailedError: The raised system IME must report mInputShown=true: {"mInputShown":"false","mIsInputViewShown":"true","mShowRequested":null,"mServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@8ab9694","mServedView":"com.agentbrowser.probe.RemoteImeView{630c3fc VFED..... .F...... 0,0-1,1 aid=1073741824}","mCurMethodId":"com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME",...}
+```
+
+The LAN binding gate that failed on the task6 root
+(`bound_address=127.0.0.1:51880`) **PASSES** here with
+`bound_address=192.168.0.3:51882`.
+
+The LAN instance stays RUNNING unchanged while the Lead records this failed
+gate. It is stopped only on the Lead's stop instruction, through the lifecycle
+entrypoint.
 
 No transfer code, private key, or bundle content appears in this receipt or in
 the committed evidence. The exported bundle stays untracked.
