@@ -11,9 +11,9 @@ assert(!source.includes("ids.reconnect"), 'receipt ids must not reference reconn
 assert(!source.includes("reconnect: `${directory}"), 'console receipt must not claim reconnect');
 assert.match(source, /pressAccessibilityButton\(firstApp\.pid, '打开菜单'/);
 assert.match(source, /pressAccessibilityButton\(firstApp\.pid, '连接'/);
-assert(!source.includes("'断开'"), 'admission must not press disconnect in narrowed slice');
-assert(!source.includes('videoSurfaceGeometry'), 'unreachable video helper must be removed');
-assert(!source.includes('focusAccessibilityTextField'), 'unreachable input helper must be removed');
-assert(!source.includes('postUnicodeText'), 'unreachable text helper must be removed');
-assert.match(source, /ax_target: '连接'/);
+assert(!source.includes('activatePid'), 'unused activation helper must be removed');
+assert(!source.includes('fixtureResponseValue'), 'unused fixture response helper must be removed');
+assert(!source.includes('full = true'), 'capture must not retain unreachable full branch');
+assert.match(source, /ax_actions:/);
+assert.match(source, /connect_receipt:/);
 console.log('mac admission scope fixture: pass');

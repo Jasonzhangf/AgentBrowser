@@ -134,3 +134,7 @@ processes are owned by the adapter; cleanup terminates only those exact PIDs.
 This is a Mac/client vertical slice. It is not Android+Mac same-session proof,
 Relay proof, route-selection proof, final user/global package installation, or
 full M1 acceptance. Those remain integration-owner work.
+
+## Narrow admission scope
+
+The current admission harness verifies only connect, Host session status, H.264/media display, and restart. It executes AX `打开菜单` followed by `连接`, records `connect.json` and the AX receipts in blackbox output, and explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`. It does not infer codec success from screenshot hashes; media evidence requires Host status/rendered-frame fields.

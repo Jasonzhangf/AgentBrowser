@@ -164,15 +164,7 @@ print("{\\"x\\":\\(origin.x),\\"y\\":\\(origin.y),\\"width\\":\\(extent.width),\
   return JSON.parse(String(output.stdout).trim());
 }
 
-function activatePid(pid) {
-  const swift = `
-import AppKit
-let app = NSRunningApplication(processIdentifier: ${pid})!
-_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-}
+
 
 async function waitForWindow(child) {
   let rect;
@@ -230,25 +222,15 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
   assert.fail(`AX button did not become available: ${title}`);
 }
 
-function captureWindow(path, pid, full = true) {
+function captureWindow(path, pid) {
   const rect = windowRect(pid);
   assert(rect, 'AgentBrowser window disappeared before screenshot');
-  const region = full
-    ? rect
-    : {x: rect.x, y: rect.y + 30, width: Math.floor(rect.width / 2), height: rect.height - 30};
-  command('screencapture', ['-x', '-R', `${region.x},${region.y},${region.width},${region.height}`, path]);
-  return {path, hash: hash(readFileSync(path)), region};
+  command('screencapture', ['-x', '-R', `${rect.x},${rect.y},${rect.width},${rect.height}`, path]);
+  return {path, hash: hash(readFileSync(path)), region: rect};
 }
 
 function screenshotLog(screenshots) {
   return screenshots.map(({path, hash: digest, region}) => ({path, hash: digest, region}));
-}
-
-function fixtureResponseValue(line) {
-  const response = JSON.parse(line);
-  const value = response.result?.value;
-  assert.equal(typeof value, 'string', `Fixture returned non-evaluation: ${line}`);
-  return JSON.parse(value);
 }
 
 function hostStatus(socketPath, requestId) {
@@ -351,7 +333,7 @@ function startFixture(fixtureExecutable, directory, environment) {
       waiters.push({resolve: line => {clearTimeout(timer); resolveLine(line);}, reject});
     });
   }
-  return {child, nextLine, async request(commandText) { child.stdin.write(`${commandText}\n`); return nextLine(); }};
+  return {child, nextLine};
 }
 
 async function quitFixture(fixture) {

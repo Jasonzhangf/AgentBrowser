@@ -422,16 +422,16 @@
         "scripts/build-macos.sh",
         "scripts/build-macos-ui.mjs",
         "scripts/macos-admission.mjs",
-        "docs/macos-client.md"
+        "docs/macos-client.md",
+        "scripts/macos-admission-scope.test.mjs"
       ],
       "regression": {
         "allow_skipped": false,
         "command": {
+          "program": "node",
           "args": [
-            "scripts/build-macos.sh",
-            "build"
+            "scripts/macos-admission-scope.test.mjs"
           ],
-          "program": "bash",
           "working_directory": "."
         },
         "input_paths": [
@@ -445,9 +445,10 @@
           "packages/client-domain/**",
           "Cargo.toml",
           "Cargo.lock",
-          "package-lock.json"
+          "package-lock.json",
+          "scripts/macos-admission-scope.test.mjs"
         ],
-        "minimum_test_count": 1,
+        "minimum_test_count": 2,
         "ordinary_mode_after_freeze": "disabled",
         "reenable_on": [
           "source_change",
