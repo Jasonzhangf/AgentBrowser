@@ -1391,6 +1391,127 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
 
+    private long documentRevision()throws Exception{return new JSONObject(js(STATUS)).optLong("documentRevision",-1);}
+    private String hostUrl(){JSONObject navigation=activity.network.navigation();return navigation==null?"":navigation.optString("url","");}
+
+    /**
+     * BB10 bounded slice: real client close/reopen, a real network interrupt and
+     * restore, and stale-generation fencing. Every assertion reads the
+     * Host-published session/document projection or the Host input lease.
+     */
+    public void testBb10ReconnectSlice() throws Exception{
+        String pageUrl=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        JSONObject evidence=new JSONObject().put("case","BB10").put("url",pageUrl);
+        try{
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000); clickEnabled("takeover");
+            until(UI_MODE+"==='control'",20000);
+            navigateFromAddress(pageUrl); awaitNavigation("https:",15000);
+            String sessionBefore=js(STATUS+".sessionId");
+            String urlBefore=hostUrl();
+            long revisionBefore=documentRevision();
+            evidence.put("sessionBefore",sessionBefore).put("urlBefore",urlBefore).put("revisionBefore",revisionBefore);
+
+            // Gate A: close the client and reopen it. Detach must not delete the
+            // Host session, and the same document must come back.
+            getInstrumentation().runOnMainSync(()->activity.finish());
+            SystemClock.sleep(4000);
+            activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            assertEquals("Reopened client keeps the admitted pairing","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"reconnect after client reopen");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000);
+            boolean control=false;
+            clickEnabled("takeover");
+            long takeoverDeadline=SystemClock.elapsedRealtime()+20000;
+            while(SystemClock.elapsedRealtime()<takeoverDeadline){
+                if("true".equals(js(UI_MODE+"==='control'"))){control=true;break;}
+                SystemClock.sleep(200);
+            }
+            evidence.put("controlAfterReopen",control).put("uiModeAfterReopen",js(UI_MODE));
+            String sessionAfterReopen=js(STATUS+".sessionId");
+            String urlAfterReopen=hostUrl();
+            evidence.put("sessionAfterReopen",sessionAfterReopen).put("urlAfterReopen",urlAfterReopen)
+                .put("reopenSameSession",sessionBefore.equals(sessionAfterReopen))
+                .put("reopenSameDocument",urlBefore.equals(urlAfterReopen));
+            assertEquals("Detach must not delete the Host session",sessionBefore,sessionAfterReopen);
+            assertEquals("Reconnect must return the same document",urlBefore,urlAfterReopen);
+            writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+
+            // Gate B: one real remote click must produce exactly one Host-side
+            // effect, and a real network interrupt plus restore must not replay it.
+            // The one-time effect is the Host-published editor focus projection.
+            String contextAfterClick=null;
+            long revisionAfterClick=documentRevision();
+            if(control){
+                touch(196,107); awaitEditableContext(8000);
+                contextAfterClick=String.valueOf(editableContext());
+                revisionAfterClick=documentRevision();
+                evidence.put("clickTarget",editableContext().optString("target_id"));
+            }
+            evidence.put("editorContextAfterClick",contextAfterClick).put("revisionAfterClick",revisionAfterClick);
+
+            rawShell("cmd connectivity airplane-mode enable");
+            long offlineDeadline=SystemClock.elapsedRealtime()+20000;
+            String offlineState=js(STATUS+".connectionState");
+            while("\"connected\"".equals(offlineState)&&SystemClock.elapsedRealtime()<offlineDeadline){
+                SystemClock.sleep(500); offlineState=js(STATUS+".connectionState");
+            }
+            evidence.put("stateWhileOffline",offlineState);
+            rawShell("cmd connectivity airplane-mode disable");
+            long restoreDeadline=SystemClock.elapsedRealtime()+45000;
+            boolean restored=false;
+            while(SystemClock.elapsedRealtime()<restoreDeadline){
+                SystemClock.sleep(1000);
+                if("\"connected\"".equals(js(STATUS+".connectionState"))&&"true".equals(js(STATUS+".inputReady"))){restored=true;break;}
+            }
+            evidence.put("autoRecovered",restored).put("stateAfterRestore",js(STATUS+".connectionState"))
+                .put("errorAfterRestore",new JSONObject(js(STATUS)).optString("error"));
+            if(!restored){
+                // Distinguish "no automatic recovery" from "cannot recover at all"
+                // with one real user reconnect action through the ordinary UI.
+                clickEnabled("connect");
+                long manualDeadline=SystemClock.elapsedRealtime()+30000;
+                while(SystemClock.elapsedRealtime()<manualDeadline){
+                    SystemClock.sleep(1000);
+                    if("\"connected\"".equals(js(STATUS+".connectionState"))&&"true".equals(js(STATUS+".inputReady")))break;
+                }
+                evidence.put("manualReconnectState",js(STATUS+".connectionState"))
+                    .put("manualReconnectInputReady",js(STATUS+".inputReady"));
+            }
+            String sessionAfterRestore=js(STATUS+".sessionId");
+            long revisionAfterRestore=documentRevision();
+            String contextAfterRestore=String.valueOf(editableContext());
+            evidence.put("restored",restored).put("sessionAfterRestore",sessionAfterRestore)
+                .put("revisionAfterRestore",revisionAfterRestore)
+                .put("editorContextAfterRestore",contextAfterRestore).put("urlAfterRestore",hostUrl());
+            writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+            assertTrue("The client must recover after the network is restored",restored);
+            assertEquals("Recovery must keep the same Host session",sessionBefore,sessionAfterRestore);
+            assertEquals("Recovery must not replay the click or submit",revisionAfterClick,revisionAfterRestore);
+            if(control)assertEquals("Recovery must not re-fire the click's Host effect",contextAfterClick,contextAfterRestore);
+
+            // Gate C: an old generation cannot write; the live session survives it.
+            String liveSession=js(STATUS+".sessionId");
+            long framesBeforeRejection=activity.annex.snapshot().getLong("renderedFrames");
+            getInstrumentation().runOnMainSync(()->activity.network.command(1,Long.MAX_VALUE,0,0,0,0,""));
+            until("String("+STATUS+".error).includes('STALE_CONTROL')",8000);
+            until(STATUS+".renderedFrames>"+framesBeforeRejection+" && "+STATUS+".inputReady",8000);
+            evidence.put("staleWriteError",new JSONObject(js(STATUS)).optString("error"))
+                .put("sessionAfterStaleWrite",js(STATUS+".sessionId"))
+                .put("stateAfterStaleWrite",js(STATUS+".connectionState"));
+            assertEquals("A stale generation must not keep the connection", "\"connected\"",js(STATUS+".connectionState"));
+            assertEquals("A stale generation must not replace the session",liveSession,js(STATUS+".sessionId"));
+            writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+        }finally{
+            rawShell("cmd connectivity airplane-mode disable");
+            getInstrumentation().runOnMainSync(()->activity.finish());
+        }
+    }
+
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{

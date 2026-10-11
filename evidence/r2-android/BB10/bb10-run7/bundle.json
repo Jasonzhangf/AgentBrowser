@@ -1,0 +1,9 @@
+{
+  "runId": "20261010T195312",
+  "deviceId": "c02d396c-5178-42d8-9ed5-03f7e83f25c7",
+  "serviceRoot": "/Users/fanzhang/Library/Application Support/AgentBrowser/host-service-lan",
+  "endpointPort": 51882,
+  "bundleSha256": "d2944c198ecd2f5d853e698d42ee8e718440afbbab0e4b2565e0203a34f11b53",
+  "deviceSha256": "d2944c198ecd2f5d853e698d42ee8e718440afbbab0e4b2565e0203a34f11b53",
+  "deviceCopyMatches": true
+}

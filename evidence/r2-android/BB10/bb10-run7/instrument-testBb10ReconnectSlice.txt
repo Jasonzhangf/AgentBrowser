@@ -1,0 +1,51 @@
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.agentbrowser.probe.NetworkDeviceTest:
+INSTRUMENTATION_STATUS: test=testBb10ReconnectSlice
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=junit.framework.AssertionFailedError: Condition: JSON.parse(ProbeNative.request('{"op":"status"}')).renderedFrames>=2 && JSON.parse(ProbeNative.request('{"op":"status"}')).inputReady
+status="{\"state\":\"error\",\"generation\":1,\"renderedFrames\":0,\"released\":true,\"codec\":\"\",\"error\":\"java.lang.IllegalStateException: Host ENCODER_UNAVAILABLE: Encoder for session 4f59a7ea-736b-41cf-922a-d385f71475df is unavailable: H.264 encoder exceeded five second deadline\",\"source\":\"network\",\"connectionState\":\"error\",\"controlMode\":\"observe\",\"epoch\":1,\"transport\":\"wss\",\"inputReady\":false,\"pending\":null,\"connectionSetup\":{\"state\":\"configured\",\"error\":null,\"label\":\"m1-lan-userpath\",\"repair_import_allowed\":false,\"active_revision\":1},\"capabilities\":{\"navigation\":true,\"tabs\":false,\"profiles\":false,\"connectionSetup\":true,\"quality\":false},\"sessionId\":\"4f59a7ea-736b-41cf-922a-d385f71475df\",\"documentRevision\":0,\"viewportRevision\":1,\"layout\":{\"drawableWindowRect\":{\"x\":0,\"y\":0,\"width\":411,\"height\":914},\"safeContentRect\":{\"x\":0,\"y\":24,\"width\":411,\"height\":866},\"advertisedViewportRect\":{\"x\":0,\"y\":80,\"width\":411,\"height\":810},\"presentedContentRect\":{\"x\":0,\"y\":80,\"width\":411,\"height\":810},\"chromeRect\":{\"x\":0,\"y\":24,\"width\":411,\"height\":56},\"webRect\":{\"x\":0,\"y\":0,\"width\":411,\"height\":914},\"visibleContent\":\"webview\",\"currentTabId\":null,\"presentationViewport\":{\"x\":0,\"y\":80,\"width\":411,\"height\":810},\"geometryMatches\":false,\"presentation\":\"browsing\",\"revision\":1}}"
+"‹\n›\n↻\n页面地址\n连接失败\n▤\n☰\njava.lang.IllegalStateException: Host ENCODER_UNAVAILABLE: Encoder for session 4f59a7ea-736b-41cf-922a-d385f71475df is unavailable: H.264 encoder exceeded five second deadline\n未连接 Host\n打开菜单配置连接"
+	at com.agentbrowser.probe.NetworkDeviceTest.until(NetworkDeviceTest.java:58)
+	at com.agentbrowser.probe.NetworkDeviceTest.until(NetworkDeviceTest.java:53)
+	at com.agentbrowser.probe.NetworkDeviceTest.testBb10ReconnectSlice(NetworkDeviceTest.java:1410)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: stream=
+Failure in testBb10ReconnectSlice:
+junit.framework.AssertionFailedError: Condition: JSON.parse(ProbeNative.request('{"op":"status"}')).renderedFrames>=2 && JSON.parse(ProbeNative.request('{"op":"status"}')).inputReady
+status="{\"state\":\"error\",\"generation\":1,\"renderedFrames\":0,\"released\":true,\"codec\":\"\",\"error\":\"java.lang.IllegalStateException: Host ENCODER_UNAVAILABLE: Encoder for session 4f59a7ea-736b-41cf-922a-d385f71475df is unavailable: H.264 encoder exceeded five second deadline\",\"source\":\"network\",\"connectionState\":\"error\",\"controlMode\":\"observe\",\"epoch\":1,\"transport\":\"wss\",\"inputReady\":false,\"pending\":null,\"connectionSetup\":{\"state\":\"configured\",\"error\":null,\"label\":\"m1-lan-userpath\",\"repair_import_allowed\":false,\"active_revision\":1},\"capabilities\":{\"navigation\":true,\"tabs\":false,\"profiles\":false,\"connectionSetup\":true,\"quality\":false},\"sessionId\":\"4f59a7ea-736b-41cf-922a-d385f71475df\",\"documentRevision\":0,\"viewportRevision\":1,\"layout\":{\"drawableWindowRect\":{\"x\":0,\"y\":0,\"width\":411,\"height\":914},\"safeContentRect\":{\"x\":0,\"y\":24,\"width\":411,\"height\":866},\"advertisedViewportRect\":{\"x\":0,\"y\":80,\"width\":411,\"height\":810},\"presentedContentRect\":{\"x\":0,\"y\":80,\"width\":411,\"height\":810},\"chromeRect\":{\"x\":0,\"y\":24,\"width\":411,\"height\":56},\"webRect\":{\"x\":0,\"y\":0,\"width\":411,\"height\":914},\"visibleContent\":\"webview\",\"currentTabId\":null,\"presentationViewport\":{\"x\":0,\"y\":80,\"width\":411,\"height\":810},\"geometryMatches\":false,\"presentation\":\"browsing\",\"revision\":1}}"
+"‹\n›\n↻\n页面地址\n连接失败\n▤\n☰\njava.lang.IllegalStateException: Host ENCODER_UNAVAILABLE: Encoder for session 4f59a7ea-736b-41cf-922a-d385f71475df is unavailable: H.264 encoder exceeded five second deadline\n未连接 Host\n打开菜单配置连接"
+	at com.agentbrowser.probe.NetworkDeviceTest.until(NetworkDeviceTest.java:58)
+	at com.agentbrowser.probe.NetworkDeviceTest.until(NetworkDeviceTest.java:53)
+	at com.agentbrowser.probe.NetworkDeviceTest.testBb10ReconnectSlice(NetworkDeviceTest.java:1410)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: test=testBb10ReconnectSlice
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+Test results for InstrumentationTestRunner=.F
+Time: 22.192
+
+FAILURES!!!
+Tests run: 1,  Failures: 1,  Errors: 0
+
+
+INSTRUMENTATION_CODE: -1
