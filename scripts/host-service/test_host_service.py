@@ -66,9 +66,12 @@ def fixture_host(
     *,
     actual_version: int,
     flushes: str = "success",
+    ready_mode: str = "always",
     receipt: Path | None = None,
     name: str = "fixture-host",
 ) -> Path:
+    if ready_mode not in {"always", "first"}:
+        raise AssertionError(f"unsupported ready mode: {ready_mode!r}")
     host = base / name
     body = base / f"{name}.py"
     if receipt is None:
@@ -82,6 +85,7 @@ import socket
 import selectors
 import sys
 import threading
+import time
 
 if sys.argv[1:2] == ["--help"]:
     print("Local persistent browser Session")
@@ -102,6 +106,8 @@ if argv not in ([], ["--allow-private-network"]):
     raise SystemExit(4)
 
 state = {{"ready": 0, "flushes": {flushes!r}, "count": 0, "profile_root": profile_root}}
+ready_mode = {ready_mode!r}
+ready_lock = threading.Lock()
 state_path = socket_dir / "state.json"
 receipt_path = pathlib.Path({str(receipt)!r})
 if receipt_path.exists():
@@ -122,6 +128,14 @@ for name in ("host.sock", "frames.sock"):
     listeners.append(listener)
 
 def handle(client):
+    with ready_lock:
+        answers = state["ready"]
+        state["ready"] += 1
+    if ready_mode == "first" and answers >= 1:
+        # An owned Host that stopped answering: the connection is accepted and
+        # held open with no response, exactly like the wedged production Host.
+        time.sleep(60)
+        return
     session = "session-" + str(os.getpid())
     client.sendall((json.dumps({{"type": "ready", "version": {actual_version}, "session_id": session}}) + "\\n").encode())
     reader = client.makefile("rwb")
@@ -858,6 +872,93 @@ def persistent_maintenance_contract(protocol_version: int) -> None:
             cleanup_owned_fixture_tree()
 
 
+def unresponsive_host_stop_contract(protocol_version: int) -> None:
+    """An owned Host that stopped answering must still be stopped.
+
+    Regression for the wedged-LAN-Host deadlock: the pre-stop profile flush ran
+    before any signal, so an owned Host that no longer answered its ready
+    handshake made ``stop`` time out with "cannot confirm profile flush" and the
+    recorded PID was never signalled. The stop path probes readiness first, skips
+    the flush for an unresponsive owned Host, and reaches the existing
+    verified-PID stop and reap path.
+    """
+    with tempfile.TemporaryDirectory(prefix="agentbrowser-host-service-unresponsive-") as temporary:
+        base = Path(temporary)
+        runtime_base = Path("/private/tmp") if Path("/private/tmp").is_dir() else Path("/tmp")
+        short = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        root = runtime_base / f"abhp-unresponsive-{short}"
+        runtime = runtime_base / f"abhp-rt-unresponsive-{short}"
+        profile_root = base / "profiles-unresponsive"
+        receipt = base / "receipt-unresponsive.json"
+        fixture = fixture_host(
+            base,
+            actual_version=protocol_version,
+            ready_mode="first",
+            receipt=receipt,
+        )
+        pid = 0
+        try:
+            manager_json(
+                "install",
+                "--root",
+                str(root),
+                "--binary",
+                str(fixture),
+                "--runtime-root",
+                str(runtime),
+                "--profile-root",
+                str(profile_root),
+                "--protocol-version",
+                str(protocol_version),
+            )
+            started = manager_json("start", "--root", str(root), "--ready-timeout", "10")
+            state_path = root / "run" / "state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            pid = int(state["pid"])
+            if int(started["pid"]) != pid:
+                raise AssertionError(f"start did not record the fixture Host pid: {started!r}")
+            socket_dir = Path(str(state["socket_dir"]))
+            if json.loads(receipt.read_text(encoding="utf-8"))["count"] != 0:
+                raise AssertionError("flush ran before stop")
+            # The recorded Host is owned but unresponsive: it accepts the control
+            # connection and answers nothing.
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(1.0)
+            try:
+                probe.connect(str(socket_dir / "host.sock"))
+                try:
+                    if probe.makefile("rb").readline():
+                        raise AssertionError("fixture Host answered ready after its first response")
+                except socket.timeout:
+                    pass
+            finally:
+                probe.close()
+            result = run_manager("stop", "--root", str(root))
+            if result.returncode != 0:
+                raise AssertionError(f"owned unresponsive Host was not stopped: {result!r}")
+            if "cannot confirm profile flush" in result.stderr:
+                raise AssertionError("stop still failed on the unresponsive pre-stop flush")
+            stopped = json.loads(result.stdout)
+            if stopped.get("state") != "stopped" or int(stopped.get("pid", 0)) != pid:
+                raise AssertionError(f"stop receipt did not report the owned Host: {stopped!r}")
+            deadline = time.monotonic() + 10
+            while pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if pid_alive(pid):
+                raise AssertionError(f"owned unresponsive Host survived stop: {pid}")
+            if state_path.exists():
+                raise AssertionError("stop left service state behind for an unresponsive Host")
+            if socket_dir.exists():
+                raise AssertionError("stop left the Host runtime behind for an unresponsive Host")
+            if json.loads(receipt.read_text(encoding="utf-8"))["count"] != 0:
+                raise AssertionError("the flush was attempted on an unresponsive Host")
+        finally:
+            if pid and pid_alive(pid):
+                os.kill(pid, signal.SIGTERM)
+            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(runtime, ignore_errors=True)
+
+
 def config_version_compatibility_contract() -> None:
     with tempfile.TemporaryDirectory(prefix="agentbrowser-host-service-config-") as temporary:
         base = Path(temporary)
@@ -1402,6 +1503,7 @@ def main() -> int:
     if args.binary is None and args.protocol_version is None:
         terminal_launchd_rejection_contract()
         persistent_maintenance_contract(11)
+        unresponsive_host_stop_contract(11)
         config_version_compatibility_contract()
         print("HOST_SERVICE_DEV_FIXTURE_PASS")
         return 0

@@ -1100,7 +1100,47 @@ def flush_loaded_profiles(socket_dir: Path, protocol_version: object, profile_mo
     flush_profiles(socket_dir / "host.sock", protocol_version)
 
 
+# Live ready probe used by the pre-stop flush. It matches the one-second probe
+# the status command uses, so both report the same verdict for a Host that
+# stopped answering.
+READY_PROBE_TIMEOUT = 1.0
+
+
+def host_answers_ready(state: dict[str, object]) -> bool:
+    """Report whether the recorded Host still answers its ready handshake.
+
+    Only an unanswered handshake is False. A typed rejection is a real answer:
+    it stays with the flush path, which reports it exactly as before.
+    """
+    try:
+        ready_message(
+            Path(str(state.get("socket_dir", ""))) / "host.sock",
+            READY_PROBE_TIMEOUT,
+            state.get("protocol_version"),
+        )
+    except ReadyRejected:
+        return True
+    except ServiceError:
+        return False
+    return True
+
+
 def flush_before_stop(state: dict[str, object]) -> None:
+    """Flush a still-answering Host before the stop signal.
+
+    The flush runs before the signal, so an owned Host that no longer answers
+    its ready handshake made it time out and aborted the stop before the
+    verified-PID path ran. That left the wedged Host alive and the service
+    unrecoverable. Such a Host cannot confirm a flush either, so it is reported
+    and then stopped and reaped without one.
+    """
+    if not host_answers_ready(state):
+        print(
+            "host-service: owned Host did not answer ready; "
+            "skipping the profile flush before stop",
+            file=sys.stderr,
+        )
+        return
     flush_loaded_profiles(
         Path(str(state.get("socket_dir", ""))),
         state.get("protocol_version"),
@@ -1477,6 +1517,8 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
     if alive and state.get("launch_mode") == "launchd":
         raise ServiceError("launchd-managed Host must be stopped through launchctl; refusing subprocess stop")
     if alive:
+        # An owned Host that stopped answering is still stopped and reaped: the
+        # pre-stop flush reports the skipped flush instead of aborting the stop.
         flush_before_stop(state)
         stop_pid(
             pid_from_state(state),
