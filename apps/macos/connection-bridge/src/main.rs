@@ -1197,6 +1197,22 @@ fn snapshot(app: &AppState) -> String {
         "connectionState": connection_state,
         "controlMode": control_mode,
         "pending": pending,
+        "transport": if app.pairing_available { "wss" } else { "unknown" },
+        "path": if app.pairing_available { "direct" } else { "unknown" },
+        "connectionSetup": {
+            "state": if app.pairing_available { "configured" } else { "required" },
+            "error": null,
+            "label": if app.pairing_available { Some("Local pairing") } else { None },
+            "repair_import_allowed": false,
+            "active_revision": 1
+        },
+        "capabilities": {
+            "navigation": app.pairing_available,
+            "tabs": app.pairing_available,
+            "profiles": app.pairing_available,
+            "connectionSetup": true,
+            "quality": app.pairing_available
+        },
         "networkConfigured": app.pairing_available,
         "provisioningAvailable": app.provisioning_available,
         "inputReady": input_ready,
