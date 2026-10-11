@@ -24,7 +24,15 @@ from instrumentation_result import InstrumentationExpectation, parse_instrumenta
 TEST_CLASS = "com.agentbrowser.probe.NetworkDeviceTest"
 RUNNER = "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"
 ADMISSION_METHOD = "testOrdinaryRealPathAdmission"
-REAL_PATH_METHOD = "testOrdinaryRealHttpsAndRemoteIme"
+REAL_PATH_METHOD = os.environ.get("REAL_PATH_METHOD", "testOrdinaryRealHttpsAndRemoteIme")
+IME_METHOD = "testOrdinaryRealHttpsAndRemoteIme"
+# R2 black-box slices write one JSON receipt each; the IME run keeps its own list.
+SLICE_ARTIFACTS = {
+    "testBb04GestureSlice": "bb04-gesture.json",
+    "testBb10ReconnectSlice": "bb10-reconnect.json",
+    "testBb08FocusLayoutSlice": "bb08-focus-layout.json",
+    "testBb14ContinuousSlice": "bb14-continuous.json",
+}
 
 root = pathlib.Path(__file__).resolve().parent.parent
 serial = os.environ["ANDROID_SERIAL"]
@@ -193,38 +201,50 @@ try:
     real_path = instrumentation(REAL_PATH_METHOD, [
         ("pageUrl", page_url), ("asciiText", ascii_text), ("tapX", tap_x), ("tapY", tap_y),
     ], ((TEST_CLASS, REAL_PATH_METHOD),))
-    for name in ["real-path.json", "dumpsys-input-method.txt", "dumpsys-input-method-pre-tap.txt",
-                 "dumpsys-input-method-after-typing.txt", "focus-trace.txt",
-                 "logcat-focus.txt", "ime-state.json", "ime-key-touches.txt", "ime-keyboard.txt",
-                 "real-path-before-tap.png", "real-path-after-tap.png", "release.json"]:
-        pull(name)
-    real_path_json = {}
-    current_artifacts = [evidence / name for name in
-        ["real-path.json", "dumpsys-input-method.txt", "ime-state.json", "logcat-focus.txt"]]
-    if not all(path.is_file() and path.stat().st_mtime >= run_started_at for path in current_artifacts):
-        raise SystemExit("current-run IME/navigation artifacts are missing or stale")
-    real_path_json = json.loads((evidence / "real-path.json").read_text())
+    if REAL_PATH_METHOD == IME_METHOD:
+        for name in ["real-path.json", "dumpsys-input-method.txt", "dumpsys-input-method-pre-tap.txt",
+                     "dumpsys-input-method-after-typing.txt", "focus-trace.txt",
+                     "logcat-focus.txt", "ime-state.json", "ime-key-touches.txt", "ime-keyboard.txt",
+                     "real-path-before-tap.png", "real-path-after-tap.png", "release.json"]:
+            pull(name)
+        real_path_json = {}
+        current_artifacts = [evidence / name for name in
+            ["real-path.json", "dumpsys-input-method.txt", "ime-state.json", "logcat-focus.txt"]]
+        if not all(path.is_file() and path.stat().st_mtime >= run_started_at for path in current_artifacts):
+            raise SystemExit("current-run IME/navigation artifacts are missing or stale")
+        real_path_json = json.loads((evidence / "real-path.json").read_text())
 
-    final_scheme = real_path_json.get("finalScheme")
-    gate("real-https-navigation", final_scheme == "https",
-         f"finalUrl={real_path_json.get('finalUrl')} scheme={final_scheme} "
-         f"documentRevision={real_path_json.get('documentRevisionBefore')}->{real_path_json.get('documentRevisionAfter')}")
-    gate("remote-video", (real_path_json.get("renderedFramesAfter") or 0) >= 2,
-         f"renderedFrames={real_path_json.get('renderedFramesBefore')}->{real_path_json.get('renderedFramesAfter')} "
-         f"ticket={real_path_json.get('displayedTicket')}")
-    gate("real-touch-focus", bool(real_path_json.get("editorEditable")),
-         f"target={real_path_json.get('editorTargetId')} kind={real_path_json.get('editorKind')} "
-         f"frameChanged={real_path_json.get('frameChangedAfterTap')}")
-    ime_shown = str(real_path_json.get("imeInputShown")) == "true"
-    served = real_path_json.get("imeServedInputConnection")
-    served_view = str(real_path_json.get("imeServedView"))
-    gate("system-ime-focus", ime_shown and served is not None and "com.agentbrowser.probe" in served_view,
-         f"mInputShown={real_path_json.get('imeInputShown')} mServedInputConnection={served} "
-         f"mServedView={served_view} mCurMethodId={real_path_json.get('imeCurMethodId')}")
-    host_text = str(real_path_json.get("hostFieldText") or "")
-    gate("ascii-lands-in-remote-page", ascii_text in host_text,
-         f"ascii={ascii_text!r} hostFieldText={host_text!r} typingNote={real_path_json.get('typingNote')}")
-    gate("release-and-disconnect", real_path.ok, f"parser={real_path.status}")
+        final_scheme = real_path_json.get("finalScheme")
+        gate("real-https-navigation", final_scheme == "https",
+             f"finalUrl={real_path_json.get('finalUrl')} scheme={final_scheme} "
+             f"documentRevision={real_path_json.get('documentRevisionBefore')}->{real_path_json.get('documentRevisionAfter')}")
+        gate("remote-video", (real_path_json.get("renderedFramesAfter") or 0) >= 2,
+             f"renderedFrames={real_path_json.get('renderedFramesBefore')}->{real_path_json.get('renderedFramesAfter')} "
+             f"ticket={real_path_json.get('displayedTicket')}")
+        gate("real-touch-focus", bool(real_path_json.get("editorEditable")),
+             f"target={real_path_json.get('editorTargetId')} kind={real_path_json.get('editorKind')} "
+             f"frameChanged={real_path_json.get('frameChangedAfterTap')}")
+        ime_shown = str(real_path_json.get("imeInputShown")) == "true"
+        served = real_path_json.get("imeServedInputConnection")
+        served_view = str(real_path_json.get("imeServedView"))
+        gate("system-ime-focus", ime_shown and served is not None and "com.agentbrowser.probe" in served_view,
+             f"mInputShown={real_path_json.get('imeInputShown')} mServedInputConnection={served} "
+             f"mServedView={served_view} mCurMethodId={real_path_json.get('imeCurMethodId')}")
+        host_text = str(real_path_json.get("hostFieldText") or "")
+        gate("ascii-lands-in-remote-page", ascii_text in host_text,
+             f"ascii={ascii_text!r} hostFieldText={host_text!r} typingNote={real_path_json.get('typingNote')}")
+        gate("release-and-disconnect", real_path.ok, f"parser={real_path.status}")
+    else:
+        receipt_name = SLICE_ARTIFACTS.get(REAL_PATH_METHOD)
+        if receipt_name is None:
+            raise SystemExit(f"no slice receipt is declared for {REAL_PATH_METHOD}")
+        pull(receipt_name)
+        receipt = evidence / receipt_name
+        if not receipt.is_file() or receipt.stat().st_mtime < run_started_at:
+            raise SystemExit(f"current-run slice receipt is missing or stale: {receipt_name}")
+        real_path_json = json.loads(receipt.read_text())
+        gate(f"{REAL_PATH_METHOD}-assertions", real_path.ok,
+             f"parser={real_path.status} receipt={receipt_name} keys={sorted(real_path_json)}")
 
     (evidence / "run.json").write_text(json.dumps({
         "runId": run_id, "serial": serial, "pageUrl": page_url, "asciiText": ascii_text,

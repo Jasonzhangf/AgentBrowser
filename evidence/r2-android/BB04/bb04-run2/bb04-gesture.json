@@ -1,0 +1,20 @@
+{
+  "case": "BB04",
+  "url": "https:\/\/www.selenium.dev\/selenium\/web\/web-form.html",
+  "tapX": 196,
+  "tapY": 107,
+  "hostScrollProjectionAvailable": false,
+  "tapEditable": true,
+  "tapTarget": "node-46",
+  "blankTapEditable": false,
+  "dragOverTargetEditable": false,
+  "dragGestureState": "gestureOperationId=null gestureSessionId=null openOperationId=null gestureOperationId=null gestureEventSequence=0 gestureEpoch=3 hostLease=null hostRunning=false",
+  "dragLeaseFencesAgents": false,
+  "tapAfterDragEditable": true,
+  "renderedFrames": 28,
+  "forwardDragChangedCells": 303,
+  "reverseDragChangedCells": 0,
+  "scrollDragGestureState": "gestureOperationId=null gestureSessionId=null openOperationId=null gestureOperationId=null gestureEventSequence=0 gestureEpoch=3 hostLease=null hostRunning=false",
+  "scrollLeaseFencesAgents": false,
+  "inputReadyAfterDrag": "true"
+}

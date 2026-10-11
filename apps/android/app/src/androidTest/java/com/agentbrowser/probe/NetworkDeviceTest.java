@@ -1296,27 +1296,103 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         return null;
     }
 
-    /** BB04 bounded black-box slice: real video drags and remote DOM scroll state. */
+    /** Coarse real-render signature of the Host video surface (never a local DOM read). */
+    private String frameSignature(Bitmap image){
+        Bitmap normalized=Bitmap.createScaledBitmap(image,32,32,true);
+        StringBuilder out=new StringBuilder();
+        for(int y=0;y<32;y++)for(int x=0;x<32;x++){
+            int c=normalized.getPixel(x,y);
+            out.append((char)('a'+((Color.red(c)+Color.green(c)+Color.blue(c))/3)*25/255));
+        }
+        return out.toString();
+    }
+    private static int signatureDistance(String a,String b){
+        int different=0;
+        for(int i=0;i<Math.min(a.length(),b.length());i++)if(a.charAt(i)!=b.charAt(i))different++;
+        return different;
+    }
+    /** Host-published editor projection; null when no editable target is focused. */
+    private JSONObject editableContext(){return activity.network.editorContext();}
+    private boolean editableFocused(){JSONObject context=editableContext();return context!=null&&context.optBoolean("editable",false);}
+
+    /**
+     * BB04 bounded slice. The row asks for real drags on the remote video, content
+     * that follows the drag, release termination, and no phantom tap. Every
+     * assertion below reads real remote state: the Host-published editor
+     * projection, the Host gesture lease, or the Host-encoded video surface.
+     */
     public void testBb04GestureSlice() throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
-            importFixturePairing();
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
             until("!!document.getElementById('connect')",10000); clickEnabled("connect");
-            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000); clickEnabled("takeover");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000); clickEnabled("takeover");
+            until(UI_MODE+"==='control'",8000);
             String url=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
-            navigateFromAddress(url); awaitNavigation("https:",10000);
-            long before=Long.parseLong(js("window.scrollY"));
-            swipe(200,260,80); until(STATUS+".inputReady",6000); SystemClock.sleep(800);
-            long after=Long.parseLong(js("window.scrollY"));
-            writeRaw("bb04-gesture.json",new JSONObject().put("case","BB04").put("url",url)
-                .put("scrollYBefore",before).put("scrollYAfter",after).put("dragDelta",after-before)
-                .put("releaseGestureState",localGestureState()).toString(2)+"\n");
-            assertTrue("Real remote page must scroll after video drag",after!=before);
-            assertFalse("Gesture lease must terminate on release",hostLeaseFencesAgents());
+            float tapX=Float.parseFloat(argument("tapX","196")),tapY=Float.parseFloat(argument("tapY","107"));
+            navigateFromAddress(url); awaitNavigation("https:",15000);
+            JSONObject evidence=new JSONObject().put("case","BB04").put("url",url)
+                .put("tapX",tapX).put("tapY",tapY).put("hostScrollProjectionAvailable",false);
+            assertFalse("Precondition: no editable target before any touch",editableFocused());
+
+            // A real tap on the remote input proves the tap path and gives the
+            // element identity the drag contrast is measured against.
+            touch(tapX,tapY); awaitEditableContext(8000);
+            evidence.put("tapEditable",editableFocused()).put("tapTarget",String.valueOf(editableContext().optString("target_id")));
+            assertTrue("A real tap must focus the remote editable target",editableFocused());
+
+            // Blank-space tap must end the old edit (BB08 overlap, real Host state).
+            touch(tapX,Float.parseFloat(argument("blankY","520")));
+            long blankDeadline=SystemClock.elapsedRealtime()+6000;
+            while(editableFocused()&&SystemClock.elapsedRealtime()<blankDeadline)SystemClock.sleep(100);
+            evidence.put("blankTapEditable",editableFocused());
+            assertFalse("Tapping blank space must terminate the old remote edit",editableFocused());
+
+            // A real drag whose release point is the editable target must not click it.
+            swipe(tapX,Math.max(20f,tapY-90f),tapY);
+            until(STATUS+".inputReady",6000); SystemClock.sleep(700);
+            evidence.put("dragOverTargetEditable",editableFocused())
+                .put("dragGestureState",localGestureState()).put("dragLeaseFencesAgents",hostLeaseFencesAgents());
+            assertFalse("A drag released over the target must not click it",editableFocused());
+            assertFalse("A drag must leave no open Host gesture lease",hostLeaseFencesAgents());
+
+            // The same point still clicks after the drag, so the refusal above is
+            // drag-versus-tap discrimination and not a broken tap path.
+            touch(tapX,tapY); awaitEditableContext(8000);
+            evidence.put("tapAfterDragEditable",editableFocused());
+            assertTrue("A real tap after the drag must still focus the target",editableFocused());
+
+            // Real drags must move the presented remote content, and the reverse
+            // drag must restore it. The signature comes from the Host-encoded
+            // video surface, so it is real remote rendering, not a local proxy.
+            Bitmap start=capture("bb04-before-drag");
+            String startSignature=frameSignature(start);
+            swipe(tapX,Float.parseFloat(argument("dragFromY","300")),Float.parseFloat(argument("dragToY","90")));
+            until(STATUS+".inputReady",6000); SystemClock.sleep(1200);
+            Bitmap dragged=capture("bb04-after-drag");
+            String draggedSignature=frameSignature(dragged);
+            swipe(tapX,Float.parseFloat(argument("dragToY","90")),Float.parseFloat(argument("dragFromY","300")));
+            until(STATUS+".inputReady",6000); SystemClock.sleep(1200);
+            Bitmap restored=capture("bb04-after-reverse-drag");
+            String restoredSignature=frameSignature(restored);
+            int forward=signatureDistance(startSignature,draggedSignature);
+            int back=signatureDistance(startSignature,restoredSignature);
+            evidence.put("renderedFrames",activity.annex.snapshot().getLong("renderedFrames"))
+                .put("forwardDragChangedCells",forward).put("reverseDragChangedCells",back)
+                .put("scrollDragGestureState",localGestureState())
+                .put("scrollLeaseFencesAgents",hostLeaseFencesAgents())
+                .put("inputReadyAfterDrag",js(STATUS+".inputReady"));
+            assertTrue("A real drag must change the presented remote content: forward="+forward,forward>16);
+            assertTrue("The reverse drag must move the content back toward the start: forward="+forward+" back="+back,back<forward);
+            assertFalse("Release must terminate the gesture with no open Host lease",hostLeaseFencesAgents());
+            until(STATUS+".inputReady",6000);
+            writeRaw("bb04-gesture.json",evidence.toString(2)+"\n");
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
 
-    public void testRealNetworkControlAndFrames()throws Exception{        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    public void testRealNetworkControlAndFrames()throws Exception{
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
             importFixturePairing();
             until("!!document.getElementById('connect')",10000);clickEnabled("connect");
