@@ -120,6 +120,7 @@ try:
         ime_package = ime_id.split("/")[0]
         before = shell("dumpsys input_method | grep -E 'mInputShown=|mIsInputViewShown'")
         adb("shell", "am", "force-stop", ime_package)
+        adb("shell", "input", "keyevent", "4")
         time.sleep(2)
         after = shell("dumpsys input_method | grep -E 'mInputShown=|mIsInputViewShown'")
         selected_after = shell("settings get secure default_input_method").strip()
