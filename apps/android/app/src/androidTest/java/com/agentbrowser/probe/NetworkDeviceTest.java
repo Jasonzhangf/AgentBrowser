@@ -1007,11 +1007,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             // Gate: one real touch on the remote text input element.
             touch(tapX,tapY);
 
-            // The raw system IME state must be read immediately after the tap.
-            String imeDump=rawShell("dumpsys input_method");
-            writeRaw("dumpsys-input-method.txt",imeDump);
+            // showSoftInput is asynchronous. Poll a bounded interval and retain
+            // every raw sample; a single immediate dump is timing-sensitive.
+            JSONObject ime=pollImeRaised(8000);
             writeRaw("logcat-focus.txt",rawShell("logcat -d -v threadtime -t 400"));
-            JSONObject ime=parseImeState(imeDump);
             writeRaw("ime-state.json",ime.toString(2)+"\n");
             JSONObject editor=awaitEditableContext(8000);
             Bitmap afterTap=capture("real-path-after-tap");
@@ -1147,6 +1146,38 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }while(SystemClock.elapsedRealtime()<deadline);
         return text;
     }
+    private JSONObject pollImeRaised(long timeout)throws Exception{
+        long started=SystemClock.elapsedRealtime();
+        StringBuilder trace=new StringBuilder();
+        JSONObject latest=null;
+        do{
+            String dump=rawShell("dumpsys input_method");
+            long elapsed=SystemClock.elapsedRealtime()-started;
+            JSONObject parsed=parseImeState(dump);
+            latest=parsed.put("elapsedMs",elapsed);
+            String lines=imeLines(dump);
+            trace.append("elapsedMs=").append(elapsed).append('\n').append(lines).append('\n');
+            if("true".equals(String.valueOf(parsed.opt("mInputShown")))
+                &&String.valueOf(parsed.opt("mServedView")).contains("RemoteImeView")
+                &&parsed.opt("mServedInputConnection")!=JSONObject.NULL){
+                writeRaw("dumpsys-input-method.txt",trace.toString());
+                latest.put("raiseElapsedMs",elapsed);
+                return latest;
+            }
+            SystemClock.sleep(250);
+        }while(SystemClock.elapsedRealtime()-started<timeout);
+        writeRaw("dumpsys-input-method.txt",trace.toString());
+        fail("System IME did not raise within "+timeout+"ms: "+latest);
+        return latest;
+    }
+    private static String imeLines(String dump){
+        StringBuilder lines=new StringBuilder();
+        for(String line:dump.split("\\n")){
+            if(line.contains("mInputShown")||line.contains("mCurId")||line.contains("mCurMethodId")
+                ||line.contains("mServedView")||line.contains("mServedInputConnection"))lines.append(line).append('\n');
+        }
+        return lines.toString();
+    }
     private JSONObject parseImeState(String dump)throws Exception{
         return new JSONObject()
             .put("mInputShown",orNull(firstMatch(dump,"mInputShown=(\\S+)")))
@@ -1171,6 +1202,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
      */
     private void typeThroughSystemIme(String imePackage,String text)throws Exception{
         StringBuilder trace=new StringBuilder();
+        writeRaw("ime-keyboard.txt",rawShell("uiautomator dump /sdcard/ime-window.xml >/dev/null 2>&1; cat /sdcard/ime-window.xml"));
         if(imePackage==null||imePackage.isEmpty()){
             String selected=rawShell("settings get secure default_input_method").trim();
             imePackage=selected.contains("/")?selected.substring(0,selected.indexOf('/')):selected;
@@ -1196,6 +1228,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         for(String candidate:new String[]{lower,upper}){
             UiObject2 key=device().findObject(By.pkg(imePackage).desc(candidate));
             if(key==null)key=device().findObject(By.pkg(imePackage).text(candidate));
+            if(key==null)key=device().findObject(By.res(imePackage,"key_"+candidate));
             if(key!=null)return key;
         }
         return null;
