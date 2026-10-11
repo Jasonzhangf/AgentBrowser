@@ -743,3 +743,17 @@ matching the source read. `c46ca30` corrects the guide's copy-control line, and 
 scroll/video/click claims are backed by tracked `network-scroll-trace.json`
 (`scrollTrace=[0,250,0]`, `maxScroll=250`, `restoredToZero=true`), `network-dom.json`
 (`clicked=1`) and `network-result.json` (`frameAck.renderedFrames=3`, `displayed=true`).
+
+**Final closure 2026-10-10 — HEAD `7974f66` (`7974f66e7b5d3e48935dcb889cb9220f5bc67e9c`),
+tree clean: finding 1.5 RESOLVED.** Line 35 now rests solely on task8's own evidence —
+`task8-post-stop-ps.txt` = `pid 42645 absent`, `task8-state-check.txt` = `state.json absent`,
+`task8-launchd-check.txt` = `launchd job absent`, all three tracked — and it explicitly labels
+the earlier `host-stop.json` and `post-stop-ps.txt` as task6-instance evidence (task6 PID
+`70574`), not Task8 stop proof. I re-verified all three live at this HEAD: PID 42645 is gone,
+`host-service-task8/state.json` is absent, and `launchctl list` has no task8 job. The
+unsupported emulator-side TCP-probe claim is gone from line 21 ("no separate emulator-side TCP
+probe is claimed"), while the Mac-side probe raw output stays tracked in
+`tailscale-20261010T1615/tailscale-connectivity.txt`. `7974f66` adds no secret (0 PEM/p12 in
+its added lines; 102 tracked evidence files, 0 hits for the 16-character
+`TRANSFER_CODE_ALPHABET` shape) and no tracked code or bundle material. Advisory 1.6 is
+therefore also closed.
