@@ -11,10 +11,12 @@ files or counts are not evidence.
 - Device: `emulator-5554`, serialized Android flow.
 - Dedicated Host root: `$HOME/Library/Application Support/AgentBrowser/host-service-lan`.
 - Lifecycle entrypoint: `m1-user-slice-host-integration-20261010/scripts/host-service/host-service`.
-- Host was started through that entrypoint for this attempt. The lifecycle
-  `stop` command returned an unsupported-state/config-key error and status
-  still reports `state=running`; no direct PID kill was used. No task6 Host or
-  user `weibo` profile was touched.
+- Host was started through the integration-worktree entrypoint for this attempt.
+  An earlier stop attempt from the Android worktree used a stale lifecycle copy
+  and failed; this was an operator error. The authoritative integration-worktree
+  stop returned `{"pid":78018,"service_label":"com.agentbrowser.lan","state":"stopped"}`
+  and final status reports `state=stopped`. No task6 Host or user `weibo` profile
+  was touched.
 - No credentials, CAPTCHA, private bridge, DOM value write, URL-label
   assertion, cookie-count assertion, or `adb input text` was used.
 
