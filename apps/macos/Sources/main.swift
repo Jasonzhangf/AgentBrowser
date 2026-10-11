@@ -2220,7 +2220,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
 
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptEnabled = true
-        let userScriptSource = "window.ProbeNative={request:function(raw){var value=window.prompt('AgentBrowser.Native',raw);return value===null?JSON.stringify({rejection:'NATIVE_PROMPT_CANCELLED'}):value;}};"
+        let userScriptSource = "window.ProbeNative={request:function(raw){var value=window.prompt('AgentBrowser.Native',raw);return value===null?JSON.stringify({rejection:'NATIVE_PROMPT_CANCELLED'}):value;}};window.addEventListener('error',function(e){try{window.ProbeNative.request(JSON.stringify({op:'pageerror',message:String(e.message||e.error||e)}));}catch(_){}});window.addEventListener('unhandledrejection',function(e){try{window.ProbeNative.request(JSON.stringify({op:'pageerror',message:String(e.reason||e)}));}catch(_){}});"
         let userScript = WKUserScript(source: userScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         configuration.userContentController.addUserScript(userScript)
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -2376,7 +2376,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         fputs("MAC_WEBVIEW_LOAD_FINISH url=\(webView.url?.absoluteString ?? \"nil\")\\n", stderr)
-        webView.evaluateJavaScript("document.body.innerHTML.length + ':' + document.body.innerText.slice(0,120)") { value, error in
+        webView.evaluateJavaScript("document.readyState+'|'+location.href+'|rootChildren='+(document.getElementById('root')?.childElementCount??-1)+'|bodyText='+document.body.innerText.slice(0,300)+'|bodyChildren='+document.body.children.length+'|rootSize='+((document.getElementById('root')?.offsetWidth)||-1)+'x'+((document.getElementById('root')?.offsetHeight)||-1)") { value, error in
             fputs("MAC_WEBVIEW_DOM value=\(value ?? \"nil\") error=\(error.map(String.init) ?? \"nil\")\\n", stderr)
         }
     }

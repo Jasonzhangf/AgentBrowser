@@ -513,6 +513,11 @@ async fn dispatch(
             start_connect(app, event_sender).await?;
             Ok(snapshot(app))
         }
+        "pageerror" => {
+            let message = object.get("message").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            eprintln!("MAC_PAGE_ERROR {message}");
+            Ok(snapshot(app))
+        }
         "disconnect" => {
             fields(object, &["op"], &["op"])?;
             disconnect(app)?;
