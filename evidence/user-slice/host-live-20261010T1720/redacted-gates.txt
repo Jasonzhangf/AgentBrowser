@@ -1,0 +1,17 @@
+run=host-live-20261010T1720
+service_root=$HOME/Library/Application Support/AgentBrowser/host-service
+service_label=com.agentbrowser.task6
+protocol_version=11
+host_pid=29244
+socket_dir=/tmp/abn-task6-runtime/host-1fcd41fb
+lifecycle_start=PASS
+endpoint_refresh=PASS; bound_address=127.0.0.1:51880; generation=24; endpoint_pid=67508
+lan_bind=FAIL; declared_endpoint_host=127.0.0.1; endpoint_refresh_has_no_host_override; trust_reinit_refused
+tailscale_bind=FAIL; same_reason
+mac_tcp_probe=PASS; 127.0.0.1:51880
+emulator_tcp_probe=PASS; 10.0.2.2:51880 (emulator host-loopback alias)
+provision=PASS; device_id=89f994d4-e12b-4a26-b7d9-9ac5aad9918c
+membership=PASS; export_eligible
+export=PASS; redacted; bundle_sha256=3a338fae1c37ad0d7e73bdbbfebfbeef3c2b0496bb298e38ff7a6cf317ab60ff
+host_left_running=YES
+transfer_code_present=NO
