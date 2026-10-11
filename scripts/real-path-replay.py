@@ -50,6 +50,16 @@ tap_y = os.environ.get("REAL_PATH_TAP_Y", "107")
 endpoint_port = int(os.environ.get("HOST_ENDPOINT_PORT", "51880"))
 expected_endpoint = os.environ.get("EXPECTED_ENDPOINT", "")
 no_reverse = os.environ.get("NO_ADB_REVERSE", "0") == "1"
+# Fresh first-run state: "clear" uses pm clear; "reinstall" uses a real
+# uninstall + install, which some production ROMs require because they deny the
+# shell CLEAR_APP_USER_DATA permission.
+fresh_state_mode = os.environ.get("FRESH_STATE_MODE", "clear")
+app_apk = pathlib.Path(os.environ.get(
+    "ANDROID_APP_APK", str(root / "apps/android/app/build/outputs/apk/debug/app-debug.apk"))).resolve()
+test_apk = pathlib.Path(os.environ.get(
+    "ANDROID_TEST_APK", str(root / "apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"))).resolve()
+# A stalled adb install must fail loudly instead of holding the gate open.
+install_timeout = int(os.environ.get("ANDROID_INSTALL_TIMEOUT_SECONDS", "300"))
 
 run_started_at = time.time()
 run_id = time.strftime("%Y%m%dT%H%M%S", time.localtime(run_started_at))
@@ -104,23 +114,86 @@ def gate(name, passed, detail):
     return passed
 
 
+def install_apk(path, label):
+    """Install one APK under a bounded wait; a stalled install fails explicitly."""
+    try:
+        result = subprocess.run(
+            ["adb", "-s", serial, "install", "-r", "-t", str(path)],
+            capture_output=True, text=True, timeout=install_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"{label} install exceeded {install_timeout}s: {path}")
+    if result.returncode != 0 or "Success" not in result.stdout:
+        raise SystemExit(f"{label} install failed: {result.stdout.strip()} {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def installed_base_apk_sha256(package):
+    """Hash the base.apk the device actually installed, not the local file."""
+    listing = shell(f"pm path {package}").strip()
+    paths = [line[len("package:"):] for line in listing.splitlines()
+             if line.startswith("package:") and line.endswith("base.apk")]
+    if not paths:
+        raise SystemExit(f"no installed base.apk path for {package}: {listing!r}")
+    words = shell(f"sha256sum {paths[0]}").strip().split()
+    if not words:
+        raise SystemExit(f"cannot hash the installed base.apk for {package}: {paths[0]}")
+    return paths[0], words[0]
+
+
 private = pathlib.Path(tempfile.mkdtemp(prefix="real-path-"))
 os.chmod(private, 0o700)
 code = None
+created_reverse = False
 try:
     # LAN acceptance must begin with the real empty first-run pairing state.
     if expected_endpoint:
         # Drop the app as the IME's served client first: clearing its data while
         # the system IME still holds the connection desyncs the IME service.
         adb("shell", "am", "force-stop", "com.agentbrowser.probe")
-        clear = adb("shell", "pm", "clear", "com.agentbrowser.probe").stdout.decode("utf-8", "replace")
-        (evidence / "pm-clear.txt").write_text("adb shell pm clear com.agentbrowser.probe\\n" + clear)
-        if "Success" not in clear:
-            raise SystemExit("pm clear did not report Success")
+        if fresh_state_mode == "reinstall":
+            # Some production ROMs deny shell CLEAR_APP_USER_DATA. Record the raw
+            # denial, then reach the empty first-run state with a real uninstall
+            # + install, which also matches BB01's new-install precondition. The
+            # uninstall is idempotent: an absent package is the state we want.
+            denied = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "clear", "com.agentbrowser.probe"],
+                capture_output=True, text=True, check=False,
+            )
+            removed = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "uninstall", "com.agentbrowser.probe"],
+                capture_output=True, text=True, check=False,
+            ).stdout.strip()
+            still = shell("pm list packages | grep -x 'package:com.agentbrowser.probe' || true").strip()
+            if still:
+                raise SystemExit(f"fresh-state uninstall left the app installed: {removed!r}")
+            install_apk(app_apk, "app")
+            install_apk(test_apk, "androidTest")
+            installed_path, installed_sha = installed_base_apk_sha256("com.agentbrowser.probe")
+            frozen_sha = hashlib.sha256(app_apk.read_bytes()).hexdigest()
+            (evidence / "pm-clear.txt").write_text(
+                "fresh state mode=reinstall\n"
+                f"adb shell pm clear rc={denied.returncode}\n"
+                f"stdout={denied.stdout.strip()}\nstderr={denied.stderr.strip()}\n"
+                f"uninstall={removed!r}\napp apk={app_apk}\ntest apk={test_apk}\n")
+            (evidence / "installed-apk.json").write_text(json.dumps({
+                "frozenApk": str(app_apk), "frozenSha256": frozen_sha,
+                "installedPath": installed_path, "installedSha256": installed_sha,
+                "matches": installed_sha == frozen_sha,
+            }, indent=2) + "\n")
+            if installed_sha != frozen_sha:
+                raise SystemExit(
+                    f"installed base.apk hash {installed_sha} does not match the frozen APK {frozen_sha}")
+        else:
+            clear = adb("shell", "pm", "clear", "com.agentbrowser.probe").stdout.decode("utf-8", "replace")
+            (evidence / "pm-clear.txt").write_text(
+                "fresh state mode=clear\nadb shell pm clear com.agentbrowser.probe\n" + clear)
+            if "Success" not in clear:
+                raise SystemExit("pm clear did not report Success")
         empty = shell("find /data/data/com.agentbrowser.probe/files/pairing -maxdepth 2 -print 2>/dev/null || true")
         (evidence / "empty-pairing-listing.txt").write_text(empty)
         if empty.strip():
-            raise SystemExit("app pairing directory is not empty after pm clear")
+            raise SystemExit("app pairing directory is not empty after the fresh-state step")
 
         # Environment precondition, not a product result: the system IME can
         # wedge after repeated clear cycles, and the wedge is cross-app (a
@@ -151,6 +224,7 @@ try:
         raise SystemExit(f"LAN run refuses existing adb reverse mapping for tcp:{endpoint_port}")
     if not no_reverse:
         adb("reverse", f"tcp:{endpoint_port}", f"tcp:{endpoint_port}")
+        created_reverse = True
     reverse_after = adb("reverse", "--list").stdout.decode("utf-8", "replace").strip().splitlines()
     (evidence / "adb-reverse.json").write_text(json.dumps(
         {"runId": run_id, "serial": serial, "port": endpoint_port,
@@ -265,3 +339,17 @@ finally:
     shutil.rmtree(private, ignore_errors=True)
     subprocess.run(["adb", "-s", serial, "shell", "rm", "-f", "/sdcard/Download/pairing.abconnection"],
                    check=False, capture_output=True)
+    # Remove only a reverse mapping this run created; a LAN run creates none.
+    if created_reverse:
+        removed = subprocess.run(
+            ["adb", "-s", serial, "reverse", "--remove", f"tcp:{endpoint_port}"],
+            capture_output=True, text=True, check=False,
+        )
+        remaining = subprocess.run(
+            ["adb", "-s", serial, "reverse", "--list"], capture_output=True, text=True, check=False,
+        ).stdout
+        (evidence / "adb-reverse-cleanup.json").write_text(json.dumps({
+            "runId": run_id, "port": endpoint_port, "createdByRun": True,
+            "removeStdout": removed.stdout.strip(), "removeStderr": removed.stderr.strip(),
+            "listingAfter": remaining.strip().splitlines(),
+        }, indent=2) + "\n")
