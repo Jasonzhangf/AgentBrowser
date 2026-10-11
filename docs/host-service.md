@@ -69,6 +69,16 @@ connection. For a persistent service, the manager sends the Host-local
 or otherwise unknown result fails explicitly; the manager does not signal the
 Host, remove state, start a replacement, or report `saved`.
 
+That flush only runs for a Host that still answers the ready handshake. The
+manager probes it first with the same one-second probe `status` uses. A Host
+that answers the probe keeps the flush and its failure rules. A typed ready
+rejection also keeps the flush, so its error is unchanged. An owned Host that
+does not answer the probe cannot confirm a flush either: the skipped flush is
+reported on stderr and the stop continues to the verified-PID stop and reap
+path, so the service state and runtime are released instead of the Host
+surviving unsignalled. A dead or foreign recorded PID is classified before the
+probe and keeps its existing result.
+
 `status` validates a ready response through the same configured-version rule as
 startup and rejects it when the ready session does not match the state. A dead
 recorded PID is reported as `stale`; a mismatching ready response is reported
@@ -139,8 +149,9 @@ the complete typed schema, including canonical binary/runtime/socket identities.
 Malformed state fails explicitly and is never used to signal a PID or remove a
 runtime directory.
 
-For persistent service, `stop` sends the local `flush_profiles` request first.
-Only a matching `ProfileFlush { flushed: true, profiles: <u32> }` permits the
+For persistent service, `stop` probes the live ready handshake and then sends
+the local `flush_profiles` request, as the runtime contract above defines. Only
+a matching `ProfileFlush { flushed: true, profiles: <u32> }` permits the
 existing verified-PID termination path. `restart` performs the same
 stop-and-confirm sequence and then starts a fresh Host with the same explicit
 root; it never reuses the old Session or epoch. A rejected or unknown
@@ -605,11 +616,13 @@ config, missing/invalid protocol version, configured ready/session identity,
 version mismatch cleanup, duplicate start, client exit without Host exit,
 normal stop/status, restart producing a new Session identity, and the
 persistent stop/restart maintenance success/failure cases. The development
-fixture additionally exercises busy/storage-failed/unknown flush receipts,
-foreign-PID protection, legacy config projection, explicit-root argv matching,
-and launchd supervisor ordering without claiming a real Host. It does not load
-launchd, install a real user service, touch Android/ADB resources, or claim
-full M1 product acceptance.
+fixture additionally exercises busy/storage-failed/unknown flush receipts, an
+owned Host that answers ready once and then stops answering
+(`unresponsive_host_stop_contract`: the stop reports the skipped flush, reaps
+the owned PID, and removes the state and runtime), foreign-PID protection,
+legacy config projection, explicit-root argv matching, and launchd supervisor
+ordering without claiming a real Host. It does not load launchd, install a real
+user service, touch Android/ADB resources, or claim full M1 product acceptance.
 
 The AppSDK build and regression bindings invoke the same resolver wrapper. It
 uses `OBSCURA_HOST_BINARY` first, then `active/bin/obscura-host`; if neither
