@@ -98,6 +98,17 @@ private = pathlib.Path(tempfile.mkdtemp(prefix="real-path-"))
 os.chmod(private, 0o700)
 code = None
 try:
+    # LAN acceptance must begin with the real empty first-run pairing state.
+    if expected_endpoint:
+        clear = adb("shell", "pm", "clear", "com.agentbrowser.probe").stdout.decode("utf-8", "replace")
+        (evidence / "pm-clear.txt").write_text("adb shell pm clear com.agentbrowser.probe\\n" + clear)
+        if "Success" not in clear:
+            raise SystemExit("pm clear did not report Success")
+        empty = shell("find /data/data/com.agentbrowser.probe/files/pairing -maxdepth 2 -print 2>/dev/null || true")
+        (evidence / "empty-pairing-listing.txt").write_text(empty)
+        if empty.strip():
+            raise SystemExit("app pairing directory is not empty after pm clear")
+
     # Loopback runs use adb reverse. LAN runs must prove the selected port has no
     # reverse mapping, so their route remains a real LAN route.
     reverse_before = adb("reverse", "--list").stdout.decode("utf-8", "replace").strip().splitlines()

@@ -1153,8 +1153,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             .put("mIsInputViewShown",orNull(firstMatch(dump,"mIsInputViewShown=(\\S+)")))
             .put("mShowRequested",orNull(firstMatch(dump,"mShowRequested=(\\S+)")))
             .put("mServedInputConnection",orNull(firstMatch(dump,"mServedInputConnection=(\\S+)")))
-            .put("mServedView",orNull(firstMatch(dump,"mServedView=(\\S+)")))
-            .put("mCurMethodId",orNull(firstMatch(dump,"mCurMethodId=(\\S+)")))
+            .put("mServedView",orNull(firstMatch(dump,"(?m)^\\s*mServedView=(.+)$")))
+            .put("mCurMethodId",orNull(firstMatch(dump,"mCurMethodId=(\\S+)")!=null?firstMatch(dump,"mCurMethodId=(\\S+)"):firstMatch(dump,"mCurId=(\\S+)")))
             .put("mCurFocusedWindow",orNull(firstMatch(dump,"mCurFocusedWindow=(\\S+)")))
             .put("mCurFocusedWindowClient",orNull(firstMatch(dump,"mCurFocusedWindowClient=(\\S+)")))
             .put("mCurId",orNull(firstMatch(dump,"mCurId=(\\S+)")));
@@ -1171,6 +1171,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
      */
     private void typeThroughSystemIme(String imePackage,String text)throws Exception{
         StringBuilder trace=new StringBuilder();
+        if(imePackage==null||imePackage.isEmpty()){
+            String selected=rawShell("settings get secure default_input_method").trim();
+            imePackage=selected.contains("/")?selected.substring(0,selected.indexOf('/')):selected;
+        }
         for(int index=0;index<text.length();index++){
             char character=text.charAt(index);
             UiObject2 key=imeKey(imePackage,character);
