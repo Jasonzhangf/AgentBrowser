@@ -1004,6 +1004,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             JSONObject loaded=new JSONObject(js(STATUS));
             Bitmap beforeTap=capture("real-path-before-tap");
 
+            // Establish causal evidence: hide the IME and verify it is down
+            // before the remote-field tap.
+            forceImeHiddenBeforeTap();
+
             // Gate: one real touch on the remote text input element.
             touch(tapX,tapY);
 
@@ -1145,6 +1149,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             SystemClock.sleep(150);
         }while(SystemClock.elapsedRealtime()<deadline);
         return text;
+    }
+    private void forceImeHiddenBeforeTap()throws Exception{
+        getInstrumentation().runOnMainSync(()->activity.getSystemService(InputMethodManager.class)
+            .hideSoftInputFromWindow(activity.remoteIme.getWindowToken(),0));
+        String dump=rawShell("dumpsys input_method");
+        JSONObject state=parseImeState(dump);
+        writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump));
+        assertEquals("IME must be hidden before causal remote tap: "+imeLines(dump),"false",String.valueOf(state.opt("mInputShown")));
     }
     private JSONObject pollImeRaised(long timeout)throws Exception{
         long started=SystemClock.elapsedRealtime();

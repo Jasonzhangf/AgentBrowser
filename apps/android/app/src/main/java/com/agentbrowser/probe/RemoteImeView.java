@@ -4,6 +4,8 @@ import android.content.Context;
 import android.graphics.Color;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -62,10 +64,13 @@ final class RemoteImeView extends View {
     }
 
     private void showInputWhenReady() {
-        if (active && host.eligible() && inputConnectionReady) {
-            // A real remote-field tap is an explicit user request. SHOW_IMPLICIT may be ignored by the IME.
-            inputMethodManager.showSoftInput(this, 0);
-        }
+        if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) return;
+        // API 30+ may ignore IMM.showSoftInput even after a real tap. Insets is
+        // the window-owned visibility API; retain IMM as a secondary request.
+        inputMethodManager.restartInput(this);
+        WindowInsetsController controller=getWindowInsetsController();
+        if (controller!=null) controller.show(WindowInsets.Type.ime());
+        inputMethodManager.showSoftInput(this, 0);
     }
 
     void deactivate() {
