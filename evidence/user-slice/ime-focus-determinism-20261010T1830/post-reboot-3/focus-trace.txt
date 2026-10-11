@@ -1,0 +1,13 @@
+elapsedMs=90 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=1064 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=1657 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=2245 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=2976 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=3757 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=4416 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=5079 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=5634 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=6240 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=6875 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=7492 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0
+elapsedMs=8067 windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true/true imeAttached=true imeWindowFocus=true attempts=0

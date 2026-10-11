@@ -1,0 +1,6 @@
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@44d4a99 mDeactivateRequested=false mServedView=null}
+  mServedView=com.android.internal.policy.DecorView{127420c I.E...... R.....ID 0,0-1080,2400 aid=1}[]
+  mServedInputConnection=null
+  mIsInputViewShown=false mStatusIcon=0

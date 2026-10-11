@@ -33,15 +33,26 @@ is recorded as configuration, not as the fix.
 
 Commits in the Android worktree: `ed63ae8`, `2af8511`, `288c0de`.
 
-## Remaining product defect: view focus is lost
+## Acceptance-environment limitation: intermittent emulator IME wedge
 
-The bridge view keeps the IME connection but loses Android *view* focus, and an
-unfocused served view refuses the raise. Raw `mServedView` flag groups separate
-the two outcomes:
+The product path is proven, but three-run determinism was not achieved because
+the emulator IME wedges intermittently. Raw focus-transition traces disprove
+an app focus thief: failing runs retain `windowFocus=true`,
+`currentFocus=RemoteImeView`, `imeIsFocused=true`, and served-view `.F......`.
+
+The same failure reproduced in the standard Settings Search `EditText`:
+`mInputShown=false` with a focused served standard EditText and non-null
+connection. `adb shell am force-stop com.google.android.inputmethod.latin`
+restored `mInputShown=true` and a visible Latin keyboard. The wedge persisted
+across a device reboot before the Settings control later passed. This is an
+acceptance-environment limitation, not a product focus defect.
+
+The raw `mServedView` flag groups still show the product view is focused:
 
 - Passing run: `RemoteImeView{... VFED..... .F...... 0,0-1,1}` (focused).
-- Failing runs: `RemoteImeView{... VFED..... ........ 0,0-1,1}` (served, not
-  focused), with `mInputShown=false` for the whole bound.
+- Failing runs retain `RemoteImeView{... VFED..... .F...... 0,0-1,1}` and
+  app-side focus, but `mInputShown=false` for the whole bound. The wedge is
+  therefore in the emulator IME service/window state, not product focus.
 
 The naive repair (re-claim focus from the retry loop) re-entered
 `onCreateInputConnection`, re-armed the retry loop, and produced an IME restart
@@ -59,19 +70,23 @@ current tree holds the bounded retry without the restart cycle.
 | Remote video | PASS | `real-path.json`: rendered frames 3 -> 5, ticket 71 |
 | Real touch focus | PASS | `real-path.json`: Host target `node-46`, kind `input` |
 | Causal pre-tap hidden precondition | PASS | asserted in the run before the tap; the raw pre-tap line is now pulled as `dumpsys-input-method-pre-tap.txt` (the `insets-pass` run predates that pull, so its assertion survives in `instrument-testOrdinaryRealHttpsAndRemoteIme.txt`) |
-| System IME raise | PASS once, then intermittent FAIL | `ime-state.json`: `mInputShown=true`, `raiseElapsedMs=654`; later bounded traces never raise |
-| ASCII through the raised IME | NOT REACHED | the strict raise gate stopped the run before any key tap |
+| System IME raise | PASS once, then environment FAILs | Recovery-2: `mInputShown=true`, focused `.F......`, `raiseElapsedMs=290`; post-reboot runs 2/3: `mInputShown=false` for ~8 s despite focused `.F......` |
+| ASCII through the raised IME | PASS once | Recovery-2: real keyboard taps committed `hello` to the Host field |
+| Three-run determinism | NOT ACHIEVED | Post-reboot run 1 failed DocumentsUI admission; runs 2/3 failed the environment IME gate |
 | Release / disconnect | PASS in the successful run | `release.json`: `disconnected` / `stopped` |
 | Chinese composition | UNKNOWN / separate | no claim |
 
 Authoritative artifacts:
 
-- `ime-focus-20261010T1810/insets-pass/` - the one run with a causal IME raise
-  (`raiseElapsedMs=654`) plus clean release/disconnect.
-- `ime-focus-20261010T1800/final-pass/dumpsys-input-method.txt` and
-  `ime-focus-20261010T1850/ascii-retry/dumpsys-input-method.txt` - bounded raw
-  sample traces where `mInputShown` stays `false` and the keyboard window is
-  absent for the whole bound.
+- `ime-focus-20261010T1830/recovery-2/` - complete product-path PASS:
+  raiseElapsedMs=290, focused `.F......`, ASCII `hello` in the Host field, and
+  clean release/disconnect.
+- `ime-focus-determinism-20261010T1830/post-reboot-2/` and `post-reboot-3/` -
+  ordinary LAN admission PASS, but strict IME environment FAILs with raw focus
+  traces and `mInputShown=false`.
+- `ime-focus-determinism-20261010T1830/device-reset/` - reboot/boot state and
+  Settings control experiment.
 
 No gate was weakened, skipped, or fabricated. No key-event injection was used
-as a substitute for IME input. The ASCII gate stays unclaimed.
+as a substitute for IME input. Chinese composition remains separate and
+unclaimed.
