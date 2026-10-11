@@ -24,3 +24,7 @@ The prior AB candidate `10652a2` is rejected as non-buildable. Repair candidate 
 ## Freeze state
 
 This manifest update records scope only. The repair candidate awaits a new freeze and independent review. No install, restart, or black-box rerun is authorized by this step.
+
+## Task-29 admission slice
+
+The Mac admission harness is narrowed to connect, Host session status, H.264/media display, and restart. It explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`; it rejects dead code and reconnect receipt references and checks the AX `打开菜单` then `连接` sequence. Runtime evidence must be generated only after review of commit `1262d8b`.
