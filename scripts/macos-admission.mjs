@@ -185,177 +185,6 @@ async function waitForWindow(child) {
   throw new Error('Timed out waiting for the installed AppKit window');
 }
 
-function videoSurfaceGeometry(pid, logPath) {
-  const swift = `
-import ApplicationServices
-import Foundation
-let pid: pid_t = ${pid}
-let target = "H.264 原生视频显示区"
-let app = AXUIElementCreateApplication(pid)
-func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-    var result: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
-    return error == .success ? result : nil
-}
-func rectangle(_ element: AXUIElement, _ attribute: String) -> CGRect? {
-    guard let raw = value(element, attribute) else { return nil }
-    let axValue = raw as! AXValue
-    var point = CGPoint.zero
-    var size = CGSize.zero
-    if attribute == kAXPositionAttribute {
-        guard AXValueGetValue(axValue, .cgPoint, &point) else { return nil }
-        return CGRect(origin: point, size: .zero)
-    }
-    guard AXValueGetValue(axValue, .cgSize, &size) else { return nil }
-    return CGRect(origin: .zero, size: size)
-}
-func rect(_ element: AXUIElement) -> CGRect? {
-    guard let position = rectangle(element, kAXPositionAttribute),
-          let size = rectangle(element, kAXSizeAttribute) else { return nil }
-    return CGRect(origin: position.origin, size: size.size)
-}
-func findLabel(_ element: AXUIElement) -> AXUIElement? {
-    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }
-    if labels.contains(target) { return element }
-    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children {
-        if let match = findLabel(child) { return match }
-    }
-    return nil
-}
-func findRole(_ element: AXUIElement, _ targetRole: String) -> AXUIElement? {
-    if (value(element, kAXRoleAttribute) as? String) == targetRole { return element }
-    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children {
-        if let match = findRole(child, targetRole) { return match }
-    }
-    return nil
-}
-if let surface = findLabel(app), let surfaceRect = rect(surface) {
-    print("{\\"source\\":\\"labelled_surface\\",\\"x\\":\\(surfaceRect.minX),\\"y\\":\\(surfaceRect.minY),\\"width\\":\\(surfaceRect.width),\\"height\\":\\(surfaceRect.height)}")
-    exit(0)
-}
-guard let splitGroup = findRole(app, "AXSplitGroup"),
-      let splitter = findRole(splitGroup, "AXSplitter"),
-      let groupRect = rect(splitGroup),
-      let splitterRect = rect(splitter) else { exit(2) }
-let leftWidth = splitterRect.minX - groupRect.minX
-guard leftWidth > 0, groupRect.height > 0 else { exit(3) }
-print("{\\"source\\":\\"split_group_left_of_splitter\\",\\"x\\":\\(groupRect.minX),\\"y\\":\\(groupRect.minY),\\"width\\":\\(leftWidth),\\"height\\":\\(groupRect.height)}")
-`;
-  const output = command('swift', ['-e', swift], {timeout: 30_000}).toString().trim();
-  const geometry = JSON.parse(output);
-  assert(Number.isFinite(geometry.x) && Number.isFinite(geometry.y)
-    && Number.isFinite(geometry.width) && Number.isFinite(geometry.height)
-    && geometry.width > 0 && geometry.height > 0,
-  `Invalid H.264 surface geometry: ${output}`);
-  writeFileSync(logPath, JSON.stringify({pid, label: 'H.264 原生视频显示区', geometry}, null, 2) + '\n', {flag: 'wx'});
-  return geometry;
-}
-
-function pageScreenPoint(surface, viewport, x, y) {
-  const sourceWidth = viewport.width;
-  const sourceHeight = viewport.height;
-  const scale = Math.min(surface.width / sourceWidth, surface.height / sourceHeight);
-  const renderedWidth = sourceWidth * scale;
-  const renderedHeight = sourceHeight * scale;
-  const offsetX = (surface.width - renderedWidth) / 2;
-  const offsetY = (surface.height - renderedHeight) / 2;
-  assert(x >= 0 && x <= sourceWidth && y >= 0 && y <= sourceHeight, 'Page coordinate outside H.264 viewport');
-  return {
-    x: Math.round(surface.x + offsetX + x * scale),
-    y: Math.round(surface.y + offsetY + y * scale),
-    mapping: {source_width: sourceWidth, source_height: sourceHeight, scale, offset_x: offsetX, offset_y: offsetY},
-  };
-}
-
-function postMouse(pid, target, logPath) {
-  const swift = `
-import AppKit
-import CoreGraphics
-let pid: pid_t = ${pid}
-let app = NSRunningApplication(processIdentifier: pid)!
-_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-// Use the same global AX/surface coordinates as the geometry and scroll path.
-let point = CGPoint(x: ${target.x}, y: ${target.y})
-let source = CGEventSource(stateID: .hidSystemState)!
-let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
-move.post(tap: .cghidEventTap)
-let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)!
-down.post(tap: .cghidEventTap)
-Thread.sleep(forTimeInterval: 0.05)
-let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!
-up.post(tap: .cghidEventTap)
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
-}
-
-function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
-  const surface = videoSurfaceGeometry(pid, geometryLogPath);
-  const target = pageScreenPoint(surface, viewport, x, y);
-  postMouse(pid, target, eventLogPath);
-}
-
-function focusAccessibilityTextField(pid, description, logPath) {
-  activatePid(pid);
-  const swift = `
-import ApplicationServices
-import Foundation
-let pid: pid_t = ${pid}
-let target = ${JSON.stringify(description)}
-let app = AXUIElementCreateApplication(pid)
-func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-    var result: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
-    return error == .success ? result : nil
-}
-func find(_ element: AXUIElement) -> AXUIElement? {
-    let role = value(element, kAXRoleAttribute) as? String
-    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute)].compactMap { $0 as? String }
-    if role == kAXTextFieldRole && labels.contains(target) { return element }
-    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children {
-        if let match = find(child) { return match }
-    }
-    return nil
-}
-guard let field = find(app) else { exit(2) }
-guard AXUIElementPerformAction(field, kAXPressAction as CFString) == .success else { exit(3) }
-guard AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else { exit(3) }
-`;
-  command('swift', ['-e', swift], {log: logPath, timeout: 30_000});
-}
-
-function postUnicodeText(pid, text, logPath) {
-  activatePid(pid);
-  const swift = `
-import CoreGraphics
-import Foundation
-let pid: pid_t = ${pid}
-let text = ${JSON.stringify(text)}
-let source = CGEventSource(stateID: .hidSystemState)!
-let units = Array(text.utf16)
-for start in stride(from: 0, to: units.count, by: 16) {
-    let chunk = Array(units[start..<min(start + 16, units.count)])
-    let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)!
-    chunk.withUnsafeBufferPointer { buffer in
-        down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
-    }
-    down.postToPid(pid)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)!
-    chunk.withUnsafeBufferPointer { buffer in
-        up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
-    }
-    up.postToPid(pid)
-    Thread.sleep(forTimeInterval: 0.002)
-}
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, text_length: text.length, input: 'native_unicode_key_events'}, null, 2) + '\n', {flag: 'wx'});
-}
-
 async function pressAccessibilityButton(pid, title, logPath) {
   const swift = `
 import ApplicationServices
@@ -399,29 +228,6 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
   }
   writeFileSync(logPath, JSON.stringify({target: title, attempts: failures.length, failures}, null, 2) + '\n');
   assert.fail(`AX button did not become available: ${title}`);
-}
-
-function postSurfaceScroll(pid, viewport, x, y, delta, geometryLogPath, eventLogPath) {
-  const surface = videoSurfaceGeometry(pid, geometryLogPath);
-  const target = pageScreenPoint(surface, viewport, x, y);
-  const swift = `
-import AppKit
-import CoreGraphics
-let pid: pid_t = ${pid}
-let app = NSRunningApplication(processIdentifier: pid)!
-_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-let source = CGEventSource(stateID: .hidSystemState)!
-let point = CGPoint(x: ${target.x}, y: ${target.y})
-let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: ${delta}, wheel2: 0, wheel3: 0)!
-event.location = point
-event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: ${delta})
-event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: ${delta})
-event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: ${delta * 65536})
-event.post(tap: .cghidEventTap)
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(eventLogPath, JSON.stringify({pid, event: 'native_scroll', delivery: 'hid_event_tap', delta, screen_point: target}, null, 2) + '\n', {flag: 'wx'});
 }
 
 function captureWindow(path, pid, full = true) {
@@ -717,9 +523,6 @@ async function main() {
     const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid, false);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
-    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-before-restart.log'));
-    await sleep(1_000);
-    await observeHostStatus('disconnect_before_restart', 1, 'agent');
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
     const secondApp = await launchApp('app-restarted');
     await waitForWindow(secondApp);
@@ -742,7 +545,8 @@ async function main() {
     persist(join(directory, 'restart.json'), restart);
     blackbox = {entrypoint, fixture: install.fixture, host_status: hostStatuses,
       screenshots: screenshotLog(screenshots), app_pids: [firstApp.pid, secondApp.pid],
-      operations: ['connect', 'h264_display', 'restart'],
+      ax_actions: [{target: '打开菜单', receipt: 'open-menu.log'}, {target: '连接', receipt: 'connect.log'}],
+      connect_receipt: 'connect.json', operations: ['connect', 'h264_display', 'restart'],
       skipped_operations: ['takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'disconnect', 'reconnect']};
     persist(join(directory, 'blackbox.json'), blackbox);
     cleanup = {fixture_quit_requested: false, app_pids: [firstApp.pid, secondApp.pid]};

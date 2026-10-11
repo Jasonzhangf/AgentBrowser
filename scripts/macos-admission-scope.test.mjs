@@ -11,6 +11,9 @@ assert(!source.includes("ids.reconnect"), 'receipt ids must not reference reconn
 assert(!source.includes("reconnect: `${directory}"), 'console receipt must not claim reconnect');
 assert.match(source, /pressAccessibilityButton\(firstApp\.pid, '打开菜单'/);
 assert.match(source, /pressAccessibilityButton\(firstApp\.pid, '连接'/);
-assert.match(source, /operation: 'connect'/);
-assert.match(source, /skipped_operations/);
+assert(!source.includes("'断开'"), 'admission must not press disconnect in narrowed slice');
+assert(!source.includes('videoSurfaceGeometry'), 'unreachable video helper must be removed');
+assert(!source.includes('focusAccessibilityTextField'), 'unreachable input helper must be removed');
+assert(!source.includes('postUnicodeText'), 'unreachable text helper must be removed');
+assert.match(source, /ax_target: '连接'/);
 console.log('mac admission scope fixture: pass');
