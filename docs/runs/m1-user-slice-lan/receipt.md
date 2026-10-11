@@ -40,16 +40,28 @@ recorded for comparison only.
 | Ordinary Android UI admission over LAN | PASS | `instrument-testOrdinaryRealPathAdmission.txt` → `OK (1 test)` |
 | Ordinary real HTTPS browse over LAN | PASS | `pageUrl=https://www.selenium.dev/selenium/web/web-form.html`, `finalScheme=https`, `renderedFramesBefore=3`, `renderedFramesAfter=4`, `displayedTicket=27` |
 | Video + touch over LAN | PASS | reported by the Android replay owner for this run |
-| System IME gate | FAIL | `mInputShown=false` with `mCurId=LatinIME`, `mServedView=RemoteImeView`, `mServedInputConnection=RemoteImeView$Connection` |
+| System IME gate | FAIL | bounded 8000ms poll: `mInputShown=false` throughout, `elapsedMs=8142`, with `mCurId=LatinIME`, `mServedView=RemoteImeView`, `mServedInputConnection=RemoteImeView$Connection` |
 
-Android evidence for these gates lives in the Android worktree at
-`m1-android-navigation-fix-r1-20261009/evidence/user-slice/ime-focus-20261010T1740/final-pass/`.
+Android evidence for these gates lives in the Android worktree. The
+authoritative bounded-poll run is
+`m1-android-navigation-fix-r1-20261009/evidence/user-slice/ime-focus-20261010T1800/final-pass/`;
+the earlier single-sample observation is
+`.../ime-focus-20261010T1740/final-pass/`.
 
-First failing gate: **system IME**. The raw assertion is:
+First failing gate: **system IME**. The authoritative raw assertion from the
+bounded-poll run is:
 
 ```text
-junit.framework.AssertionFailedError: The raised system IME must report mInputShown=true: {"mInputShown":"false","mIsInputViewShown":"true","mShowRequested":null,"mServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@8ab9694","mServedView":"com.agentbrowser.probe.RemoteImeView{630c3fc VFED..... .F...... 0,0-1,1 aid=1073741824}","mCurMethodId":"com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME",...}
+junit.framework.AssertionFailedError: System IME did not raise within 8000ms: {"mInputShown":"false","mIsInputViewShown":"true","mShowRequested":null,"mServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da","mServedView":"com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}","mCurMethodId":"com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME","mCurFocusedWindow":null,"mCurFocusedWindowClient":null,"mCurId":"com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME","elapsedMs":8142}
 ```
+
+The earlier single-sample assertion was:
+
+```text
+junit.framework.AssertionFailedError: The raised system IME must report mInputShown=true: {"mInputShown":"false",...}
+```
+
+ASCII typing and clean release/disconnect did not run in either IME run.
 
 The LAN binding gate that failed on the task6 root
 (`bound_address=127.0.0.1:51880`) **PASSES** here with

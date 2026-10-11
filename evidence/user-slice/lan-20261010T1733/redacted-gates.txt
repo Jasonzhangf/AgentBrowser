@@ -29,3 +29,6 @@ android_ascii_typing=NOT_RUN
 android_clean_disconnect=NOT_RUN
 host_state_after_android=PASS; running pid=2185 endpoint_pid=5534 generation=1
 stop_instruction=PENDING_LEAD
+android_system_ime_authoritative_run=ime-focus-20261010T1800/final-pass
+android_system_ime=FAIL; bounded 8000ms poll; mInputShown=false throughout; elapsedMs=8142; mCurId=LatinIME; mServedView=RemoteImeView
+host_state_after_ime_poll=PASS; running pid=2185 endpoint_pid=5534 generation=1
