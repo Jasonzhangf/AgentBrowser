@@ -380,3 +380,308 @@ Additional user-slice gates that stay open:
 - No bundle contents were reproduced in this receipt.
 - No test, build, or Host command was run; all statements are source reads, git queries, file
   hashes, and live process inspection.
+
+---
+
+# Re-review 2026-10-10 (task-10) — HEAD `9811e5f`
+
+Scope: only the findings recorded above, re-checked at the new integration HEAD
+`9811e5f049035f8a6d8b4092de9f8938f8d75c3c` (branch
+`codex/m1-user-slice-host-integration-20261010`) against fix commits `d591303` (merge of
+`codex/m1-android-navigation-fix-r1-20261009`), `1f5b94e`, and `9811e5f`. The original
+findings above are unchanged; nothing was rewritten. Tree clean at start
+(`git status --porcelain` empty).
+
+## Re-review verdict
+
+**ACCEPTED as an evidenced partial**, with **one remaining blocking receipt defect** that
+does not change the milestone outcome. The two original blocking findings that invalidated
+the milestone (claim-audit artifact presence and contract integrity) are resolved, and the
+hygiene finding is resolved. The remaining defect is confined to the Host-cleanup sentence of
+`docs/runs/m1-user-slice-tailscale/receipt.md:35`, whose cited stop evidence is still not
+real stop evidence; the underlying fact (task8 stopped) is independently verified live.
+
+## Original finding status
+
+| Original finding | Status at `9811e5f` |
+| --- | --- |
+| 1.1 Named receipts absent at HEAD (blocking) | **RESOLVED** |
+| 1.2 Committed evidence reports tests absent at HEAD (blocking) | **RESOLVED** |
+| 1.3 Cited sibling-worktree evidence absent (blocking) | **PARTIAL** — judgement below |
+| 1.4 `Task6 root remains untouched` contradicted | **RESOLVED** (wording) — residual: the cited first-run directory is untracked |
+| 1.5 Committed task8 stop receipt is not stop evidence (blocking) | **NOT RESOLVED** — blocking |
+| 1.6 Advisory traceability gaps | **NOT ADDRESSED** (still advisory) |
+| 2 Secret-hygiene advisory (code-bearing XML dumps) | **RESOLVED** |
+| 3 Contract integrity FAIL (blocking) | **RESOLVED** |
+| 4 Hygiene FAIL (leftover processes) | **RESOLVED** |
+| 5 Guide copy-control overstatement (advisory) | **NOT ADDRESSED** (still advisory) |
+| 6 Bundle SHA retention after untracking | **RESOLVED** |
+
+## 1.1 Receipt and evidence presence: RESOLVED
+
+```text
+git ls-files 'docs/runs/m1-user-slice*'
+docs/runs/m1-user-slice-android/receipt.md
+docs/runs/m1-user-slice-first-connect/receipt.md
+docs/runs/m1-user-slice-host/receipt.md
+docs/runs/m1-user-slice-review/receipt.md
+docs/runs/m1-user-slice-tailscale/receipt.md
+```
+
+All four previously named receipts now exist at HEAD, plus the review receipt. Tracked
+evidence grew from 24 files at `ea7b0ac` to 96 files at `9811e5f` (net +72; `1f5b94e` removed
+2 tracked bundles and `9811e5f` added 74 evidence files — the Lead's summary said 83, the
+actual count in `9811e5f` is 74 evidence paths plus 1 docs path).
+
+`docs/runs/m1-user-slice-host/receipt.md` (47 lines) is an honest index: it declares itself
+index-only (lines 3-4), names the four force-added `evidence/user-slice/host/*/receipt.md`
+files with the gates each proves (lines 14-17), points to the three sibling `docs/runs`
+receipts (lines 21-25), and states which Host artifacts stay untracked and why (lines 45-47).
+Every path it lists is tracked.
+
+I resolved every `evidence/...` path cited across the five receipts and the guide against
+`git ls-files`. The only unresolved citations are the ones listed in 1.3, 1.4-residual, and
+1.5; the other two unresolved hits are correct by design:
+
+- `evidence/user-slice/first-connect/task7-final-picker-20261010T1615/entered.xml` and
+  `.../task7-retry-20261010T1540/dialog-entered.xml` — cited at
+  `m1-user-slice-first-connect/receipt.md:128-129` precisely because they were deleted as
+  secret material.
+- `evidence/user-slice/host/user-slice-host-20261010T1418/task6-mac.abconnection`
+  (`.../receipt.md:74`) — an exported bundle, correctly untracked, and the receipt says so.
+
+## 1.2 Instrumentation methods now exist at HEAD: RESOLVED
+
+`apps/android/app/src/androidTest/java/com/agentbrowser/probe/NetworkDeviceTest.java`:
+
+- `testOrdinaryProtectedImport()` at line 885
+- `testOrdinaryTailscaleBrowse()` at line 899
+
+These are exactly the two test names the committed Tailscale evidence reports
+(`task8-android-final-20261010T1640/instrument.txt:7,14`;
+`task8-browse-20261010T1645/instrument.txt:7,14`). The committed evidence is now
+reproducible from this tree.
+
+## 1.3 The two sibling-worktree citations: judgement
+
+Still absent at `9811e5f`:
+
+```text
+NOT-TRACKED  evidence/network/a9742364ea114174998c51688e0fdeba   (not on disk in this worktree)
+NOT-TRACKED  evidence/local-direct/replay-integrated-d2dcc1b    (not on disk in this worktree)
+```
+
+`docs/runs/m1-20261010-android-mac-integration/receipt.md:175-184` still reads "`/evidence/`
+is ignored by Git, so the raw evidence is retained on disk at:" followed by these two
+relative paths and two `/tmp/...` paths. Both directories still exist in the sibling worktree
+`/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009`
+(27 files and 2 files).
+
+**Recommended fix: reword the citation to name the sibling worktree explicitly. Do not
+force-add the directories.** Reasons, in order of weight:
+
+1. The paragraph is explicitly a retention map of paths *outside* Git — two of its four
+   bullets are `/tmp/agentbrowser-m1-dual/...` paths that can never be tracked. Force-adding
+   two of the four bullets leaves the paragraph just as unreadable.
+2. These artifacts were produced in another worktree. Force-adding them duplicates provenance
+   into this branch and inflates the diff by 29 files (15 PNGs, 2 logs, 4 txt, 8 json) for
+   evidence whose candidate commit `d2dcc1b` is already an ancestor of this HEAD, so the
+   candidate identity is verifiable here without them.
+3. They are secret-free — I scanned them: 0 hits for `-----BEGIN ... PRIVATE KEY-----` or
+   `p12_base64`, 0 hits for the 16-character `TRANSFER_CODE_ALPHABET` shape — so force-adding
+   is possible, but it is not *necessary*.
+4. `docs/runs/m1-user-slice-first-connect/receipt.md:74` already shows the correct pattern in
+   this same receipt set: it qualifies an untracked bundle with the full absolute worktree
+   path.
+
+Caveat: if the project's acceptance rule is "every PASS claim must resolve inside the
+reviewed tree", then the minimum sufficient force-add is the four files the receipt actually
+reasons about (`network-result.json`, `network-dom.json` for the Android replay;
+`evidence.json`, `context.json` for the bridge replay) — not the whole directories. That is a
+rule decision for the Lead, not a defect in the receipt.
+
+## 1.4 Task6 wording: RESOLVED, with a residual citation
+
+`docs/runs/m1-user-slice-tailscale/receipt.md:14` now reads: "The first Tailscale attempt
+reused and cycled the task6 instance (restart PID 70574; stop evidence is retained under the
+first-run evidence directory), then the run moved to the dedicated Task8 instance. The task6
+trust root material was not modified." Line 35 repeats the qualification. This matches the
+retained evidence: `evidence/user-slice/tailscale/tailscale-20261010T160551/host-restart.json`
+shows `com.agentbrowser.task6` PID 70574 at 16:05 and `host-stop.json` in the same directory
+shows PID 70574 stopped at 16:06. The "untouched" claim is now correctly narrowed to trust
+root material.
+
+Residual (advisory): the phrase "stop evidence is retained under the first-run evidence
+directory" points at `evidence/user-slice/tailscale/tailscale-20261010T160551/`, which is
+**not tracked at HEAD** (`git ls-files evidence/user-slice/tailscale/tailscale-20261010T160551`
+= 0 files). The claim is true on disk but not auditable at HEAD, the same class as 1.3.
+
+## 1.5 Task8 stop evidence: NOT RESOLVED (blocking)
+
+`docs/runs/m1-user-slice-tailscale/receipt.md:35` now says: "The initial stop file was the
+no-live-state branch and is retained for audit; the corrected stop receipt is
+`evidence/user-slice/tailscale/tailscale-20261010T1615/host-stop-real.json`, followed by
+status `state=stopped`, `endpoint_pid=null`."
+
+Three problems:
+
+1. **Not tracked.** `git cat-file -e HEAD:evidence/user-slice/tailscale/tailscale-20261010T1615/host-stop-real.json`
+   → `fatal: path ... exists on disk, but not in 'HEAD'`. `git ls-files | grep host-stop`
+   returns only `host-stop.json`. `git log --all -- '*host-stop-real*'` is empty. The file
+   exists on disk (mtime 16:54) but was not included in the `9811e5f` force-add.
+2. **Not real stop evidence.** Its content is
+   `{"service_label": "com.agentbrowser.obscura-host", "state": "stopped"}` — the same shape
+   as the original `host-stop.json`, i.e. still the `state is None` branch of
+   `command_stop` (`scripts/host-service/host_service.py:1454-1456`): default label, no PID.
+   It records that nothing was recorded to stop, not that the running task8 Host was stopped.
+3. **The follow-up status does not exist.** No post-stop status artifact is tracked. The only
+   tracked `status.json` shows `{"state": "running", "endpoint_pid": null, "pid": 42645}`
+   captured at 16:16, before the stop.
+
+The underlying fact is nevertheless true, and I verified it live: no `abn-task6`/`abn-task8`
+process exists, `launchctl list` has no task6/task8 label, and neither
+`$HOME/Library/Application Support/AgentBrowser/host-service/state.json` nor
+`.../host-service-task8/state.json` exists. So the *claim* is true and the *citation* is
+false.
+
+Required correction (either is sufficient): point line 35 at the real retained task6 stop
+receipt under the first-run directory (which has a PID) and add a live post-stop `ps` capture
+for task8; or delete the `host-stop-real.json` citation and state that task8 is verified
+stopped by the absence of its state file, launchd entry, and process.
+
+## 2 Secret hygiene advisory: RESOLVED
+
+- Both code-bearing dumps are gone from disk in this worktree
+  (`ls evidence/user-slice/first-connect/task7-final-picker-20261010T1615/entered.xml` and
+  `.../task7-retry-20261010T1540/dialog-entered.xml` → "No such file or directory").
+- Neither appears in any ref: `git log --all --oneline -- '*entered.xml'` is empty, and
+  `git ls-files | grep -i entered` is empty.
+- Scan over the whole tracked evidence set (96 files): 16-character
+  `TRANSFER_CODE_ALPHABET` shape → **0 hits**; PEM private-key markers → **0**;
+  `p12_base64` / `BEGIN CERTIFICATE` → **0**; non-empty `android.widget.EditText` dumps →
+  **0**. The 25 credential-keyword hits are all `password` inside `dumpsys input_method`
+  and Host `EditorContext` debug lines (`password=false`,
+  `enable_number_row_in_password=false`) — no values.
+- Exported bundles untracked as intended: `git ls-files | grep abconnection` now returns only
+  the three test fixtures
+  (`apps/android/app/src/androidTest/assets/first-connection/{nocode,valid}.abconnection`,
+  `apps/android/app/src/test/resources/first-connection/valid.abconnection`), which are
+  untouched. The two exported `task8-tailscale.abconnection` files were removed by `1f5b94e`.
+- Their SHA-256 values are retained in receipts, as required:
+  `7adcb281cc779554e2d99c9eedb12c17c8f97cfad51d5f0933addc23a74897f9`
+  (`m1-user-slice-tailscale/receipt.md:19`) and
+  `22220a52b5a81b7d93653aa7efbda3072bed57be7baf578c26e1330c3b67fc95`
+  (`m1-user-slice-first-connect/receipt.md:16`, `m1-user-slice-android/receipt.md:59`).
+
+## 3 Contract integrity: RESOLVED
+
+At HEAD `9811e5f`, `apps/android/app/build.gradle`:
+
+```text
+ 7:        applicationId 'com.agentbrowser.probe'
+10:        versionCode 2
+11:        versionName '0.2.0-probe'
+22:        testImplementation 'junit:junit:4.13.2'
+23:        testImplementation 'org.json:json:20240303'
+24:        androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+```
+
+The UiAutomator dependency is `androidTestImplementation` only, and the shipped identity now
+matches the guide (`docs/user-slice-connection-guide.md:9`, versionCode 2 /
+`0.2.0-probe` / `8eceb55e...`). The emulator carries `versionCode=2`,
+`versionName=0.2.0-probe`, `lastUpdateTime=2026-10-10 16:38:00`, and the sibling-built APK
+still hashes to `8eceb55e404791484451499aac38cce70a2d6fcdd2aa2d1ed72f872a7d63cb45`.
+
+Ordinary path, read directly from source:
+
+- `testOrdinaryProtectedImport()` (line 885) requires the `transferCode` argument (lines
+  886-887) and calls `importOrdinaryPairing()` (line 889).
+- `importOrdinaryPairing()` (lines 300-342) drives `device.pressHome()`, a real
+  `am start -n com.agentbrowser.probe/.MainActivity` (line 305), the real drawer control, the
+  real `导入` control, asserts the real `com.google.android.documentsui` picker (line 320),
+  selects `pairing.abconnection` (lines 323-324), fills the real
+  `android.widget.EditText` (lines 326-327), clicks the real `IMPORT` (lines 328-329), and
+  asserts the panel becomes `configured` with a changed
+  `files/pairing/active-generation.json` (`ACTIVE_FILE` =
+  `active-generation.json`, `ConnectionSetupSession.java:52`). Its only app-private access is
+  the read-only generation comparison (lines 331-336). No `startImportForTest`, no staging.
+- `testOrdinaryTailscaleBrowse()` (line 899) does not call the hook; it reads the admitted
+  endpoint read-only from `pairing/.generations` (lines 905-909) and drives the ordinary
+  connect/browse UI.
+
+`startImportForTest` remains in product source as a pre-existing test hook
+(`ConnectionSetupSession.java:193`; `requestPickerForTest` at line 188). Remaining callers,
+explicitly:
+
+```text
+apps/android/app/src/androidTest/java/com/agentbrowser/probe/ConnectionSetupDeviceTest.java:93
+apps/android/app/src/androidTest/java/com/agentbrowser/probe/ConnectionSetupDeviceTest.java:131
+apps/android/app/src/androidTest/java/com/agentbrowser/probe/ConnectionSetupDeviceTest.java:275
+apps/android/app/src/androidTest/java/com/agentbrowser/probe/ConnectionSetupDeviceTest.java:298
+apps/android/app/src/androidTest/java/com/agentbrowser/probe/NetworkDeviceTest.java:350   (importFixturePairing)
+requestPickerForTest: ConnectionSetupDeviceTest.java:236
+```
+
+The two ordinary-path methods are not among them. `importFixturePairing()` (lines 344-351)
+still stages the fixture bundle app-privately and admits it through the hook; that is the
+fixture-replay path, unchanged and disclosed.
+
+ADVISORY (new): the contract-integrity record at
+`docs/runs/m1-user-slice-first-connect/receipt.md:245` says "both call
+`importOrdinaryPairing()`". Only `testOrdinaryProtectedImport()` does (line 889);
+`testOrdinaryTailscaleBrowse()` does not. The record's substance is unaffected.
+
+## 4 Hygiene: RESOLVED
+
+- Leftover processes gone: `ps -p 31780,31904,21538,21556` returns only the header. No
+  `abn-task6`/`abn-task8` process exists.
+- task6/task8 stopped: no launchctl task6/task8 label; both
+  `$HOME/Library/Application Support/AgentBrowser/host-service/state.json` and
+  `.../host-service-task8/state.json` are absent.
+- Shared Host untouched: the pre-existing launchd pair `com.agentbrowser.obscura-host`
+  (PID 79521/79525, root `/Users/fanzhang/.agentbrowser`, elapsed 1d04h) still runs.
+  Remaining unrelated processes are the pre-existing `m1-mac-native-export-r2` worker Hosts
+  and the `/private/tmp/abnocode-f13310de` pair; none is milestone-owned.
+- Worktree clean at start.
+- Forbidden commands: re-scanned `scripts apps packages docs evidence`. The only new hits are
+  my own review receipt's prose. No `pkill`, `killall`, `xargs kill`, `--no-verify`, or
+  destructive git command appears in any executable script.
+
+## 5 and 1.6 Advisories not addressed
+
+Both remain as originally recorded, and the files are unchanged since `ea7b0ac`
+(`git log --oneline ea7b0ac..HEAD -- docs/user-slice-connection-guide.md
+docs/runs/m1-20261010-android-mac-integration/receipt.md` is empty):
+
+- `docs/user-slice-connection-guide.md:88` still says the Mac side is proven to display the
+  transfer code and to offer a copy entry, while the retained evidence records
+  `copy_action_available=implemented_not_visible`.
+- `docs/runs/m1-user-slice-tailscale/receipt.md:21` still cites
+  `task8-android-final-20261010T1640/instrument.txt` for the emulator-side TCP probe;
+  `instrument.txt` contains no probe output.
+- The guide's APK path `apps/android/app/build/outputs/apk/debug/app-debug.apk` does not exist
+  in this worktree (build outputs are untracked); the artifact exists only in the sibling
+  worktree. Same class as 1.3 — a retention path, not a false claim.
+
+## Remaining unproven gates for full M1
+
+Unchanged from the original review; none of the fix commits touched them:
+
+1. BB01–BB14 full acceptance suite.
+2. Real HTTPS login and profile restart.
+3. Weak-network and quality behavior.
+4. Local / LAN / Tailscale / Relay matrix — cross-node Tailscale unproven (`15T`
+   `100.104.163.65` offline); Relay and LAN layers untouched.
+5. Core regression.
+6. Latest-main end-to-end.
+7. Independent review — now an evidenced partial at `9811e5f`; still not a full-M1 pass.
+8. Dual-repository remote delivery.
+9. Version package and OTA.
+10. Baseline and project memory.
+11. Resource cleanup — the milestone's own leftovers are cleaned; the pre-existing unrelated
+    Hosts are not this milestone's to remove.
+
+User-slice gates that stay open: real system IME focus (raw FAIL), Chinese composition
+(UNKNOWN, no zh-capable IME), same-session lifecycle browse (pairing and browse still ran on
+different Hosts), independent Host DOM read-back on the service-lifecycle Host (unavailable
+by design).
