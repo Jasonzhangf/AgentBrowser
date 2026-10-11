@@ -1296,8 +1296,27 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         return null;
     }
 
-    public void testRealNetworkControlAndFrames()throws Exception{
+    /** BB04 bounded black-box slice: real video drags and remote DOM scroll state. */
+    public void testBb04GestureSlice() throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            importFixturePairing();
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",15000); clickEnabled("takeover");
+            String url=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
+            navigateFromAddress(url); awaitNavigation("https:",10000);
+            long before=Long.parseLong(js("window.scrollY"));
+            swipe(200,260,80); until(STATUS+".inputReady",6000); SystemClock.sleep(800);
+            long after=Long.parseLong(js("window.scrollY"));
+            writeRaw("bb04-gesture.json",new JSONObject().put("case","BB04").put("url",url)
+                .put("scrollYBefore",before).put("scrollYAfter",after).put("dragDelta",after-before)
+                .put("releaseGestureState",localGestureState()).toString(2)+"\n");
+            assertTrue("Real remote page must scroll after video drag",after!=before);
+            assertFalse("Gesture lease must terminate on release",hostLeaseFencesAgents());
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
+    public void testRealNetworkControlAndFrames()throws Exception{        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
             importFixturePairing();
             until("!!document.getElementById('connect')",10000);clickEnabled("connect");
