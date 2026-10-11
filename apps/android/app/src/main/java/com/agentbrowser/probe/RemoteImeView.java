@@ -63,7 +63,8 @@ final class RemoteImeView extends View {
 
     private void showInputWhenReady() {
         if (active && host.eligible() && inputConnectionReady) {
-            inputMethodManager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+            // A real remote-field tap is an explicit user request. SHOW_IMPLICIT may be ignored by the IME.
+            inputMethodManager.showSoftInput(this, 0);
         }
     }
 
