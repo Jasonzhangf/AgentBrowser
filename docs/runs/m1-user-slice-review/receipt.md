@@ -685,3 +685,61 @@ User-slice gates that stay open: real system IME focus (raw FAIL), Chinese compo
 (UNKNOWN, no zh-capable IME), same-session lifecycle browse (pairing and browse still ran on
 different Hosts), independent Host DOM read-back on the service-lifecycle Host (unavailable
 by design).
+
+---
+
+# Closure note 2026-10-10 (task-10 follow-up) — HEAD `49263dd`
+
+Single-finding closure check of finding 1.5 after `4c47aaa` and `49263dd`. Earlier sections
+unchanged. Exact HEAD confirmed: `49263dd98074584c9291c535f46973183d971766`, tree clean.
+
+**Finding 1.5: STILL OPEN (narrowed).** `docs/runs/m1-user-slice-tailscale/receipt.md:35` no
+longer cites `host-stop-real.json`; the replacement reads: "Task8 is verified stopped after
+the Android run: its service state is `stopped`, its recorded endpoint PID is absent, and the
+post-run process capture records `pid 70574 absent`. The launchd plist remains only as an
+installed declaration; no live task8 process exists. The initial stop file is retained for
+audit but is not cited as stop proof." The three files it leans on are now tracked
+(`evidence/user-slice/tailscale/tailscale-20261010T160551/{host-stop.json,post-stop-ps.txt,task8-launchd-entry.txt}`),
+so the unresolvable-citation defect is fixed. But the replacement attributes the **task6**
+instance to task8: `post-stop-ps.txt` is `pid 70574 absent`, and `host-stop.json` in that same
+directory is `{"pid": 70574, "service_label": "com.agentbrowser.task6", "state": "stopped"}` —
+70574 is task6's PID, not task8's. Task8's service PID is `42645`
+(`tailscale-20261010T1615/status.json`), and its only tracked status reads `state: running`,
+`endpoint_pid: null`, captured at 16:16 before the stop. The only task8-side stop artifact is
+`tailscale-20261010T1615/host-stop.json` =
+`{"service_label": "com.agentbrowser.obscura-host", "state": "stopped"}` — the no-state branch
+with the default label, which the receipt itself declines to cite as proof.
+`task8-launchd-entry.txt` is an `ls -l` of the plist path and says nothing about a live
+process. No artifact records PID 42645 absent.
+
+The fact itself holds and I re-verified it live at this HEAD: `ps -p 42645,70574` is empty, no
+`abn-task6`/`abn-task8` process exists, `launchctl list` has no task6/task8 label,
+`$HOME/Library/Application Support/AgentBrowser/host-service-task8/state.json` is absent, and
+the plist file does remain. So the claim is true and its cited chain still is not. Required
+correction: add a post-stop capture of PID 42645 (or state the proof as absence of state file
++ launchd job + PID 42645), or relabel the sentence so the cited PID is named as the task6
+instance.
+
+**Advisory 1.6 (TCP probe citation): STILL OPEN.** Line 21 now points at
+`task8-android-final-20261010T1640/redacted.txt`, but that file holds only `bundle_sha=`,
+`device_sha=`, `exit=0`, `scope=same-physical-mac-tailscale-100.66.1.82:51881` — no probe
+output. The only probe output in the tracked Tailscale evidence is
+`tailscale-20261010T1615/tailscale-connectivity.txt` =
+`Connection to 100.66.1.82 port 51881 [tcp/*] succeeded!`, which is the Mac-side probe already
+quoted on the "Mac TCP reachability" line. The emulator-side probe claim has no raw artifact
+at HEAD.
+
+**No new secret, bundle content, or protected-field dump.** `4c47aaa` and `49263dd` add no
+PEM/p12/certificate material. Tracked evidence is now 99 files: 0 hits for the 16-character
+`TRANSFER_CODE_ALPHABET` shape, 0 PEM/p12, 0 `android.widget.EditText` dumps; the only tracked
+`.abconnection` files remain the three test fixtures. The three newly tracked files are
+stop/`ps`/plist-listing text.
+
+**Other changes in the range check out.** `49263dd` qualifies the two sibling-worktree
+citations as a retention map outside Git with absolute paths — the reword fix recommended in
+the 1.3 judgement above. `4c47aaa` corrects the contract-integrity record to name
+`importOrdinaryPairing()`'s single caller and the explicit `startImportForTest` caller list,
+matching the source read. `c46ca30` corrects the guide's copy-control line, and its new
+scroll/video/click claims are backed by tracked `network-scroll-trace.json`
+(`scrollTrace=[0,250,0]`, `maxScroll=250`, `restoredToZero=true`), `network-dom.json`
+(`clicked=1`) and `network-result.json` (`frameAck.renderedFrames=3`, `displayed=true`).
