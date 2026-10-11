@@ -951,6 +951,252 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
 
+    /**
+     * Task-12 admission: the ordinary DocumentsUI path with the protected
+     * transfer code. The code arrives as an instrumentation argument, so it
+     * exists only in the caller's shell and this process.
+     */
+    public void testOrdinaryRealPathAdmission() throws Exception {
+        String transferCode=argument("transferCode",null);
+        assertNotNull("transferCode argument required for ordinary admission",transferCode);
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            importOrdinaryPairing();
+            JSONObject panel=activity.connectionSetup.projection();
+            assertEquals("Ordinary import must configure","configured",panel.optString("state"));
+            writeRaw("admission.json",new JSONObject()
+                .put("panelState",panel.optString("state"))
+                .put("endpoint",admittedEndpoint())
+                .put("activeGeneration",activeGeneration()).toString(2)+"\n");
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
+    /**
+     * Task-12 real user path on the already-admitted pairing: the ordinary
+     * address bar loads a real HTTPS document, one real touch focuses its text
+     * input, and the raised system IME types ASCII that must land in the remote
+     * page. Every gate is a Host- or system-owned projection, never a local
+     * mirror.
+     */
+    public void testOrdinaryRealHttpsAndRemoteIme() throws Exception {
+        String pageUrl=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
+        String ascii=argument("asciiText","hello");
+        float tapX=Float.parseFloat(argument("tapX","196"));
+        float tapY=Float.parseFloat(argument("tapY","107"));
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000);
+            clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000);
+            clickEnabled("takeover");
+            until(UI_MODE+"==='control'",8000);
+            JSONObject connected=new JSONObject(js(STATUS));
+            long framesBefore=connected.optLong("renderedFrames",-1);
+            long documentBefore=connected.optLong("documentRevision",-1);
+
+            // Gate: the ordinary address bar loads a real HTTPS document.
+            navigateFromAddress(pageUrl);
+            JSONObject navigation=awaitNavigation("https:",8000);
+            String finalUrl=navigation.optString("url","");
+            String finalScheme=finalUrl.contains(":")?finalUrl.substring(0,finalUrl.indexOf(':')):"";
+            JSONObject loaded=new JSONObject(js(STATUS));
+            Bitmap beforeTap=capture("real-path-before-tap");
+
+            // Gate: one real touch on the remote text input element.
+            touch(tapX,tapY);
+
+            // The raw system IME state must be read immediately after the tap.
+            String imeDump=rawShell("dumpsys input_method");
+            writeRaw("dumpsys-input-method.txt",imeDump);
+            writeRaw("logcat-focus.txt",rawShell("logcat -d -v threadtime -t 400"));
+            JSONObject ime=parseImeState(imeDump);
+            writeRaw("ime-state.json",ime.toString(2)+"\n");
+            JSONObject editor=awaitEditableContext(8000);
+            Bitmap afterTap=capture("real-path-after-tap");
+            boolean frameChanged=!beforeTap.sameAs(afterTap);
+
+            // Gate: ASCII typed through the raised system IME lands in the Host page.
+            String imePackage=ime.optString("mCurMethodId","");
+            imePackage=imePackage.contains("/")?imePackage.substring(0,imePackage.indexOf('/')):imePackage;
+            boolean imeWindow=device().hasObject(By.pkg(imePackage));
+            String fieldText="";
+            String typingNote=null;
+            if(imeWindow||!"".equals(imePackage)){
+                try{
+                    typeThroughSystemIme(imePackage,ascii);
+                    fieldText=awaitHostFieldText(ascii,15000);
+                }catch(AssertionError typingFailure){typingNote=String.valueOf(typingFailure.getMessage());}
+            }else{
+                typingNote="the system IME window is not present";
+            }
+            writeRaw("dumpsys-input-method-after-typing.txt",rawShell("dumpsys input_method"));
+            JSONObject afterTyping=new JSONObject(js(STATUS));
+
+            JSONObject result=new JSONObject()
+                .put("pageUrl",pageUrl)
+                .put("finalUrl",finalUrl)
+                .put("finalScheme",finalScheme)
+                .put("navigationTitle",navigation.optString("title",""))
+                .put("canGoBack",navigation.optBoolean("can_go_back",false))
+                .put("documentRevisionBefore",documentBefore)
+                .put("documentRevisionAfter",loaded.optLong("documentRevision",-1))
+                .put("renderedFramesBefore",framesBefore)
+                .put("renderedFramesAfter",loaded.optLong("renderedFrames",-1))
+                .put("renderedFramesAfterTyping",afterTyping.optLong("renderedFrames",-1))
+                .put("displayedTicket",loaded.optLong("displayedTicket",-1))
+                .put("tapX",tapX).put("tapY",tapY)
+                .put("frameChangedAfterTap",frameChanged)
+                .put("editorTargetId",editor.optString("target_id",""))
+                .put("editorKind",editor.optString("kind",""))
+                .put("editorEditable",editor.optBoolean("editable",false))
+                .put("editorInputType",editor.optString("input_type",""))
+                .put("imeInputShown",ime.opt("mInputShown"))
+                .put("imeServedInputConnection",ime.opt("mServedInputConnection"))
+                .put("imeServedView",ime.opt("mServedView"))
+                .put("imeCurMethodId",ime.opt("mCurMethodId"))
+                .put("imeCurFocusedWindow",ime.opt("mCurFocusedWindow"))
+                .put("imeWindowVisible",imeWindow)
+                .put("asciiText",ascii)
+                .put("hostFieldText",fieldText)
+                .put("typingNote",typingNote==null?JSONObject.NULL:typingNote);
+            writeRaw("real-path.json",result.toString(2)+"\n");
+
+            // Gate 9: release input and disconnect through the ordinary controls.
+            clickEnabled("release");
+            until(UI_MODE+"!=='control'",8000);
+            clickEnabled("disconnect");
+            until(STATUS+".connectionState!=='connected'",15000);
+            writeRaw("release.json",new JSONObject()
+                .put("controlModeAfterRelease",js(UI_MODE).replace("\"",""))
+                .put("connectionStateAfterDisconnect",new JSONObject(js(STATUS)).optString("connectionState")).toString(2)+"\n");
+
+            assertEquals("The ordinary address bar must load an https document: "+finalUrl,"https",finalScheme);
+            assertTrue("A real touch must focus the remote editable target: "+editor,editor.optBoolean("editable",false));
+            assertTrue("The raised system IME must report mInputShown=true: "+ime,"true".equals(String.valueOf(ime.opt("mInputShown"))));
+            assertTrue("The raised system IME must serve an input connection: "+ime,
+                ime.opt("mServedInputConnection")!=null&&ime.opt("mServedInputConnection")!=JSONObject.NULL);
+            assertTrue("The served view must belong to the app package: "+ime,
+                String.valueOf(ime.opt("mServedView")).contains("com.agentbrowser.probe"));
+            if(typingNote!=null)fail("ASCII typing through the raised system IME did not run: "+typingNote+"\n"+result);
+            assertTrue("ASCII typed through the system IME must land in the Host page: "+result,fieldText.contains(ascii));
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
+    private String argument(String name,String fallback){
+        String value=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString(name);
+        return value==null||value.isEmpty()?fallback:value;
+    }
+    private UiDevice device(){return UiDevice.getInstance(getInstrumentation());}
+    private String rawShell(String command)throws Exception{return device().executeShellCommand(command);}
+    private void writeRaw(String name,String content)throws Exception{
+        try(FileOutputStream out=new FileOutputStream(new File(evidenceDirectory(),name))){
+            out.write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+    private String activeGeneration()throws Exception{
+        File active=new File(activity.getFilesDir(),"pairing/"+ConnectionSetupSession.ACTIVE_FILE);
+        return active.isFile()?new String(java.nio.file.Files.readAllBytes(active.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim():"";
+    }
+    private String admittedEndpoint()throws Exception{
+        File generations=new File(activity.getFilesDir(),"pairing/.generations");
+        String endpoint=null;
+        File[] materials=generations.listFiles();
+        if(materials==null)return "";
+        for(File material:materials){
+            File candidate=new File(material,"endpoint.txt");
+            if(candidate.isFile())endpoint=new String(java.nio.file.Files.readAllBytes(candidate.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim();
+        }
+        return endpoint==null?"":endpoint;
+    }
+    /** The Host is the only navigation owner, so its projection is the URL proof. */
+    private JSONObject awaitNavigation(String requiredScheme,long timeout)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+timeout;
+        JSONObject navigation=null;
+        do{
+            navigation=activity.network.navigation();
+            if(navigation!=null&&navigation.optString("url","").startsWith(requiredScheme))return navigation;
+            SystemClock.sleep(100);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        fail("The Host never published a "+requiredScheme+" navigation state: "+(navigation==null?"null":navigation.toString()));
+        return navigation;
+    }
+    /** Engine-confirmed editable target: the remote page really received the tap. */
+    private JSONObject awaitEditableContext(long timeout)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+timeout;
+        JSONObject context=null;
+        do{
+            context=activity.network.editorContext();
+            if(context!=null&&context.optBoolean("editable",false))return context;
+            SystemClock.sleep(100);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        fail("The remote tap did not focus an editable Host target: "+(context==null?"null":context.toString())
+            +"\n"+touchGeometry());
+        return context;
+    }
+    /** Polls the Host projection; the app never caches a local copy of the text. */
+    private String awaitHostFieldText(String expected,long timeout)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+timeout;
+        String text="";
+        do{
+            JSONObject surrounding=activity.network.surrounding();
+            text=surrounding==null?"":surrounding.optString("text","");
+            if(text.contains(expected))return text;
+            SystemClock.sleep(150);
+        }while(SystemClock.elapsedRealtime()<deadline);
+        return text;
+    }
+    private JSONObject parseImeState(String dump)throws Exception{
+        return new JSONObject()
+            .put("mInputShown",orNull(firstMatch(dump,"mInputShown=(\\S+)")))
+            .put("mIsInputViewShown",orNull(firstMatch(dump,"mIsInputViewShown=(\\S+)")))
+            .put("mShowRequested",orNull(firstMatch(dump,"mShowRequested=(\\S+)")))
+            .put("mServedInputConnection",orNull(firstMatch(dump,"mServedInputConnection=(\\S+)")))
+            .put("mServedView",orNull(firstMatch(dump,"mServedView=(\\S+)")))
+            .put("mCurMethodId",orNull(firstMatch(dump,"mCurMethodId=(\\S+)")))
+            .put("mCurFocusedWindow",orNull(firstMatch(dump,"mCurFocusedWindow=(\\S+)")))
+            .put("mCurFocusedWindowClient",orNull(firstMatch(dump,"mCurFocusedWindowClient=(\\S+)")))
+            .put("mCurId",orNull(firstMatch(dump,"mCurId=(\\S+)")));
+    }
+    private static Object orNull(String value){return value==null?JSONObject.NULL:value;}
+    private static String firstMatch(String text,String pattern){
+        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile(pattern).matcher(text);
+        return matcher.find()?matcher.group(1):null;
+    }
+    /**
+     * Real touches on the raised system keyboard's own keys. The IME commits the
+     * text through the app's InputConnection, which is the same path a user's
+     * finger takes; no test-only IME call is used.
+     */
+    private void typeThroughSystemIme(String imePackage,String text)throws Exception{
+        StringBuilder trace=new StringBuilder();
+        for(int index=0;index<text.length();index++){
+            char character=text.charAt(index);
+            UiObject2 key=imeKey(imePackage,character);
+            if(key==null){
+                writeRaw("ime-keyboard.txt",rawShell("uiautomator dump /sdcard/ime-window.xml >/dev/null 2>&1; cat /sdcard/ime-window.xml"));
+                fail("The raised system IME has no key for '"+character+"' in "+imePackage);
+            }
+            android.graphics.Rect bounds=key.getVisibleBounds();
+            trace.append(character).append(' ').append(bounds.toShortString()).append(' ')
+                .append(String.valueOf(key.getContentDescription())).append('\n');
+            key.click();
+            SystemClock.sleep(250);
+        }
+        writeRaw("ime-key-touches.txt",trace.toString());
+    }
+    private UiObject2 imeKey(String imePackage,char character){
+        String lower=String.valueOf(character).toLowerCase(java.util.Locale.ROOT);
+        String upper=lower.toUpperCase(java.util.Locale.ROOT);
+        for(String candidate:new String[]{lower,upper}){
+            UiObject2 key=device().findObject(By.pkg(imePackage).desc(candidate));
+            if(key==null)key=device().findObject(By.pkg(imePackage).text(candidate));
+            if(key!=null)return key;
+        }
+        return null;
+    }
+
     public void testRealNetworkControlAndFrames()throws Exception{
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
