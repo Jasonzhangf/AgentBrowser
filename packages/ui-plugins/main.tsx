@@ -641,7 +641,9 @@ async function boot() {
     });
   }
 
+  console.error('UI_BOOT before_create_kernel');
   let kernel = await createKernel(port, mount);
+  console.error(`UI_BOOT after_create_kernel mounted=${kernel.mounted}`);
   toggle.textContent = '卸载 UI 插件';
   toggle.dataset.mounted = 'true';
   toggle.onclick = async () => {
@@ -665,5 +667,7 @@ async function boot() {
 }
 
 boot().catch(error => {
-  document.getElementById('root')!.textContent = `浏览器启动失败：${String(error)}`;
+  const message = String(error);
+  try { window.ProbeNative?.request(JSON.stringify({op: 'pageerror', message: `UI_BOOT_REJECT ${message}`})); } catch (_) {}
+  document.getElementById('root')!.textContent = `浏览器启动失败：${message}`;
 });

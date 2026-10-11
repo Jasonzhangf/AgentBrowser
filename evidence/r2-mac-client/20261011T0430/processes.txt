@@ -1,0 +1,1 @@
+92925 92879 /Volumes/Intel/playground/agentbrowser/m1-user-slice-host-integration-20261010/apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMac --pairing-dir /tmp/abn-task16-pairing

@@ -1,0 +1,3 @@
+pos=(1338.0, 352.0) size=(16.0, 16.0) title= desc=
+pos=(1384.0, 352.0) size=(16.0, 16.0) title= desc=
+pos=(1361.0, 352.0) size=(16.0, 16.0) title= desc=
