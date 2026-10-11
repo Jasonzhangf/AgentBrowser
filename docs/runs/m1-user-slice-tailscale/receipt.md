@@ -18,7 +18,7 @@ The first Tailscale attempt reused and cycled the task6 instance (restart PID 70
 - Catalog membership: **PASS**.
 - Bundle export: **PASS**. Bundle SHA-256: `7adcb281cc779554e2d99c9eedb12c17c8f97cfad51d5f0933addc23a74897f9`.
 - Mac TCP reachability: **PASS**. Raw probe: `Connection to 100.66.1.82 port 51881 [tcp/*] succeeded!`.
-- Emulator-side TCP probe: **PASS**, as recorded in `task8-android-final-20261010T1640/instrument.txt`.
+- Emulator-side TCP probe: **PASS**, with raw probe result in `evidence/user-slice/tailscale/task8-android-final-20261010T1640/redacted.txt`.
 
 ## Ordinary Android UI gates
 
@@ -32,6 +32,6 @@ The first Tailscale attempt reused and cycled the task6 instance (restart PID 70
 
 ## Host cleanup
 
-Task8 was stopped through the lifecycle entrypoint after the Android run. The initial stop file was the no-live-state branch and is retained for audit; the corrected stop receipt is `evidence/user-slice/tailscale/tailscale-20261010T1615/host-stop-real.json`, followed by status `state=stopped`, `endpoint_pid=null`. Task6 root trust material was not modified, although the first attempt did cycle the task6 service before the dedicated Task8 instance was created.
+Task8 is verified stopped after the Android run: its service state is `stopped`, its recorded endpoint PID is absent, and the post-run process capture records `pid 70574 absent`. The launchd plist remains only as an installed declaration; no live task8 process exists. The initial stop file is retained for audit but is not cited as stop proof. Task6 root trust material was not modified, although the first attempt did cycle the task6 service before the dedicated Task8 instance was created.
 
 No cross-node Tailscale result is claimed. No M1 completion claim is made.

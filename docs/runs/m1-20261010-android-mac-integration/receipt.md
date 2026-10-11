@@ -174,10 +174,18 @@ retried away.
 
 ## Evidence retention
 
-`/evidence/` is ignored by Git, so the raw evidence is retained on disk at:
+`/evidence/` is ignored by Git, so the raw evidence is retained on disk. This
+paragraph is a retention map of paths outside Git; none of these paths is
+force-added, and two of them are `/tmp/` paths that can never be tracked.
 
-- `evidence/network/a9742364ea114174998c51688e0fdeba/`
-- `evidence/local-direct/replay-integrated-d2dcc1b/`
+The two Git-ignored evidence directories live only in the sibling worktree
+`/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009`:
+
+- `/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/evidence/network/a9742364ea114174998c51688e0fdeba/`
+- `/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/evidence/local-direct/replay-integrated-d2dcc1b/` (candidate `d2dcc1b` is already an ancestor of the integration HEAD)
+
+The two dual-client runs are transient `/tmp` paths:
+
 - `/tmp/agentbrowser-m1-dual/dual-r10-20261010T133822/` (passing run)
 - `/tmp/agentbrowser-m1-dual/dual-r9-20261010T133721/` (failing run, preserved)
 

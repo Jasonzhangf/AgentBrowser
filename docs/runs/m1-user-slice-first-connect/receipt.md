@@ -86,7 +86,7 @@ The exported bundle was selected from the real DocumentsUI picker. After selecti
 
 The screen showed `未连接 Host`, connection label `Android acceptance device`, and all diagnostic fields remained `unknown`. Therefore ordinary connect and browse were not reached for the task-6 lifecycle bundle.
 
-## Gate results
+## Gate results (baseline run, superseded by the consolidated table above)
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
@@ -240,16 +240,7 @@ artifacts other than their receipts.
 The ordinary-path proofs never use the test hook and never stage into
 app-private storage:
 
-- `NetworkDeviceTest.testOrdinaryProtectedImport()` — `apps/android/app/src/androidTest/java/com/agentbrowser/probe/NetworkDeviceTest.java:885`
-- `NetworkDeviceTest.testOrdinaryTailscaleBrowse()` — same file, line `899`
-- both call `importOrdinaryPairing()` — same file, lines `300`-`342`, which
-  launches `MainActivity` and drives the real launcher, real DocumentsUI file
-  picker, the real protected `EditText` and the real `IMPORT` control, and
-  asserts `connectionSetup` becomes `configured` with a changed
-  `files/pairing/active-generation.json`
-- the only app-private read in that method is the read-only comparison of the
-  active-generation file at line `331`; nothing is staged there
-- `startImportForTest` is called only by `importFixturePairing()` at line `350`,
-  which the ordinary-path methods never call. The hook stays in product source
-  (`apps/android/app/src/main/java/com/agentbrowser/probe/ConnectionSetupSession.java:193`)
-  as an existing test hook for the fixture replay suite.
+- `NetworkDeviceTest.testOrdinaryProtectedImport()` — `apps/android/app/src/androidTest/java/com/agentbrowser/probe/NetworkDeviceTest.java:885` — calls `importOrdinaryPairing()` at line `889`. That helper (lines `300`-`342`) launches `MainActivity` and drives the real launcher, real DocumentsUI file picker, the real protected `EditText` and the real `IMPORT` control, and asserts `connectionSetup` becomes `configured` with a changed `files/pairing/active-generation.json`.
+- `NetworkDeviceTest.testOrdinaryTailscaleBrowse()` — same file, line `899` — is the Tailscale variant and does **not** call `importOrdinaryPairing()`. It reuses the already-admitted pairing, asserts `connectionSetup` is `configured`, reads the endpoint from the pairing materials, and drives the ordinary `connect` control (plus `takeover` and the ordinary address form when a fixture URL is supplied).
+- the only app-private access in `importOrdinaryPairing()` is the read-only comparison of the active-generation file at line `331`; nothing is staged there, and `testOrdinaryTailscaleBrowse` only reads the admitted `endpoint.txt` material.
+- `startImportForTest` (definition `apps/android/app/src/main/java/com/agentbrowser/probe/ConnectionSetupSession.java:193`) is called only from `ConnectionSetupDeviceTest.java:93`, `:131`, `:275`, `:298` and `NetworkDeviceTest.java:350` (`importFixturePairing()`). Neither ordinary-path method calls it, and the hook stays in product source as an existing test hook for the fixture replay suite.
