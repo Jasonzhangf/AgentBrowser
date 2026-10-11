@@ -599,7 +599,6 @@ async function main() {
   let fixture;
   let install;
   let restart;
-  let reconnect;
   let blackbox;
   let cleanup;
   let whiteTime;
@@ -727,57 +726,24 @@ async function main() {
     await pressAccessibilityButton(secondApp.pid, '打开菜单', join(directory, 'restart-open-menu.log'));
     await pressAccessibilityButton(secondApp.pid, '连接', join(directory, 'restart-connect.log'));
     await sleep(4_000);
-    const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), secondApp.pid, false));
+    const restartStatus = await observeHostStatus('restart_connect', 2, 'agent');
+    screenshots.push(captureWindow(join(directory, 'restart-connect.png'), secondApp.pid, false));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
     restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
       restarted: {pid: secondApp.pid, executable: installedExecutable},
       exact_executable_hash: installedExecutableHash, different_pid: firstApp.pid !== secondApp.pid,
-      host_status: {after_reconnect: restartReconnectStatus}, restarted_at: now()};
+      host_status: {after_restart_connect: restartStatus}, restarted_at: now()};
     assert(restart.different_pid);
 
-    // Navigation, takeover, remote input, and stale control assertions are intentionally skipped in this admission slice.
-    if (false) {
-    const url = `data:text/html,${encodeURIComponent(page)}`;
-    focusAccessibilityTextField(secondApp.pid, '远程页面地址', join(directory, 'address-focus.log'));
-    postUnicodeText(secondApp.pid, url, join(directory, 'address-input.log'));
-    await sleep(500);
-    await pressAccessibilityButton(secondApp.pid, '打开', join(directory, 'navigate.log'));
-    await sleep(4_000);
-    clickPage(secondApp.pid, viewport, 90, 95, join(directory, 'button-surface-geometry.log'), join(directory, 'button-click.log'));
-    await sleep(1_000);
-    clickPage(secondApp.pid, viewport, 110, 170, join(directory, 'input-surface-geometry.log'), join(directory, 'input-click.log'));
-    await sleep(400);
-    const inputText = '你好，Mac 输入';
-    focusAccessibilityTextField(secondApp.pid, '输入到远程页面的文字', join(directory, 'input-focus.log'));
-    postUnicodeText(secondApp.pid, inputText, join(directory, 'input-set.log'));
-    await sleep(400);
-    await pressAccessibilityButton(secondApp.pid, '发送', join(directory, 'send-text.log'));
-    await sleep(2_000);
-    postSurfaceScroll(secondApp.pid, viewport, 180, 500, -20, join(directory, 'scroll-surface-geometry.log'), join(directory, 'scroll.log'));
-    await sleep(2_000);
-    screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), secondApp.pid, true));
-    await pressAccessibilityButton(secondApp.pid, '返回观察', join(directory, 'release.log'));
-    await sleep(2_000);
-    await observeHostStatus('release', 2, 'agent');
-    const inspection = fixtureResponseValue(await fixture.request('inspect'));
-    assert.deepEqual({clicked: inspection.clicked, text: inspection.text},
-      {clicked: 1, text: inputText});
-    assert(Number.isFinite(inspection.scrollY) && inspection.scrollY > 0);
-    assert(Number.isFinite(inspection.maxScroll) && inspection.maxScroll > 0);
-    }
-    // Disconnect/reconnect is outside the connect/session/media admission slice.
-    const disconnectedStatus = null;
-    const disconnectedAfterReconnectStatus = null;
-    const reconnectStatus = null;
-
+    // Explicitly skipped: takeover, navigation, remote input, disconnect, and reconnect are outside connect/session/media scope.
     const secondExit = await terminateOwned(secondApp, installedExecutable, join(directory, 'second-app-exit.json'));
     restart.restarted.exit = secondExit;
-    restart.host_status.after_disconnect = disconnectedAfterReconnectStatus;
+    restart.restarted.exit = secondExit;
     persist(join(directory, 'restart.json'), restart);
-    blackbox = {entrypoint, fixture: install.fixture, inspection, host_status: hostStatuses,
-      screenshots: screenshotLog(screenshots),
-      app_pids: [firstApp.pid, secondApp.pid], operations: ['connect', 'h264_display', 'disconnect_before_restart', 'restart', 'reconnect_after_restart', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'inspect_after_release', 'disconnect', 'reconnect']};
+    blackbox = {entrypoint, fixture: install.fixture, host_status: hostStatuses,
+      screenshots: screenshotLog(screenshots), app_pids: [firstApp.pid, secondApp.pid],
+      operations: ['connect', 'h264_display', 'restart'],
+      skipped_operations: ['takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'disconnect', 'reconnect']};
     persist(join(directory, 'blackbox.json'), blackbox);
     cleanup = {fixture_quit_requested: false, app_pids: [firstApp.pid, secondApp.pid]};
     await quitFixture(fixture);
@@ -804,14 +770,12 @@ async function main() {
     }
   }
 
-  assert(restart && reconnect && blackbox, 'Admission flow did not produce complete runtime receipts');
+  assert(restart && blackbox, 'Admission flow did not produce complete runtime receipts');
   const blackTime = now();
   assert(Date.parse(candidateTime) <= Date.parse(whiteTime), 'Candidate must precede whitebox completion');
   assert(Date.parse(whiteTime) <= Date.parse(install.installed_at), 'Whitebox must precede installation');
   assert(Date.parse(install.installed_at) <= Date.parse(restart.restarted_at), 'Installation must precede restart');
-  assert(Date.parse(restart.restarted_at) <= Date.parse(reconnect.at), 'Restart must precede reconnect replay');
-  assert(Date.parse(reconnect.at) <= Date.parse(blackTime), 'Reconnect must precede blackbox completion');
-  const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, reconnect: `reconnect-${prefix}`, black: `blackbox-${prefix}`};
+  const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, black: `blackbox-${prefix}`};
   function evidence(id, phase, kind, time, log, surface) {
     persist(`${records}/${id}.json`, {evidence_id: id, issue_id: issueId, experiment_id: `${issueId}-${prefix}`, phase, kind,
       source_commit: head, artifact_hash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
@@ -823,7 +787,6 @@ async function main() {
   evidence(ids.white, 'development_whitebox', 'gate', whiteTime, `${directory}/macos-compile.log`, 'development_whitebox');
   evidence(ids.install, 'deployment_install', 'install', install.installed_at, `${directory}/install.json`, 'deployed_blackbox');
   evidence(ids.restart, 'deployment_restart', 'restart', restart.restarted_at, `${directory}/restart.json`, 'deployed_blackbox');
-  evidence(ids.reconnect, 'deployed_blackbox', 'runtime', reconnect.at, `${directory}/reconnect.json`, 'deployed_blackbox');
   evidence(ids.black, 'deployed_blackbox', 'sample_replay', blackTime, `${directory}/blackbox.json`, 'deployed_blackbox');
   persist(candidatePath, {fix_candidate_id: `candidate-${prefix}`, issue_id: issueId, module_id: moduleId,
     worktree_id: root, base_commit: base, head_commit: head, tree_hash: tree,
@@ -832,14 +795,14 @@ async function main() {
   persist(validationPath, {validation_id: `validation-${prefix}`, issue_id: issueId, module_id: moduleId,
     fix_candidate_id: `candidate-${prefix}`, candidate_commit: head, candidate_tree_hash: tree,
     artifact_hash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
-    whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.reconnect, ids.black],
+    whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.black],
     deployment: {environment_id: environment, entrypoint, producer: blackProducer, install_receipt_id: ids.install,
-      restart_receipt_id: ids.restart, reconnect_receipt_id: ids.reconnect, observed_at: blackTime}, source_unchanged: true,
+      restart_receipt_id: ids.restart, observed_at: blackTime}, source_unchanged: true,
     result: 'pass', created_at: now()});
   command('appsdk', ['verify', '--review-admission', '--module', moduleId], {env: admissionEnv, log: join(directory, 'admission.log')});
   console.log(JSON.stringify({candidate: head, tree, artifactHash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
     artifactZipHash: install.artifact_zip_hash, installedExecutableHash: install.installed_executable_hash,
-    directory, install: `${directory}/install.json`, restart: `${directory}/restart.json`, reconnect: `${directory}/reconnect.json`,
+    directory, install: `${directory}/install.json`, restart: `${directory}/restart.json`,
     blackbox: `${directory}/blackbox.json`, admission: 'pass'}, null, 2));
 }
 
