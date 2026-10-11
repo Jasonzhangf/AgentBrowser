@@ -1,0 +1,4 @@
+pos=(1330.0, 403.0) size=(72.0, 44.0) title=卸载 UI 插件 desc=
+pos=(1338.0, 352.0) size=(16.0, 16.0) title= desc=
+pos=(1384.0, 352.0) size=(16.0, 16.0) title= desc=
+pos=(1361.0, 352.0) size=(16.0, 16.0) title= desc=
