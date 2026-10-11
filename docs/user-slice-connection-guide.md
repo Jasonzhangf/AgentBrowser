@@ -6,7 +6,7 @@
 
 | 产物 | 位置 | 身份 |
 | --- | --- | --- |
-| Android APK | `apps/android/app/build/outputs/apk/debug/app-debug.apk` | 包名 `com.agentbrowser.probe`，versionCode `2`，versionName `0.2.0-probe`，SHA-256 `8eceb55e404791484451499aac38cce70a2d6fcdd2aa2d1ed72f872a7d63cb45` |
+| Android APK | `/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/apps/android/app/build/outputs/apk/debug/app-debug.apk`（本集成 worktree 不含 APK） | 包名 `com.agentbrowser.probe`，versionCode `2`，versionName `0.2.0-probe`，SHA-256 `8eceb55e404791484451499aac38cce70a2d6fcdd2aa2d1ed72f872a7d63cb45` |
 | Mac 应用 | `apps/macos/build/AgentBrowserMac.app` | 可执行文件 SHA-256 `053adf8ad875a384605181dac38217dc30c2bb4e371af6d7448cae57209cd00c` |
 | Mac ZIP | `generated/modules/macos-shell/lib/AgentBrowserMac.app.zip` | 由 `scripts/build-macos.sh` 生成 |
 | Host 服务 | `scripts/host-service/host-service` | 协议版本 `11`，由本项目生命周期入口启动 |
@@ -83,11 +83,20 @@ scripts/host-service/host-service trust export --root "$ROOT" \
 
 - 中文输入法：当前验收模拟器没有可用的中文输入法子类型或中文输入法包。真实中文组合输入未验证。
 - 系统输入法焦点：`dumpsys input_method` 显示 `mInputShown=false`、`mServedInputConnection=null`。系统输入法抬升未验证。
-- 文档滚动位移：拖动产生滚动操作，但 Host DOM 的 `scrollY` 前后值没有记录差值。文档滚动位移未验证。
 - 跨节点 Tailscale：指定的 Android 节点 `15T`（`100.104.163.65`）离线。跨节点 Tailscale 未验证。
-- 验证方式限制：本次验收中一次性传输码由自动化输入代替人工输入。Mac 侧已证明会显示传输码并提供复制入口。
+- 传输码交付路径：Mac 侧会显示一次性传输码。复制入口已实现，但在捕获中未观察到可操作状态（`copy_action_available=implemented_not_visible`）。模拟器不共享主机剪贴板，因此未验证复制到 Android 的粘贴路径。本次验收中一次性传输码由操作者在同一 shell 内直接传给仪器测试，代替人工粘贴。
 - Host 范围：配对与准入在服务生命周期 Host 上验证；本地浏览在 fixture 启动的同一 r8 Host 上验证。
 - 独立 DOM 回读：服务生命周期 Host 不提供独立 DOM 回读通道。Tailscale 浏览中的点击由 Host 应用的画面重绘证明，不由独立 DOM 读取证明。
+- 稳定性：`testRealNetworkControlAndFrames` 在本环境中出现过两次与断言无关的失败后通过。浏览门禁当前不稳定。
+
+## 已通过的浏览范围
+
+在 fixture 启动的 r8 Host 上，远端视频、真实点击、拖动滚动和观察/接管均已通过。
+
+- 远端视频：`frameAck.renderedFrames=3`，`displayed=true`。
+- 真实点击：独立 Host DOM 记录 `clicked=1`。
+- 拖动滚动：Host 记录 `scrollTrace=[0,250,0]`，`maxScroll=250`，`finalScrollY=0`，`restoredToZero=true`。拖动把文档从 `0` 移到 `250`，反向拖动回到 `0`。两次独立运行复现。
+- 观察/接管：通过。
 
 ## 已通过的 Tailscale 范围
 
