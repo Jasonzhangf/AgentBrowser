@@ -520,7 +520,8 @@ async function main() {
       host_status: {after_restart_connect: restartStatus}, restarted_at: now()};
     assert(restart.different_pid);
 
-    // Explicitly skipped: takeover, navigation, remote input, disconnect, and reconnect are outside connect/session/media scope.
+    // Scope is connect/session/restart only. Explicitly skipped: h264_display/media,
+    // takeover, navigation, remote input, disconnect, and reconnect.
     const secondExit = await terminateOwned(secondApp, installedExecutable, join(directory, 'second-app-exit.json'));
     restart.restarted.exit = secondExit;
     restart.restarted.exit = secondExit;
