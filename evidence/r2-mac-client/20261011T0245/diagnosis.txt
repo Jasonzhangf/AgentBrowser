@@ -1,0 +1,6 @@
+Ordinary app trace after adding app-internal command logging and Snapshot decode logging:
+MAC_NATIVE_SEND op=status raw={"op":"status"}
+MAC_NATIVE_SEND op=status raw={"op":"status"}
+No op=connect was sent. No bridge response or connecting snapshot was delivered. Visible status remained `Connection: idle | Transport: unknown | Path: unknown`.
+The connect button source is packages/ui-plugins/main.tsx:541-542 (`id=connect`, onClick request({op:'connect'})); request() is main.tsx:239-246 and calls ctx.probe.request(command). Native prompt crossing is main.swift:2320-2336. Since no MAC_NATIVE_SEND op=connect exists, the chain stops before the native prompt bridge. Snapshot decode logger was added at main.swift:2257-2264 but emitted no decode failure; this confirms no connect response arrived.
+Exact first failing gate: the ordinary WebView connect press is not reaching ProbeNative/native request. AX did not expose the WebView connection button as a named control in this run, so the action could not be independently confirmed as the intended button.

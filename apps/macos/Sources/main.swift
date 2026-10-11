@@ -2255,7 +2255,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             DispatchQueue.main.async { self?.videoView.accept(header: header, bytes: bytes) }
         }
         bridge?.onSnapshot = { [weak self] raw in
-            guard let data = raw.data(using: .utf8), let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
+            guard let data = raw.data(using: .utf8) else { return }
+            guard let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+                fputs("MAC_SNAPSHOT_DECODE_FAILED raw=\(raw)\\n", stderr)
+                return
+            }
             DispatchQueue.main.async {
                 self?.latestSnapshot = snapshot
                 let state = snapshot.connectionState ?? "idle"
