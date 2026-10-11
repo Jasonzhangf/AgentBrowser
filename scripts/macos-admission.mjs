@@ -496,13 +496,13 @@ async function main() {
     const firstApp = await launchApp('app-first');
     await waitForWindow(firstApp);
     await sleep(1_500);
-    screenshots.push(captureWindow(join(directory, 'waiting.png'), firstApp.pid, false));
+    screenshots.push(captureWindow(join(directory, 'waiting.png'), firstApp.pid));
     await pressAccessibilityButton(firstApp.pid, '打开菜单', join(directory, 'open-menu.log'));
     await pressAccessibilityButton(firstApp.pid, '连接', join(directory, 'connect.log'));
     await sleep(4_000);
     const connectStatus = await observeHostStatus('connect', 2, 'agent');
     writeFileSync(join(directory, 'connect.json'), JSON.stringify({operation: 'connect', ax_target: '连接', status: connectStatus}, null, 2) + '\n', {flag: 'wx'});
-    const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid, false);
+    const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
@@ -512,7 +512,7 @@ async function main() {
     await pressAccessibilityButton(secondApp.pid, '连接', join(directory, 'restart-connect.log'));
     await sleep(4_000);
     const restartStatus = await observeHostStatus('restart_connect', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'restart-connect.png'), secondApp.pid, false));
+    screenshots.push(captureWindow(join(directory, 'restart-connect.png'), secondApp.pid));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
     restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
       restarted: {pid: secondApp.pid, executable: installedExecutable},
@@ -528,8 +528,8 @@ async function main() {
     blackbox = {entrypoint, fixture: install.fixture, host_status: hostStatuses,
       screenshots: screenshotLog(screenshots), app_pids: [firstApp.pid, secondApp.pid],
       ax_actions: [{target: '打开菜单', receipt: 'open-menu.log'}, {target: '连接', receipt: 'connect.log'}],
-      connect_receipt: 'connect.json', operations: ['connect', 'h264_display', 'restart'],
-      skipped_operations: ['takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'disconnect', 'reconnect']};
+      connect_receipt: 'connect.json', operations: ['connect', 'restart'],
+      skipped_operations: ['h264_display', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'disconnect', 'reconnect']};
     persist(join(directory, 'blackbox.json'), blackbox);
     cleanup = {fixture_quit_requested: false, app_pids: [firstApp.pid, secondApp.pid]};
     await quitFixture(fixture);

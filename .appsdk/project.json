@@ -446,7 +446,8 @@
           "Cargo.toml",
           "Cargo.lock",
           "package-lock.json",
-          "scripts/macos-admission-scope.test.mjs"
+          "scripts/macos-admission-scope.test.mjs",
+          "scripts/macos-admission.mjs"
         ],
         "minimum_test_count": 2,
         "ordinary_mode_after_freeze": "disabled",

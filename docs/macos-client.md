@@ -137,4 +137,4 @@ full M1 acceptance. Those remain integration-owner work.
 
 ## Narrow admission scope
 
-The current admission harness verifies only connect, Host session status, H.264/media display, and restart. It executes AX `打开菜单` followed by `连接`, records `connect.json` and the AX receipts in blackbox output, and explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`. It does not infer codec success from screenshot hashes; media evidence requires Host status/rendered-frame fields.
+The current admission harness verifies only the ordinary AX menu-open and connect action, Host session status, and restart receipt. It does not claim media or codec coverage; `h264_display` is explicitly skipped. It also explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`.

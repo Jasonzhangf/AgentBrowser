@@ -27,4 +27,4 @@ This manifest update records scope only. The repair candidate awaits a new freez
 
 ## Task-29 admission slice
 
-The Mac admission harness is narrowed to connect, Host session status, H.264/media display, and restart. It explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`; it rejects dead code and reconnect receipt references and checks the AX `打开菜单` then `连接` sequence. Runtime evidence must be generated only after review of commit `1262d8b`.
+The Mac admission harness is narrowed to connect, Host session status, and restart. It explicitly skips media/codec (`h264_display`), takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`; it checks dead code, receipt consistency, and AX `打开菜单` then `连接` order. Runtime evidence must be generated only after review of commit `1a58ac8`.
