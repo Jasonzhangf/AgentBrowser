@@ -74,6 +74,10 @@ final class NetworkSession {
     synchronized JSONObject editorContext(){
         return host==null?null:host.optJSONObject("editor_context");
     }
+    /** Host-published navigation state; the app never invents a local URL. */
+    synchronized JSONObject navigation(){
+        return host==null?null:host.optJSONObject("navigation");
+    }
     synchronized JSONObject selection(){
         JSONObject context=editorContext();
         return context==null?null:context.optJSONObject("selection");

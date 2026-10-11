@@ -1,0 +1,190 @@
+"""Real user path on the live service-lifecycle Host.
+
+Ordinary protected import, ordinary connect, a real HTTPS document through the
+ordinary address bar, remote video, a real touch, and the RAW system IME gate.
+The transfer code is captured in-process in this same shell, passed only as a
+transient instrumentation argument, and never printed or persisted.
+"""
+import sys
+
+# The replay imports one sibling module; keep its bytecode cache out of the tree.
+sys.dont_write_bytecode = True
+
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import tempfile
+import time
+
+from instrumentation_result import InstrumentationExpectation, parse_instrumentation_result
+
+TEST_CLASS = "com.agentbrowser.probe.NetworkDeviceTest"
+RUNNER = "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"
+ADMISSION_METHOD = "testOrdinaryRealPathAdmission"
+REAL_PATH_METHOD = "testOrdinaryRealHttpsAndRemoteIme"
+
+root = pathlib.Path(__file__).resolve().parent.parent
+serial = os.environ["ANDROID_SERIAL"]
+launcher = root / "scripts/host-service/host-service"
+service_root = pathlib.Path(
+    os.environ.get("HOST_SERVICE_ROOT", str(pathlib.Path.home() / "Library/Application Support/AgentBrowser/host-service"))
+).expanduser()
+device_id = os.environ["HOST_DEVICE_ID"]
+page_url = os.environ.get("REAL_PATH_URL", "https://www.selenium.dev/selenium/web/web-form.html")
+ascii_text = os.environ.get("REAL_PATH_TEXT", "hello")
+tap_x = os.environ.get("REAL_PATH_TAP_X", "196")
+tap_y = os.environ.get("REAL_PATH_TAP_Y", "107")
+endpoint_port = int(os.environ.get("HOST_ENDPOINT_PORT", "51880"))
+
+run_id = time.strftime("%Y%m%dT%H%M%S", time.localtime())
+evidence = pathlib.Path(
+    os.environ.get("REAL_PATH_EVIDENCE_DIR", str(root / "evidence" / "user-slice" / f"real-path-{run_id}"))
+).resolve()
+evidence.mkdir(parents=True, exist_ok=True)
+print(f"Real-path replay evidence: {evidence}", flush=True)
+
+
+def adb(*args, **kwargs):
+    return subprocess.run(["adb", "-s", serial, *args], check=True, capture_output=True, **kwargs)
+
+
+def shell(command):
+    return adb("shell", command).stdout.decode("utf-8", "replace")
+
+
+def pull(name):
+    """Copy one app-private evidence file out; a missing file is not an error."""
+    result = subprocess.run(
+        ["adb", "-s", serial, "exec-out", "run-as", "com.agentbrowser.probe", "cat", f"files/network-evidence/{name}"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+    )
+    if result.returncode or not result.stdout or result.stdout.startswith(b"cat: "):
+        return None
+    (evidence / name).write_bytes(result.stdout)
+    return result.stdout
+
+
+def instrumentation(method, extra, expected_entries):
+    command = ["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "class", f"{TEST_CLASS}#{method}"]
+    for name, value in extra:
+        command += ["-e", name, value]
+    command.append(RUNNER)
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=240, check=False)
+    (evidence / f"instrument-{method}.txt").write_bytes(result.stdout)
+    expectation = InstrumentationExpectation(
+        test_class=TEST_CLASS, test_count=1, summary="OK (1 test)",
+        instrumentation_code=-1, test_entries=((TEST_CLASS, method),),
+    )
+    parsed = parse_instrumentation_result(result.stdout, expectation)
+    return parsed
+
+
+gates = {}
+
+
+def gate(name, passed, detail):
+    gates[name] = {"result": "PASS" if passed else "FAIL", "detail": detail}
+    print(f"{'PASS' if passed else 'FAIL'} {name}: {detail}", flush=True)
+    return passed
+
+
+private = pathlib.Path(tempfile.mkdtemp(prefix="real-path-"))
+os.chmod(private, 0o700)
+code = None
+try:
+    # The device reaches the loopback-bound Host only through its own loopback.
+    adb("reverse", f"tcp:{endpoint_port}", f"tcp:{endpoint_port}")
+    reverse = adb("reverse", "--list").stdout.decode("utf-8", "replace").strip().splitlines()
+    (evidence / "adb-reverse.json").write_text(json.dumps(
+        {"runId": run_id, "serial": serial, "port": endpoint_port, "listing": reverse}, indent=2) + "\n")
+
+    # Step 1: the one-time transfer code, captured in this same shell.
+    exported = subprocess.run(
+        [str(launcher), "trust", "export", "--root", str(service_root), "--device-id", device_id,
+         "--output", str(private / "pairing.abconnection"), "--include-transfer-code"],
+        capture_output=True, text=True, check=True,
+    )
+    try:
+        payload = json.loads(exported.stdout)
+    except ValueError:
+        # The raw stdout carries the code, so it must never reach an exception message.
+        raise SystemExit("trust export did not return JSON")
+    code = payload.get("transfer_code")
+    if not isinstance(code, str) or not code:
+        raise SystemExit("trust export returned no transfer code")
+    bundle = private / "pairing.abconnection"
+    bundle_sha256 = hashlib.sha256(bundle.read_bytes()).hexdigest()
+
+    # Step 2: push the bundle and prove the device copy is byte-identical.
+    adb("push", str(bundle), "/sdcard/Download/pairing.abconnection")
+    device_sha256 = shell(f"sha256sum /sdcard/Download/pairing.abconnection").split()[0]
+    (evidence / "bundle.json").write_text(json.dumps({
+        "runId": run_id, "deviceId": device_id, "serviceRoot": str(service_root),
+        "endpointPort": endpoint_port, "bundleSha256": bundle_sha256, "deviceSha256": device_sha256,
+        "deviceCopyMatches": device_sha256 == bundle_sha256,
+    }, indent=2) + "\n")
+    if not gate("bundle-identity", device_sha256 == bundle_sha256,
+                f"device sha256 {device_sha256} vs exported {bundle_sha256}"):
+        raise SystemExit(2)
+
+    # Step 3: the ordinary DocumentsUI import with the protected transfer code.
+    admission = instrumentation(ADMISSION_METHOD, [("transferCode", code)], ((TEST_CLASS, ADMISSION_METHOD),))
+    admission_evidence = pull("admission.json")
+    if admission_evidence is None:
+        admission_evidence = b"{}"
+    admission_json = json.loads(admission_evidence)
+    gate("ordinary-admission", admission.ok,
+         f"panel={admission_json.get('panelState')} endpoint={admission_json.get('endpoint')} "
+         f"generation={admission_json.get('activeGeneration')} parser={admission.status}")
+
+    # Steps 4-9: connect, real HTTPS document, video, real touch, system IME, release.
+    real_path = instrumentation(REAL_PATH_METHOD, [
+        ("pageUrl", page_url), ("asciiText", ascii_text), ("tapX", tap_x), ("tapY", tap_y),
+    ], ((TEST_CLASS, REAL_PATH_METHOD),))
+    for name in ["real-path.json", "dumpsys-input-method.txt", "dumpsys-input-method-after-typing.txt",
+                 "logcat-focus.txt", "ime-state.json", "ime-key-touches.txt", "ime-keyboard.txt",
+                 "real-path-before-tap.png", "real-path-after-tap.png", "release.json"]:
+        pull(name)
+    real_path_json = {}
+    if (evidence / "real-path.json").is_file():
+        real_path_json = json.loads((evidence / "real-path.json").read_text())
+
+    final_scheme = real_path_json.get("finalScheme")
+    gate("real-https-navigation", final_scheme == "https",
+         f"finalUrl={real_path_json.get('finalUrl')} scheme={final_scheme} "
+         f"documentRevision={real_path_json.get('documentRevisionBefore')}->{real_path_json.get('documentRevisionAfter')}")
+    gate("remote-video", (real_path_json.get("renderedFramesAfter") or 0) >= 2,
+         f"renderedFrames={real_path_json.get('renderedFramesBefore')}->{real_path_json.get('renderedFramesAfter')} "
+         f"ticket={real_path_json.get('displayedTicket')}")
+    gate("real-touch-focus", bool(real_path_json.get("editorEditable")),
+         f"target={real_path_json.get('editorTargetId')} kind={real_path_json.get('editorKind')} "
+         f"frameChanged={real_path_json.get('frameChangedAfterTap')}")
+    ime_shown = str(real_path_json.get("imeInputShown")) == "true"
+    served = real_path_json.get("imeServedInputConnection")
+    served_view = str(real_path_json.get("imeServedView"))
+    gate("system-ime-focus", ime_shown and served is not None and "com.agentbrowser.probe" in served_view,
+         f"mInputShown={real_path_json.get('imeInputShown')} mServedInputConnection={served} "
+         f"mServedView={served_view} mCurMethodId={real_path_json.get('imeCurMethodId')}")
+    host_text = str(real_path_json.get("hostFieldText") or "")
+    gate("ascii-lands-in-remote-page", ascii_text in host_text,
+         f"ascii={ascii_text!r} hostFieldText={host_text!r} typingNote={real_path_json.get('typingNote')}")
+    gate("release-and-disconnect", real_path.ok, f"parser={real_path.status}")
+
+    (evidence / "run.json").write_text(json.dumps({
+        "runId": run_id, "serial": serial, "pageUrl": page_url, "asciiText": ascii_text,
+        "tapX": tap_x, "tapY": tap_y, "deviceId": device_id, "bundleSha256": bundle_sha256,
+        "admissionParser": admission.status, "realPathParser": real_path.status,
+        "realPath": real_path_json, "gates": gates,
+    }, indent=2) + "\n")
+    failed = [name for name, value in gates.items() if value["result"] != "PASS"]
+    print(json.dumps({"failed": failed, "gates": gates}, indent=2), flush=True)
+    raise SystemExit(1 if failed else 0)
+finally:
+    # The code and its bundle are transient: drop them before anything else.
+    code = None
+    shutil.rmtree(private, ignore_errors=True)
+    subprocess.run(["adb", "-s", serial, "shell", "rm", "-f", "/sdcard/Download/pairing.abconnection"],
+                   check=False, capture_output=True)
