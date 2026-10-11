@@ -1,0 +1,5 @@
+Ordinary app native command trace:
+MAC_NATIVE_SEND op=status raw={"op":"status"}
+MAC_NATIVE_SEND op=status raw={"op":"status"}
+No MAC_NATIVE_SEND op=connect was recorded after the visible-action attempt. No bridge connect response or connecting snapshot occurred. The first break is before main.swift:2320-2336: the ordinary WebView did not dispatch the connect command to ProbeNative. The bridge transport is therefore not at fault in this run; the visible app remained `Connection: idle | Transport: unknown | Path: unknown`.
+The connection control was not exposed in the sampled AX tree (only unnamed native buttons), so the visible press could not be independently confirmed as the WebView `连接` button. This confirms the remaining product-quality gate is user-visible control observability/dispatch, not protocol framing.

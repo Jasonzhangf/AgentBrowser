@@ -302,6 +302,8 @@ private final class NativeBridge {
     }
 
     func request(_ raw: String) -> String {
+        let commandName = (try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])?["op"] as? String ?? "unknown"
+        fputs("MAC_NATIVE_SEND op=\(commandName) raw=\(raw)\\n", stderr)
         guard raw.utf8.count <= maximumCommandBytes else { return rejection("COMMAND_SIZE") }
         condition.lock()
         guard alive else {
@@ -335,6 +337,8 @@ private final class NativeBridge {
             return rejection(stillAlive ? "NATIVE_BRIDGE_TIMEOUT" : "NATIVE_BRIDGE_CLOSED")
         }
         let projected = responseTransform?(value) ?? value
+        let snapshotState = (try? JSONSerialization.jsonObject(with: Data(projected.utf8)) as? [String: Any])?["connectionState"] as? String ?? "unknown"
+        fputs("MAC_NATIVE_RECV op=\(commandName) connectionState=\(snapshotState) response=\(projected)\\n", stderr)
         onSnapshot?(projected)
         return projected
     }
