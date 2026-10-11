@@ -2227,11 +2227,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
+        fputs("MAC_WEBVIEW_CREATED frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n", stderr)
 
         contentView = BrowserContentView(frame: .zero)
         contentView.onLayout = { [weak self] in self?.applyLayout(revision: true) }
         contentView.addSubview(videoView)
         contentView.addSubview(webView)
+        fputs("MAC_WEBVIEW_ADDED frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n", stderr)
         connectionStatusSurface = NSTextField(labelWithString: "Connection: idle | Transport: unknown | Path: unknown")
         connectionStatusSurface.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         connectionStatusSurface.textColor = .labelColor
@@ -2300,7 +2302,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
             webView.loadHTMLString("<h1>Mac UI asset missing</h1>", baseURL: nil)
             return
         }
-        fputs("MAC_WEBVIEW_LOAD_REQUEST url=\(uiURL.absoluteString) exists=\(FileManager.default.fileExists(atPath: uiURL.path))\\n", stderr)
+        fputs("MAC_WEBVIEW_LOAD_REQUEST url=\(uiURL.absoluteString) exists=\(FileManager.default.fileExists(atPath: uiURL.path)) frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n", stderr)
         webView.loadFileURL(uiURL, allowingReadAccessTo: uiURL.deletingLastPathComponent())
         applyLayout(revision: true)
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.updateViewport() }
