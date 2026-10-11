@@ -306,18 +306,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         device.executeShellCommand("am start -n com.agentbrowser.probe/.MainActivity");
         assertTrue("MainActivity",device.wait(Until.hasObject(By.pkg("com.agentbrowser.probe")),10000));
         // WebView content is not exposed as child accessibility nodes on this
-        // device. Use UiDevice's real touch coordinate for the visible launcher
-        // control, then locate the ordinary button once the drawer is open.
-        UiObject2 drawer=device.findObject(By.desc("打开菜单配置连接"));
-        if(drawer!=null) drawer.click(); else { device.click(1005,68); device.waitForIdle(); }
-        UiObject2 importButton=device.wait(Until.findObject(By.text("导入")),5000);
-        if(importButton==null){
-            // The ordinary drawer's 导入 control is rendered in the WebView;
-            // this coordinate is the visible control, not an app test hook.
-            device.click(350,630); device.waitForIdle();
-            importButton=device.wait(Until.findObject(By.text("导入")),2000);
-        }
-        assertNotNull("Ordinary import button",importButton); importButton.click();
+        // device. Read each control's live DOM rect and map it through the
+        // native WebView bounds; no device-specific coordinates or OCR.
+        touchChrome("drawer-toggle");
+        until("document.querySelector('main').dataset.drawerOpen==='true'",6000);
+        touchChrome("connection-import");
         assertTrue("DocumentsUI",device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")),10000));
         UiObject2 download=device.wait(Until.findObject(By.text("Download")),10000);
         if(download!=null) download.click();
