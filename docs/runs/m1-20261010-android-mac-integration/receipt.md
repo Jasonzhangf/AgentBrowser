@@ -45,8 +45,8 @@ deployed entrypoint is the built artifact of this candidate.
 | --- | --- | --- | --- |
 | Repository verification | `npm run verify:local` | PASS (typecheck, 34/34 tsx, build:ui) | commit hook output |
 | Dual runner unit tests | `python3 scripts/test-m1-dual-client-runner.py` | PASS 23/23 | `scripts/test-m1-dual-client-runner.py` |
-| Android network replay | `python3 scripts/network-replay.py` | **PASS** | `evidence/network/a9742364ea114174998c51688e0fdeba/` |
-| Mac bridge replay | `python3 scripts/local-direct/replay.py --mode bridge` | **bridge_transport_pass** | `evidence/local-direct/replay-integrated-d2dcc1b/evidence.json` |
+| Android network replay | `python3 scripts/network-replay.py` | **PASS** | retention map, outside Git: `/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/evidence/network/a9742364ea114174998c51688e0fdeba/` (sibling worktree) |
+| Mac bridge replay | `python3 scripts/local-direct/replay.py --mode bridge` | **bridge_transport_pass** | retention map, outside Git: `/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/evidence/local-direct/replay-integrated-d2dcc1b/evidence.json` (sibling worktree) |
 | Dual client integration | `python3 scripts/m1-dual-client-runner.py` | **partial** (all stages passed) | `/tmp/agentbrowser-m1-dual/dual-r10-20261010T133822/` |
 
 ### Android network replay (independent Host DOM evidence)
@@ -194,6 +194,11 @@ under `/tmp/agentbrowser-m1-dual/`. No credentials, private keys, or bundle
 contents are recorded here.
 
 ## Reproduce
+
+This command block runs from the sibling worktree
+`/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009`,
+which is why the relative `--evidence-dir evidence/local-direct/replay-integrated-d2dcc1b`
+path below is correct there.
 
 ```sh
 export ANDROID_SERIAL=emulator-5554
