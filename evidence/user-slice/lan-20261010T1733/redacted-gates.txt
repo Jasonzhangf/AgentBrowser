@@ -1,0 +1,23 @@
+run=lan-20261010T1733
+lan_ipv4=192.168.0.3 (from: ipconfig getifaddr en0)
+tailscale_ipv4=100.66.1.82 (from: tailscale ip -4)
+service_root=$HOME/Library/Application Support/AgentBrowser/host-service-lan
+service_label=com.agentbrowser.lan
+runtime_root=/tmp/abn-lan-runtime (0700)
+profile_root=/tmp/abn-lan-profile (0700)
+protocol_version=11
+host_pid=2185
+socket_dir=/tmp/abn-lan-runtime/host-bd4369b6
+trust_init=PASS; endpoint_host=192.168.0.3; endpoint_port=51882
+lifecycle_start=PASS
+status=PASS
+provision=PASS; device_id=c02d396c-5178-42d8-9ed5-03f7e83f25c7
+membership=PASS; export_eligible
+endpoint_refresh=PASS; bound_address=192.168.0.3:51882; generation=1; endpoint_pid=5534
+bound_address_is_loopback=NO
+export=PASS; redacted; bundle_sha256=1f1e2de4053cc2d2d7ebf07596b2a05bbb5726b258f146b0ae2e71c67521656c
+mac_lan_probe=PASS; 192.168.0.3:51882
+adb_reverse_used_for_this_probe=NO; reverse list only host-16 tcp:51880 tcp:51880
+emulator_lan_probe=PASS; EMU_LAN_DIRECT_OK
+host_left_running=YES
+transfer_code_present=NO
