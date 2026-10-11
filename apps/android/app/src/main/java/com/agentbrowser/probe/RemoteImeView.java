@@ -6,11 +6,14 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import org.json.JSONObject;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Invisible OS InputConnection for the remote editable target. */
 final class RemoteImeView extends View {
@@ -29,6 +32,17 @@ final class RemoteImeView extends View {
     private boolean inputConnectionReady;
     private String connectionIdentity;
     private Connection connection;
+    private final Handler imeHandler = new Handler(Looper.getMainLooper());
+    private final AtomicInteger showAttempts = new AtomicInteger();
+    private final Runnable imeRetry = new Runnable() {
+        @Override public void run() {
+            if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) return;
+            WindowInsets insets=getRootWindowInsets();
+            if (insets != null && insets.isVisible(WindowInsets.Type.ime())) return;
+            showInputWhenReady();
+            if (showAttempts.incrementAndGet() < 10) imeHandler.postDelayed(this,200);
+        }
+    };
 
     RemoteImeView(Context context, Host host) {
         super(context);
@@ -74,6 +88,7 @@ final class RemoteImeView extends View {
     }
 
     void deactivate() {
+        imeHandler.removeCallbacks(imeRetry);
         active = false;
         inputConnectionReady = false;
         if (connection != null) connection.abandonComposition();
@@ -98,7 +113,10 @@ final class RemoteImeView extends View {
         outAttrs.imeOptions = RemoteInput.imeOptions(context);
         connection = new Connection();
         inputConnectionReady = true;
+        showAttempts.set(0);
+        imeHandler.removeCallbacks(imeRetry);
         post(this::showInputWhenReady);
+        imeHandler.postDelayed(imeRetry,200);
         return connection;
     }
 
