@@ -1243,6 +1243,12 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             if(key==null)key=device().findObject(By.res(imePackage,"key_"+candidate));
             if(key!=null)return key;
         }
+        // LatinIME changes resource ids across images. Inspect its real
+        // accessibility nodes and match visible labels or content descriptions.
+        for(UiObject2 candidate:device().findObjects(By.pkg(imePackage))){
+            String text=candidate.getText(),description=String.valueOf(candidate.getContentDescription());
+            if(lower.equalsIgnoreCase(text)||lower.equalsIgnoreCase(description))return candidate;
+        }
         return null;
     }
 
