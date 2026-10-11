@@ -1153,12 +1153,29 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }while(SystemClock.elapsedRealtime()<deadline);
         return text;
     }
+    /** Raw focus ownership across the tap -> eligible -> raise window. */
+    private String focusState()throws Exception{
+        final String[] out=new String[1];
+        getInstrumentation().runOnMainSync(()->{
+            android.view.View focused=activity.getCurrentFocus();
+            RemoteImeView ime=activity.remoteIme;
+            out[0]="windowFocus="+activity.hasWindowFocus()
+                +" currentFocus="+(focused==null?"null":focused.getClass().getSimpleName()
+                    +"@"+Integer.toHexString(System.identityHashCode(focused))
+                    +(focused.getId()==android.view.View.NO_ID?"":"#"+focused.getId()))
+                +" imeHasFocus="+ime.hasFocus()+" imeIsFocused="+ime.isFocused()
+                +" imeFocusable="+ime.isFocusable()+"/"+ime.isFocusableInTouchMode()
+                +" imeAttached="+ime.isAttachedToWindow()+" imeWindowFocus="+ime.hasWindowFocus()
+                +" attempts="+ime.showAttempts();
+        });
+        return out[0];
+    }
     private void forceImeHiddenBeforeTap()throws Exception{
         getInstrumentation().runOnMainSync(()->activity.getSystemService(InputMethodManager.class)
             .hideSoftInputFromWindow(activity.remoteIme.getWindowToken(),0));
         String dump=rawShell("dumpsys input_method");
         JSONObject state=parseImeState(dump);
-        writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump));
+        writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump)+"focus "+focusState()+"\n");
         assertEquals("IME must be hidden before causal remote tap: "+imeLines(dump),"false",String.valueOf(state.opt("mInputShown")));
     }
     private String selectedImePackage()throws Exception{
@@ -1168,6 +1185,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     private JSONObject pollImeRaised(long timeout)throws Exception{
         long started=SystemClock.elapsedRealtime();
         StringBuilder trace=new StringBuilder();
+        StringBuilder focusTrace=new StringBuilder();
         JSONObject latest=null;
         String imePackage=selectedImePackage();
         do{
@@ -1181,7 +1199,11 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 .put("imeWindowPresent",keyboardWindow)
                 .put("servedRemoteIme",served);
             String lines=imeLines(dump);
-            trace.append("elapsedMs=").append(elapsed).append(" imeWindowPresent=").append(keyboardWindow).append('\n').append(lines).append('\n');
+            String focus=focusState();
+            focusTrace.append("elapsedMs=").append(elapsed).append(" ").append(focus).append('\n');
+            latest.put("focus",focus);
+            trace.append("elapsedMs=").append(elapsed).append(" imeWindowPresent=").append(keyboardWindow)
+                .append(" ").append(focus).append('\n').append(lines).append('\n');
             boolean flagShown="true".equals(String.valueOf(parsed.opt("mInputShown")));
             boolean viewShown="true".equals(String.valueOf(parsed.opt("mIsInputViewShown")));
             // The IME must really be up. When the window-insets path performs the
@@ -1189,6 +1211,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             // genuinely raised, so require the live keyboard window as well.
             if(served&&(flagShown||(viewShown&&keyboardWindow))){
                 writeRaw("dumpsys-input-method.txt",trace.toString());
+                writeRaw("focus-trace.txt",focusTrace.toString());
                 writeRaw("ime-keyboard-raised.txt",rawShell("uiautomator dump /sdcard/ime-raised.xml >/dev/null 2>&1; cat /sdcard/ime-raised.xml"));
                 latest.put("raiseElapsedMs",elapsed)
                     .put("raiseSignal",flagShown?"mInputShown":"mIsInputViewShown+imeWindow");
@@ -1197,6 +1220,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             SystemClock.sleep(250);
         }while(SystemClock.elapsedRealtime()-started<timeout);
         writeRaw("dumpsys-input-method.txt",trace.toString());
+        writeRaw("focus-trace.txt",focusTrace.toString());
         fail("System IME did not raise within "+timeout+"ms: "+latest);
         return latest;
     }

@@ -170,7 +170,7 @@ try:
         ("pageUrl", page_url), ("asciiText", ascii_text), ("tapX", tap_x), ("tapY", tap_y),
     ], ((TEST_CLASS, REAL_PATH_METHOD),))
     for name in ["real-path.json", "dumpsys-input-method.txt", "dumpsys-input-method-pre-tap.txt",
-                 "dumpsys-input-method-after-typing.txt",
+                 "dumpsys-input-method-after-typing.txt", "focus-trace.txt",
                  "logcat-focus.txt", "ime-state.json", "ime-key-touches.txt", "ime-keyboard.txt",
                  "real-path-before-tap.png", "real-path-after-tap.png", "release.json"]:
         pull(name)
