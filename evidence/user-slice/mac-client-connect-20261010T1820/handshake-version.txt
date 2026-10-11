@@ -1,0 +1,13 @@
+Handshake version evidence:
+
+Client constant: /Volumes/Intel/playground/obscura/m1-media-encoder-ownership-fix-r8-20261009/protocol/browser/src/lib.rs:479-482 defines HOST_PROTOCOL_VERSION = 11. AgentBrowser consumes this external owner via packages/client-connection/src/transport.rs:4 and checks Response::Ready at lines 571-582. The check is on a control WebSocket JSON frame, after TLS and WebSocket upgrade; it is not a WebSocket subprotocol/header check. The client open() constructs the /control WebSocket at transport.rs:613-651 and sets no Sec-WebSocket-Protocol version.
+
+Host advertisement: /Volumes/Intel/playground/obscura/m1-media-encoder-ownership-fix-r8-20261009/crates/obscura-host/src/daemon.rs:118-123 writes Response::Ready { version: HOST_PROTOCOL_VERSION, session_id } immediately after the local host.sock Unix connection. Remote endpoint daemon path at lines 125-147 writes the same Response::Ready version after remote admission. The external protocol constant is 11 at protocol/browser/src/lib.rs:479-482. The task6 service status independently reports protocol_version=11.
+
+Raw mismatch observation: Mac UI reports `Protocol: Expected Host protocol version 11`, which is the client's generic error branch. No raw received Response was captured yet because transport.rs discarded the nonmatching response in the error text (diagnostic change was reverted). Host endpoint.log shows TLS handshake EoF and accepted media acquire for an existing session, but no independent new Mac session was identified.
+
+Conclusion: both source constants and service report 11. No evidence supports lowering or disabling the check. The remaining mismatch is likely the endpoint's /control response shape/channel (or a stale endpoint binary), not the declared version value. Required next action is capture the actual Response JSON on the same /control WebSocket, then fix the owning endpoint/client framing path without weakening version validation.
+
+Actual raw first server WebSocket control frame (captured from temporary TASK19_RAW_CONTROL_FRAME instrumentation in packages/client-connection/src/transport.rs:675-690):
+{"type":"error","id":1,"code":"REMOTE_INITIAL_PROFILE_ACCESS_DENIED","message":"Profile default does not grant this device"}
+This is a valid JSON control frame. The generic client error `Protocol: Expected Host protocol version 11` was caused because the client incorrectly treated the Host Error response as a version mismatch. The endpoint did advertise/handle the connection and returned an authorization error. Task6 membership was then granted to device e22b76b6-31ac-487b-9953-13e0d78daec8 via lifecycle admin command; receipt catalog_revision=32 is in task6-membership-grant.json.

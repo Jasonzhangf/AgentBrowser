@@ -574,9 +574,13 @@ async fn establish_control(
             version: HOST_PROTOCOL_VERSION,
             session_id,
         } if !session_id.is_empty() => session_id,
-        _ => {
+        Response::Error { code, message, .. } => {
+            return Err(Failure::Protocol(format!("Host {code}: {message}")))
+        }
+        other => {
             return Err(Failure::Protocol(format!(
-                "Expected Host protocol version {HOST_PROTOCOL_VERSION}"
+                "Expected Host protocol version {HOST_PROTOCOL_VERSION}; received {:?}",
+                other
             )))
         }
     };
@@ -674,9 +678,17 @@ async fn next(socket: &mut Socket) -> Result<Message, Failure> {
 async fn response(socket: &mut Socket) -> Result<Response, Failure> {
     match next(socket).await? {
         Message::Text(text) if text.len() <= 1024 * 1024 => {
+            eprintln!("TASK19_RAW_CONTROL_FRAME text={text}");
             serde_json::from_str(&text).map_err(|error| Failure::Protocol(error.to_string()))
         }
-        _ => Err(Failure::Protocol("Expected bounded control JSON".into())),
+        Message::Binary(bytes) => {
+            eprintln!("TASK19_RAW_CONTROL_FRAME binary_len={} bytes={:02x?}", bytes.len(), bytes);
+            Err(Failure::Protocol("Expected bounded control JSON".into()))
+        }
+        other => {
+            eprintln!("TASK19_RAW_CONTROL_FRAME other={other:?}");
+            Err(Failure::Protocol("Expected bounded control JSON".into()))
+        }
     }
 }
 
