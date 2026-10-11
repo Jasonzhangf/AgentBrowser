@@ -1,31 +1,43 @@
-# Task-17 Mac client connection
+# Task-19 Mac client wire handshake
 
-Status: **INCOMPLETE — connection handshake failure after setup fix**.
+Status: **INCOMPLETE — initial profile authorization was the first runtime gate; explicit error handling fixed, reconnect proof pending.**
 
-## Source diagnosis
+## Raw first frame
 
-The visible `连接` action is mapped by `packages/ui-plugins/main.tsx:542` to `request({op:'connect'})`. `main.swift:2320-2336` receives the ProbeNative prompt and forwards it to the bridge; `main.swift:301-336` wraps it as `{id,command}`. Native dispatch `connection-bridge/src/main.rs:500-515` receives `connect`; `819-861` loads pairing and calls `Connector.connect`.
+Temporary instrumentation in `packages/client-connection/src/transport.rs:675-690` captured this first server `/control` WebSocket frame:
 
-The prior required/unconfigured state was caused by the native snapshot omitting connection setup and capability projection. The minimal fix adds these projections from the already-loaded pairing truth: configured setup, `wss` transport, direct path, and capabilities. It does not add another pairing format or modify credentials.
+```json
+{"type":"error","id":1,"code":"REMOTE_INITIAL_PROFILE_ACCESS_DENIED","message":"Profile default does not grant this device"}
+```
 
-## Runtime result
+The frame is valid Host control JSON. The previous generic client error (`Protocol: Expected Host protocol version 11`) was misleading: the Host did not send a mismatched Ready version. It sent an authorization error.
 
-With `/tmp/abn-task16-pairing` containing the existing task6 pairing files:
+## Owner and fix
 
-- Native bridge status: `connectionSetup.state=configured`, `networkConfigured=true`, `transport=wss`, `path=direct`.
-- Native bridge connect: `connectionState=connecting`, generation `1`.
-- User-visible drawer: `连接失败`.
-- Raw UI error: `Protocol: Expected Host protocol version 11`.
-- Host remained running PID `29244`, endpoint PID `67508`, generation `24`.
-- No new client session was observed from the retry.
+Both client and Host declare protocol version 11. The endpoint handled the TLS/WebSocket request and delegated remote admission to the Host. The unique defect was client handling: the handshake matcher treated every non-Ready response, including `Response::Error`, as a protocol-version mismatch. The minimal fix preserves the Ready version assertion and maps `Response::Error` to `Host {code}: {message}`.
 
-The first failing gate after this fix is the Host protocol handshake. HTTPS browsing, profile state, restart, reconnect, and read-back were not reached.
+The Mac snapshot fix remains in commit `552c53e`; explicit Host error handling is in commit `98d7b8f`.
 
-## Artifact hashes
+## Authorization retry
 
-The built Mac executable hash before and after the fix build remained:
-`053adf8ad875a384605181dac38217dc30c2bb4e371af6d7448cae57209cd00c`.
+The task6 lifecycle catalog was updated through the official service command to grant device `e22b76b6-31ac-487b-9953-13e0d78daec8` membership in profile `default`. Receipt: `evidence/user-slice/mac-client-connect-20261010T1820/task6-membership-grant.json`, catalog revision `32`.
+
+The post-grant native retry did not produce a completed session response before the diagnostic process ended. Endpoint logs show accepted connections and existing media activity, but no durable new Mac session evidence was captured. Therefore the exact first failing gate after the grant is **unknown / reconnect evidence pending**, and no HTTPS/profile/restart claims are made.
+
+## Endpoint identity
+
+Running endpoint PID `67508`:
+
+```text
+/Volumes/Intel/playground/obscura/m1-media-encoder-ownership-fix-r8-20261009/target/release/obscura-endpoint
+```
+
+SHA-256:
+
+```text
+2f1f1ec76b18f5ca023fccebb2017db922026d30d047cac2c68d2d3658ac6a03
+```
 
 ## Scope
 
-Only task6 was used. The LAN Host remained running and untouched. No bundle, transfer code, credential, or identifying cookie value is in evidence.
+Only task6 was used. LAN remained running and untouched. No bundle, transfer code, credential, or identifying cookie value is recorded.
