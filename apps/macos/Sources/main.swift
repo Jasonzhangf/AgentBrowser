@@ -5,6 +5,10 @@ import CoreVideo
 import VideoToolbox
 import WebKit
 
+private func macDiagnostic(_ message: String) {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+}
+
 private let nativePrompt = "AgentBrowser.Native"
 private let maximumCommandBytes = 64 * 1024
 private let maximumFrameBytes = 4 * 1024 * 1024
@@ -303,7 +307,7 @@ private final class NativeBridge {
 
     func request(_ raw: String) -> String {
         let commandName = (try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])?["op"] as? String ?? "unknown"
-        fputs("MAC_NATIVE_SEND op=\(commandName) raw=\(raw)\\n", stderr)
+        macDiagnostic("MAC_NATIVE_SEND op=\(commandName) raw=\(raw)\\n")
         guard raw.utf8.count <= maximumCommandBytes else { return rejection("COMMAND_SIZE") }
         condition.lock()
         guard alive else {
@@ -338,7 +342,7 @@ private final class NativeBridge {
         }
         let projected = responseTransform?(value) ?? value
         let snapshotState = (try? JSONSerialization.jsonObject(with: Data(projected.utf8)) as? [String: Any])?["connectionState"] as? String ?? "unknown"
-        fputs("MAC_NATIVE_RECV op=\(commandName) connectionState=\(snapshotState) response=\(projected)\\n", stderr)
+        macDiagnostic("MAC_NATIVE_RECV op=\(commandName) connectionState=\(snapshotState) response=\(projected)\\n")
         onSnapshot?(projected)
         return projected
     }
@@ -2227,13 +2231,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
-        fputs("MAC_WEBVIEW_CREATED frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n", stderr)
+        macDiagnostic("MAC_WEBVIEW_CREATED frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)")
 
         contentView = BrowserContentView(frame: .zero)
         contentView.onLayout = { [weak self] in self?.applyLayout(revision: true) }
         contentView.addSubview(videoView)
         contentView.addSubview(webView)
-        fputs("MAC_WEBVIEW_ADDED frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n", stderr)
+        macDiagnostic("MAC_WEBVIEW_ADDED frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)")
         connectionStatusSurface = NSTextField(labelWithString: "Connection: idle | Transport: unknown | Path: unknown")
         connectionStatusSurface.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         connectionStatusSurface.textColor = .labelColor
@@ -2261,7 +2265,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         bridge?.onSnapshot = { [weak self] raw in
             guard let data = raw.data(using: .utf8) else { return }
             guard let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
-                fputs("MAC_SNAPSHOT_DECODE_FAILED raw=\(raw)\\n", stderr)
+                macDiagnostic("MAC_SNAPSHOT_DECODE_FAILED raw=\(raw)\\n")
                 return
             }
             DispatchQueue.main.async {
@@ -2298,11 +2302,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         }
 
         guard let uiURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "ui") else {
-            fputs("MAC_WEBVIEW_ASSET_MISSING bundle=\(Bundle.main.bundlePath)\\n", stderr)
+            macDiagnostic("MAC_WEBVIEW_ASSET_MISSING bundle=\(Bundle.main.bundlePath)\\n")
             webView.loadHTMLString("<h1>Mac UI asset missing</h1>", baseURL: nil)
             return
         }
-        fputs("MAC_WEBVIEW_LOAD_REQUEST url=\(uiURL.absoluteString) exists=\(FileManager.default.fileExists(atPath: uiURL.path)) frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n", stderr)
+        macDiagnostic("MAC_WEBVIEW_LOAD_REQUEST url=\(uiURL.absoluteString) exists=\(FileManager.default.fileExists(atPath: uiURL.path)) frame=\(webView.frame) hidden=\(webView.isHidden) window=\(webView.window != nil) superview=\(webView.superview != nil)\\n")
         webView.loadFileURL(uiURL, allowingReadAccessTo: uiURL.deletingLastPathComponent())
         applyLayout(revision: true)
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.updateViewport() }
@@ -2375,18 +2379,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        fputs("MAC_WEBVIEW_LOAD_FINISH url=\(webView.url?.absoluteString ?? \"nil\")\\n", stderr)
+        macDiagnostic("MAC_WEBVIEW_LOAD_FINISH url=" + (webView.url?.absoluteString ?? "nil"))
         webView.evaluateJavaScript("document.readyState+'|'+location.href+'|rootChildren='+(document.getElementById('root')?.childElementCount??-1)+'|bodyText='+document.body.innerText.slice(0,300)+'|bodyChildren='+document.body.children.length+'|rootSize='+((document.getElementById('root')?.offsetWidth)||-1)+'x'+((document.getElementById('root')?.offsetHeight)||-1)") { value, error in
-            fputs("MAC_WEBVIEW_DOM value=\(value ?? \"nil\") error=\(error.map(String.init) ?? \"nil\")\\n", stderr)
+            macDiagnostic("MAC_WEBVIEW_DOM value=" + String(describing: value) + " error=" + String(describing: error))
         }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        fputs("MAC_WEBVIEW_LOAD_FAIL url=\(webView.url?.absoluteString ?? \"nil\") error=\(error)\\n", stderr)
+        macDiagnostic("MAC_WEBVIEW_LOAD_FAIL url=" + (webView.url?.absoluteString ?? "nil") + " error=" + String(describing: error))
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        fputs("MAC_WEBVIEW_PROVISIONAL_FAIL url=\(webView.url?.absoluteString ?? \"nil\") error=\(error)\\n", stderr)
+        macDiagnostic("MAC_WEBVIEW_PROVISIONAL_FAIL url=" + (webView.url?.absoluteString ?? "nil") + " error=" + String(describing: error))
     }
 
 
