@@ -34,13 +34,18 @@ final class RemoteImeView extends View {
     private Connection connection;
     private final Handler imeHandler = new Handler(Looper.getMainLooper());
     private final AtomicInteger showAttempts = new AtomicInteger();
+    private boolean restartedForConnection;
     private final Runnable imeRetry = new Runnable() {
         @Override public void run() {
-            if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) return;
+            // Focus may arrive after the tap. Only a real attempt spends budget.
+            if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) {
+                imeHandler.postDelayed(this,200);
+                return;
+            }
             WindowInsets insets=getRootWindowInsets();
             if (insets != null && insets.isVisible(WindowInsets.Type.ime())) return;
             showInputWhenReady();
-            if (showAttempts.incrementAndGet() < 10) imeHandler.postDelayed(this,200);
+            if (showAttempts.incrementAndGet() < 25) imeHandler.postDelayed(this,200);
         }
     };
 
@@ -73,22 +78,35 @@ final class RemoteImeView extends View {
         } else if (active && identity != null && !identity.equals(connectionIdentity)) {
             connectionIdentity = identity;
             if (connection != null) connection.abandonComposition();
-            if (inputConnectionReady) inputMethodManager.restartInput(this);
+            if (inputConnectionReady) {
+                restartedForConnection = true;
+                inputMethodManager.restartInput(this);
+            }
         }
     }
 
     private void showInputWhenReady() {
         if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) return;
+        // restartInput is a heavy binder round trip; issue it once per
+        // connection, never on every retry.
+        if (!restartedForConnection) {
+            restartedForConnection = true;
+            inputMethodManager.restartInput(this);
+        }
         // API 30+ may ignore IMM.showSoftInput even after a real tap. Insets is
         // the window-owned visibility API; retain IMM as a secondary request.
-        inputMethodManager.restartInput(this);
         WindowInsetsController controller=getWindowInsetsController();
         if (controller!=null) controller.show(WindowInsets.Type.ime());
         inputMethodManager.showSoftInput(this, 0);
     }
 
+    int showAttempts() {
+        return showAttempts.get();
+    }
+
     void deactivate() {
         imeHandler.removeCallbacks(imeRetry);
+        restartedForConnection = false;
         active = false;
         inputConnectionReady = false;
         if (connection != null) connection.abandonComposition();
@@ -113,6 +131,7 @@ final class RemoteImeView extends View {
         outAttrs.imeOptions = RemoteInput.imeOptions(context);
         connection = new Connection();
         inputConnectionReady = true;
+        restartedForConnection = false;
         showAttempts.set(0);
         imeHandler.removeCallbacks(imeRetry);
         post(this::showInputWhenReady);

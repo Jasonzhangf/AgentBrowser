@@ -1014,6 +1014,9 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             // showSoftInput is asynchronous. Poll a bounded interval and retain
             // every raw sample; a single immediate dump is timing-sensitive.
             JSONObject ime=pollImeRaised(8000);
+            final int[] attempts=new int[1];
+            getInstrumentation().runOnMainSync(()->attempts[0]=activity.remoteIme.showAttempts());
+            ime.put("showAttempts",attempts[0]);
             writeRaw("logcat-focus.txt",rawShell("logcat -d -v threadtime -t 400"));
             writeRaw("ime-state.json",ime.toString(2)+"\n");
             JSONObject editor=awaitEditableContext(8000);
