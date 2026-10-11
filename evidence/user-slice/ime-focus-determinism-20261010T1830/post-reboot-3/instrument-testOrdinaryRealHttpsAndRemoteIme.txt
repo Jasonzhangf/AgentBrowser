@@ -1,0 +1,45 @@
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.agentbrowser.probe.NetworkDeviceTest:
+INSTRUMENTATION_STATUS: test=testOrdinaryRealHttpsAndRemoteIme
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=junit.framework.AssertionFailedError: System IME did not raise within 8000ms: {"mInputShown":"false","mIsInputViewShown":"true","mShowRequested":null,"mServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@4d08410","mServedView":"com.agentbrowser.probe.RemoteImeView{b8670d3 VFED..... .F...... 0,0-1,1 aid=1073741824}","mCurMethodId":"com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME","mCurFocusedWindow":null,"mCurFocusedWindowClient":null,"mCurId":"com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME","servedViewFocused":true,"elapsedMs":8067,"imeWindowPresent":false,"servedRemoteIme":true,"focus":"windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true\/true imeAttached=true imeWindowFocus=true attempts=0"}
+	at com.agentbrowser.probe.NetworkDeviceTest.pollImeRaised(NetworkDeviceTest.java:1222)
+	at com.agentbrowser.probe.NetworkDeviceTest.testOrdinaryRealHttpsAndRemoteIme(NetworkDeviceTest.java:1016)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: stream=
+Failure in testOrdinaryRealHttpsAndRemoteIme:
+junit.framework.AssertionFailedError: System IME did not raise within 8000ms: {"mInputShown":"false","mIsInputViewShown":"true","mShowRequested":null,"mServedInputConnection":"RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@4d08410","mServedView":"com.agentbrowser.probe.RemoteImeView{b8670d3 VFED..... .F...... 0,0-1,1 aid=1073741824}","mCurMethodId":"com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME","mCurFocusedWindow":null,"mCurFocusedWindowClient":null,"mCurId":"com.google.android.inputmethod.latin\/com.android.inputmethod.latin.LatinIME","servedViewFocused":true,"elapsedMs":8067,"imeWindowPresent":false,"servedRemoteIme":true,"focus":"windowFocus=true currentFocus=RemoteImeView@b8670d3 imeHasFocus=true imeIsFocused=true imeFocusable=true\/true imeAttached=true imeWindowFocus=true attempts=0"}
+	at com.agentbrowser.probe.NetworkDeviceTest.pollImeRaised(NetworkDeviceTest.java:1222)
+	at com.agentbrowser.probe.NetworkDeviceTest.testOrdinaryRealHttpsAndRemoteIme(NetworkDeviceTest.java:1016)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: test=testOrdinaryRealHttpsAndRemoteIme
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+Test results for InstrumentationTestRunner=.F
+Time: 11.599
+
+FAILURES!!!
+Tests run: 1,  Failures: 1,  Errors: 0
+
+
+INSTRUMENTATION_CODE: -1

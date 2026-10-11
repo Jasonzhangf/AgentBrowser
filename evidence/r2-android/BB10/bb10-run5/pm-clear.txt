@@ -1,0 +1,1 @@
+adb shell pm clear com.agentbrowser.probe\nSuccess

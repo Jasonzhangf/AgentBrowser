@@ -20,6 +20,7 @@ import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
@@ -1004,14 +1005,20 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             JSONObject loaded=new JSONObject(js(STATUS));
             Bitmap beforeTap=capture("real-path-before-tap");
 
+            // Establish causal evidence: hide the IME and verify it is down
+            // before the remote-field tap.
+            forceImeHiddenBeforeTap();
+
             // Gate: one real touch on the remote text input element.
             touch(tapX,tapY);
 
-            // The raw system IME state must be read immediately after the tap.
-            String imeDump=rawShell("dumpsys input_method");
-            writeRaw("dumpsys-input-method.txt",imeDump);
+            // showSoftInput is asynchronous. Poll a bounded interval and retain
+            // every raw sample; a single immediate dump is timing-sensitive.
+            JSONObject ime=pollImeRaised(8000);
+            final int[] attempts=new int[1];
+            getInstrumentation().runOnMainSync(()->attempts[0]=activity.remoteIme.showAttempts());
+            ime.put("showAttempts",attempts[0]);
             writeRaw("logcat-focus.txt",rawShell("logcat -d -v threadtime -t 400"));
-            JSONObject ime=parseImeState(imeDump);
             writeRaw("ime-state.json",ime.toString(2)+"\n");
             JSONObject editor=awaitEditableContext(8000);
             Bitmap afterTap=capture("real-path-after-tap");
@@ -1147,17 +1154,101 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }while(SystemClock.elapsedRealtime()<deadline);
         return text;
     }
+    /** Raw focus ownership across the tap -> eligible -> raise window. */
+    private String focusState()throws Exception{
+        final String[] out=new String[1];
+        getInstrumentation().runOnMainSync(()->{
+            android.view.View focused=activity.getCurrentFocus();
+            RemoteImeView ime=activity.remoteIme;
+            out[0]="windowFocus="+activity.hasWindowFocus()
+                +" currentFocus="+(focused==null?"null":focused.getClass().getSimpleName()
+                    +"@"+Integer.toHexString(System.identityHashCode(focused))
+                    +(focused.getId()==android.view.View.NO_ID?"":"#"+focused.getId()))
+                +" imeHasFocus="+ime.hasFocus()+" imeIsFocused="+ime.isFocused()
+                +" imeFocusable="+ime.isFocusable()+"/"+ime.isFocusableInTouchMode()
+                +" imeAttached="+ime.isAttachedToWindow()+" imeWindowFocus="+ime.hasWindowFocus()
+                +" attempts="+ime.showAttempts();
+        });
+        return out[0];
+    }
+    private void forceImeHiddenBeforeTap()throws Exception{
+        getInstrumentation().runOnMainSync(()->activity.getSystemService(InputMethodManager.class)
+            .hideSoftInputFromWindow(activity.remoteIme.getWindowToken(),0));
+        String dump=rawShell("dumpsys input_method");
+        JSONObject state=parseImeState(dump);
+        writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump)+"focus "+focusState()+"\n");
+        assertEquals("IME must be hidden before causal remote tap: "+imeLines(dump),"false",String.valueOf(state.opt("mInputShown")));
+    }
+    private String selectedImePackage()throws Exception{
+        String selected=rawShell("settings get secure default_input_method").trim();
+        return selected.contains("/")?selected.substring(0,selected.indexOf('/')):selected;
+    }
+    private JSONObject pollImeRaised(long timeout)throws Exception{
+        long started=SystemClock.elapsedRealtime();
+        StringBuilder trace=new StringBuilder();
+        StringBuilder focusTrace=new StringBuilder();
+        JSONObject latest=null;
+        String imePackage=selectedImePackage();
+        do{
+            String dump=rawShell("dumpsys input_method");
+            long elapsed=SystemClock.elapsedRealtime()-started;
+            JSONObject parsed=parseImeState(dump);
+            boolean served=String.valueOf(parsed.opt("mServedView")).contains("RemoteImeView")
+                &&parsed.opt("mServedInputConnection")!=JSONObject.NULL;
+            boolean keyboardWindow=device().hasObject(By.pkg(imePackage));
+            latest=parsed.put("elapsedMs",elapsed)
+                .put("imeWindowPresent",keyboardWindow)
+                .put("servedRemoteIme",served);
+            String lines=imeLines(dump);
+            String focus=focusState();
+            focusTrace.append("elapsedMs=").append(elapsed).append(" ").append(focus).append('\n');
+            latest.put("focus",focus);
+            trace.append("elapsedMs=").append(elapsed).append(" imeWindowPresent=").append(keyboardWindow)
+                .append(" ").append(focus).append('\n').append(lines).append('\n');
+            boolean flagShown="true".equals(String.valueOf(parsed.opt("mInputShown")));
+            boolean servedFocused="true".equals(String.valueOf(parsed.opt("servedViewFocused")));
+            // Strict: the IME is really up AND our served view holds focus.
+            if(served&&servedFocused&&flagShown){
+                writeRaw("dumpsys-input-method.txt",trace.toString());
+                writeRaw("focus-trace.txt",focusTrace.toString());
+                writeRaw("ime-keyboard-raised.txt",rawShell("uiautomator dump /sdcard/ime-raised.xml >/dev/null 2>&1; cat /sdcard/ime-raised.xml"));
+                latest.put("raiseElapsedMs",elapsed)
+                    .put("raiseSignal","mInputShown+focusedRemoteImeView");
+                return latest;
+            }
+            SystemClock.sleep(250);
+        }while(SystemClock.elapsedRealtime()-started<timeout);
+        writeRaw("dumpsys-input-method.txt",trace.toString());
+        writeRaw("focus-trace.txt",focusTrace.toString());
+        fail("System IME did not raise within "+timeout+"ms: "+latest);
+        return latest;
+    }
+    private static String imeLines(String dump){
+        StringBuilder lines=new StringBuilder();
+        for(String line:dump.split("\\n")){
+            if(line.contains("mInputShown")||line.contains("mCurId")||line.contains("mCurMethodId")
+                ||line.contains("mServedView")||line.contains("mServedInputConnection"))lines.append(line).append('\n');
+        }
+        return lines.toString();
+    }
     private JSONObject parseImeState(String dump)throws Exception{
         return new JSONObject()
             .put("mInputShown",orNull(firstMatch(dump,"mInputShown=(\\S+)")))
             .put("mIsInputViewShown",orNull(firstMatch(dump,"mIsInputViewShown=(\\S+)")))
             .put("mShowRequested",orNull(firstMatch(dump,"mShowRequested=(\\S+)")))
             .put("mServedInputConnection",orNull(firstMatch(dump,"mServedInputConnection=(\\S+)")))
-            .put("mServedView",orNull(firstMatch(dump,"mServedView=(\\S+)")))
-            .put("mCurMethodId",orNull(firstMatch(dump,"mCurMethodId=(\\S+)")))
+            .put("mServedView",orNull(firstMatch(dump,"(?m)^\\s*mServedView=(.+)$")))
+            .put("mCurMethodId",orNull(firstMatch(dump,"mCurMethodId=(\\S+)")!=null?firstMatch(dump,"mCurMethodId=(\\S+)"):firstMatch(dump,"mCurId=(\\S+)")))
             .put("mCurFocusedWindow",orNull(firstMatch(dump,"mCurFocusedWindow=(\\S+)")))
             .put("mCurFocusedWindowClient",orNull(firstMatch(dump,"mCurFocusedWindowClient=(\\S+)")))
-            .put("mCurId",orNull(firstMatch(dump,"mCurId=(\\S+)")));
+            .put("mCurId",orNull(firstMatch(dump,"mCurId=(\\S+)")))
+            .put("servedViewFocused",servedViewFocused(dump));
+    }
+    /** The second flag group of the served view carries Android's focused flag. */
+    private static boolean servedViewFocused(String dump){
+        java.util.regex.Matcher matcher=java.util.regex.Pattern
+            .compile("(?m)^\\s*mServedView=\\S*\\{[0-9a-f]+\\s+(\\S+)\\s+(\\S+)").matcher(dump);
+        return matcher.find()&&matcher.group(2).contains("F");
     }
     private static Object orNull(String value){return value==null?JSONObject.NULL:value;}
     private static String firstMatch(String text,String pattern){
@@ -1171,6 +1262,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
      */
     private void typeThroughSystemIme(String imePackage,String text)throws Exception{
         StringBuilder trace=new StringBuilder();
+        writeRaw("ime-keyboard.txt",rawShell("uiautomator dump /sdcard/ime-window.xml >/dev/null 2>&1; cat /sdcard/ime-window.xml"));
+        if(imePackage==null||imePackage.isEmpty())imePackage=selectedImePackage();
         for(int index=0;index<text.length();index++){
             char character=text.charAt(index);
             UiObject2 key=imeKey(imePackage,character);
@@ -1192,9 +1285,301 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         for(String candidate:new String[]{lower,upper}){
             UiObject2 key=device().findObject(By.pkg(imePackage).desc(candidate));
             if(key==null)key=device().findObject(By.pkg(imePackage).text(candidate));
+            if(key==null)key=device().findObject(By.res(imePackage,"key_"+candidate));
             if(key!=null)return key;
         }
+        // LatinIME changes resource ids across images. Inspect its real
+        // accessibility nodes and match visible labels or content descriptions.
+        for(UiObject2 candidate:device().findObjects(By.pkg(imePackage))){
+            String text=candidate.getText(),description=String.valueOf(candidate.getContentDescription());
+            if(lower.equalsIgnoreCase(text)||lower.equalsIgnoreCase(description))return candidate;
+        }
         return null;
+    }
+
+    /** Coarse real-render signature of the Host video surface (never a local DOM read). */
+    private String frameSignature(Bitmap image){
+        Bitmap normalized=Bitmap.createScaledBitmap(image,32,32,true);
+        StringBuilder out=new StringBuilder();
+        for(int y=0;y<32;y++)for(int x=0;x<32;x++){
+            int c=normalized.getPixel(x,y);
+            out.append((char)('a'+((Color.red(c)+Color.green(c)+Color.blue(c))/3)*25/255));
+        }
+        return out.toString();
+    }
+    private static int signatureDistance(String a,String b){
+        int different=0;
+        for(int i=0;i<Math.min(a.length(),b.length());i++)if(a.charAt(i)!=b.charAt(i))different++;
+        return different;
+    }
+    /** Host-published editor projection; null when no editable target is focused. */
+    private JSONObject editableContext(){return activity.network.editorContext();}
+    private boolean editableFocused(){JSONObject context=editableContext();return context!=null&&context.optBoolean("editable",false);}
+
+    /**
+     * BB04 bounded slice. The row asks for real drags on the remote video, content
+     * that follows the drag, release termination, and no phantom tap. Every
+     * assertion below reads real remote state: the Host-published editor
+     * projection, the Host gesture lease, or the Host-encoded video surface.
+     */
+    public void testBb04GestureSlice() throws Exception{
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000); clickEnabled("takeover");
+            until(UI_MODE+"==='control'",8000);
+            String url=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
+            float tapX=Float.parseFloat(argument("tapX","196")),tapY=Float.parseFloat(argument("tapY","107"));
+            navigateFromAddress(url); awaitNavigation("https:",15000);
+            JSONObject evidence=new JSONObject().put("case","BB04").put("url",url)
+                .put("tapX",tapX).put("tapY",tapY).put("hostScrollProjectionAvailable",false);
+            assertFalse("Precondition: no editable target before any touch",editableFocused());
+
+            // A real tap on the remote input proves the tap path and gives the
+            // element identity the drag contrast is measured against.
+            touch(tapX,tapY); awaitEditableContext(8000);
+            evidence.put("tapEditable",editableFocused()).put("tapTarget",String.valueOf(editableContext().optString("target_id")));
+            assertTrue("A real tap must focus the remote editable target",editableFocused());
+
+            // Blank-space tap must end the old edit (BB08 overlap, real Host state).
+            touch(tapX,Float.parseFloat(argument("blankY","520")));
+            long blankDeadline=SystemClock.elapsedRealtime()+6000;
+            while(editableFocused()&&SystemClock.elapsedRealtime()<blankDeadline)SystemClock.sleep(100);
+            evidence.put("blankTapEditable",editableFocused());
+            assertFalse("Tapping blank space must terminate the old remote edit",editableFocused());
+
+            // A real drag whose release point is the editable target must not click it.
+            swipe(tapX,Math.max(20f,tapY-90f),tapY);
+            until(STATUS+".inputReady",6000); SystemClock.sleep(700);
+            evidence.put("dragOverTargetEditable",editableFocused())
+                .put("dragGestureState",localGestureState()).put("dragLeaseFencesAgents",hostLeaseFencesAgents());
+            assertFalse("A drag released over the target must not click it",editableFocused());
+            assertFalse("A drag must leave no open Host gesture lease",hostLeaseFencesAgents());
+
+            // The same point still clicks after the drag, so the refusal above is
+            // drag-versus-tap discrimination and not a broken tap path.
+            touch(tapX,tapY); awaitEditableContext(8000);
+            evidence.put("tapAfterDragEditable",editableFocused());
+            assertTrue("A real tap after the drag must still focus the target",editableFocused());
+
+            // Real drags must move the presented remote content, and the reverse
+            // drag must restore it. The signature comes from the Host-encoded
+            // video surface, so it is real remote rendering, not a local proxy.
+            Bitmap start=capture("bb04-before-drag");
+            String startSignature=frameSignature(start);
+            swipe(tapX,Float.parseFloat(argument("dragFromY","300")),Float.parseFloat(argument("dragToY","90")));
+            until(STATUS+".inputReady",6000); SystemClock.sleep(1200);
+            Bitmap dragged=capture("bb04-after-drag");
+            String draggedSignature=frameSignature(dragged);
+            swipe(tapX,Float.parseFloat(argument("dragToY","90")),Float.parseFloat(argument("dragFromY","300")));
+            until(STATUS+".inputReady",6000); SystemClock.sleep(1200);
+            Bitmap restored=capture("bb04-after-reverse-drag");
+            String restoredSignature=frameSignature(restored);
+            int forward=signatureDistance(startSignature,draggedSignature);
+            int back=signatureDistance(startSignature,restoredSignature);
+            evidence.put("renderedFrames",activity.annex.snapshot().getLong("renderedFrames"))
+                .put("forwardDragChangedCells",forward).put("reverseDragChangedCells",back)
+                .put("scrollDragGestureState",localGestureState())
+                .put("scrollLeaseFencesAgents",hostLeaseFencesAgents())
+                .put("inputReadyAfterDrag",js(STATUS+".inputReady"));
+            assertTrue("A real drag must change the presented remote content: forward="+forward,forward>16);
+            assertTrue("The reverse drag must move the content back toward the start: forward="+forward+" back="+back,back<forward);
+            assertFalse("Release must terminate the gesture with no open Host lease",hostLeaseFencesAgents());
+            until(STATUS+".inputReady",6000);
+            writeRaw("bb04-gesture.json",evidence.toString(2)+"\n");
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
+    private long documentRevision()throws Exception{return new JSONObject(js(STATUS)).optLong("documentRevision",-1);}
+    private String hostUrl(){JSONObject navigation=activity.network.navigation();return navigation==null?"":navigation.optString("url","");}
+
+    /**
+     * BB10 bounded slice: real client close/reopen, a real network interrupt and
+     * restore, and stale-generation fencing. Every assertion reads the
+     * Host-published session/document projection or the Host input lease.
+     */
+    public void testBb10ReconnectSlice() throws Exception{
+        String pageUrl=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        JSONObject evidence=new JSONObject().put("case","BB10").put("url",pageUrl);
+        try{
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000); clickEnabled("takeover");
+            until(UI_MODE+"==='control'",20000);
+            navigateFromAddress(pageUrl); awaitNavigation("https:",15000);
+            String sessionBefore=js(STATUS+".sessionId");
+            String urlBefore=hostUrl();
+            long revisionBefore=documentRevision();
+            evidence.put("sessionBefore",sessionBefore).put("urlBefore",urlBefore).put("revisionBefore",revisionBefore);
+
+            // Gate A: close the client and reopen it. Detach must not delete the
+            // Host session, and the same document must come back.
+            getInstrumentation().runOnMainSync(()->activity.finish());
+            SystemClock.sleep(4000);
+            activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            assertEquals("Reopened client keeps the admitted pairing","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"reconnect after client reopen");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000);
+            boolean control=false;
+            clickEnabled("takeover");
+            long takeoverDeadline=SystemClock.elapsedRealtime()+20000;
+            while(SystemClock.elapsedRealtime()<takeoverDeadline){
+                if("true".equals(js(UI_MODE+"==='control'"))){control=true;break;}
+                SystemClock.sleep(200);
+            }
+            evidence.put("controlAfterReopen",control).put("uiModeAfterReopen",js(UI_MODE));
+            String sessionAfterReopen=js(STATUS+".sessionId");
+            String urlAfterReopen=hostUrl();
+            evidence.put("sessionAfterReopen",sessionAfterReopen).put("urlAfterReopen",urlAfterReopen)
+                .put("reopenSameSession",sessionBefore.equals(sessionAfterReopen))
+                .put("reopenSameDocument",urlBefore.equals(urlAfterReopen));
+            assertEquals("Detach must not delete the Host session",sessionBefore,sessionAfterReopen);
+            assertEquals("Reconnect must return the same document",urlBefore,urlAfterReopen);
+            writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+
+            // Gate B: one real remote click must produce exactly one Host-side
+            // effect, and a real network interrupt plus restore must not replay it.
+            // The one-time effect is the Host-published editor focus projection.
+            String contextAfterClick=null;
+            long revisionAfterClick=documentRevision();
+            if(control){
+                touch(196,107); awaitEditableContext(8000);
+                contextAfterClick=String.valueOf(editableContext());
+                revisionAfterClick=documentRevision();
+                evidence.put("clickTarget",editableContext().optString("target_id"));
+            }
+            evidence.put("editorContextAfterClick",contextAfterClick).put("revisionAfterClick",revisionAfterClick);
+
+            rawShell("cmd connectivity airplane-mode enable");
+            long offlineDeadline=SystemClock.elapsedRealtime()+20000;
+            String offlineState=js(STATUS+".connectionState");
+            while("\"connected\"".equals(offlineState)&&SystemClock.elapsedRealtime()<offlineDeadline){
+                SystemClock.sleep(500); offlineState=js(STATUS+".connectionState");
+            }
+            evidence.put("stateWhileOffline",offlineState);
+            rawShell("cmd connectivity airplane-mode disable");
+            long restoreDeadline=SystemClock.elapsedRealtime()+45000;
+            boolean restored=false;
+            while(SystemClock.elapsedRealtime()<restoreDeadline){
+                SystemClock.sleep(1000);
+                if("\"connected\"".equals(js(STATUS+".connectionState"))&&"true".equals(js(STATUS+".inputReady"))){restored=true;break;}
+            }
+            evidence.put("autoRecovered",restored).put("stateAfterRestore",js(STATUS+".connectionState"))
+                .put("errorAfterRestore",new JSONObject(js(STATUS)).optString("error"));
+            if(!restored){
+                // Distinguish "no automatic recovery" from "cannot recover at all"
+                // with one real user reconnect action through the ordinary UI.
+                clickEnabled("connect");
+                long manualDeadline=SystemClock.elapsedRealtime()+30000;
+                while(SystemClock.elapsedRealtime()<manualDeadline){
+                    SystemClock.sleep(1000);
+                    if("\"connected\"".equals(js(STATUS+".connectionState"))&&"true".equals(js(STATUS+".inputReady")))break;
+                }
+                evidence.put("manualReconnectState",js(STATUS+".connectionState"))
+                    .put("manualReconnectInputReady",js(STATUS+".inputReady"));
+            }
+            String sessionAfterRestore=js(STATUS+".sessionId");
+            long revisionAfterRestore=documentRevision();
+            String contextAfterRestore=String.valueOf(editableContext());
+            evidence.put("restored",restored).put("sessionAfterRestore",sessionAfterRestore)
+                .put("revisionAfterRestore",revisionAfterRestore)
+                .put("editorContextAfterRestore",contextAfterRestore).put("urlAfterRestore",hostUrl());
+            writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+            assertTrue("The client must recover after the network is restored",restored);
+            assertEquals("Recovery must keep the same Host session",sessionBefore,sessionAfterRestore);
+            assertEquals("Recovery must not replay the click or submit",revisionAfterClick,revisionAfterRestore);
+            if(control)assertEquals("Recovery must not re-fire the click's Host effect",contextAfterClick,contextAfterRestore);
+
+            // Gate C: an old generation cannot write; the live session survives it.
+            String liveSession=js(STATUS+".sessionId");
+            long framesBeforeRejection=activity.annex.snapshot().getLong("renderedFrames");
+            getInstrumentation().runOnMainSync(()->activity.network.command(1,Long.MAX_VALUE,0,0,0,0,""));
+            until("String("+STATUS+".error).includes('STALE_CONTROL')",8000);
+            until(STATUS+".renderedFrames>"+framesBeforeRejection+" && "+STATUS+".inputReady",8000);
+            evidence.put("staleWriteError",new JSONObject(js(STATUS)).optString("error"))
+                .put("sessionAfterStaleWrite",js(STATUS+".sessionId"))
+                .put("stateAfterStaleWrite",js(STATUS+".connectionState"));
+            assertEquals("A stale generation must not keep the connection", "\"connected\"",js(STATUS+".connectionState"));
+            assertEquals("A stale generation must not replace the session",liveSession,js(STATUS+".sessionId"));
+            writeRaw("bb10-reconnect.json",evidence.toString(2)+"\n");
+        }finally{
+            rawShell("cmd connectivity airplane-mode disable");
+            getInstrumentation().runOnMainSync(()->activity.finish());
+        }
+    }
+
+    /** Raw transport sample: the app projection plus endpoint reachability. */
+    private JSONObject transportSample(String phase,int index,long startedAt)throws Exception{
+        JSONObject status=new JSONObject(js(STATUS));
+        return new JSONObject().put("phase",phase).put("index",index)
+            .put("elapsedMs",SystemClock.elapsedRealtime()-startedAt)
+            .put("connectionState",status.opt("connectionState")).put("state",status.opt("state"))
+            .put("generation",status.opt("generation")).put("renderedFrames",status.opt("renderedFrames"))
+            .put("inputReady",status.opt("inputReady")).put("error",status.opt("error"))
+            .put("transport",status.opt("transport")).put("sessionId",status.opt("sessionId"))
+            .put("documentRevision",status.opt("documentRevision"));
+    }
+    private String endpointReachability(){
+        try{return rawShell("ping -c 1 -W 2 192.168.0.3 >/dev/null 2>&1; echo $?").trim();}
+        catch(Exception failure){return "unavailable";}
+    }
+
+    /**
+     * BB10 isolation probe: raw transport state across a real network interrupt
+     * and restore. The probe only records, so a stall still leaves the complete
+     * sample series on disk for diagnosis.
+     */
+    public void testBb10TransportProbe() throws Exception{
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        JSONArray samples=new JSONArray();
+        long startedAt=SystemClock.elapsedRealtime();
+        try{
+            until("!!document.getElementById('connect')",10000);
+            clickEnabled("connect");
+            boolean ready=false;
+            for(int i=0;i<40;i++){
+                samples.put(transportSample("connect",i,startedAt));
+                if("true".equals(js(STATUS+".inputReady"))&&Long.parseLong(js(STATUS+".renderedFrames"))>=2){ready=true;break;}
+                SystemClock.sleep(1000);
+            }
+            samples.put(new JSONObject().put("phase","connect-result").put("ready",ready)
+                .put("endpointReachability",endpointReachability()).put("elapsedMs",SystemClock.elapsedRealtime()-startedAt));
+            if(ready){
+                clickEnabled("takeover");
+                long controlDeadline=SystemClock.elapsedRealtime()+20000;
+                while(SystemClock.elapsedRealtime()<controlDeadline){
+                    if("true".equals(js(UI_MODE+"==='control'")))break;
+                    SystemClock.sleep(200);
+                }
+                samples.put(new JSONObject().put("phase","control").put("uiMode",js(UI_MODE))
+                    .put("elapsedMs",SystemClock.elapsedRealtime()-startedAt));
+                samples.put(transportSample("pre-interrupt",0,startedAt)
+                    .put("endpointReachability",endpointReachability()));
+                rawShell("cmd connectivity airplane-mode enable");
+                for(int i=0;i<20;i++){
+                    SystemClock.sleep(1000);
+                    samples.put(transportSample("offline",i,startedAt)
+                        .put("endpointReachability",i%5==0?endpointReachability():JSONObject.NULL));
+                }
+                rawShell("cmd connectivity airplane-mode disable");
+                for(int i=0;i<60;i++){
+                    SystemClock.sleep(1000);
+                    samples.put(transportSample("restore",i,startedAt)
+                        .put("endpointReachability",i%5==0?endpointReachability():JSONObject.NULL));
+                    if("true".equals(js(STATUS+".inputReady")))break;
+                }
+            }
+            writeRaw("bb10-transport.json",samples.toString(2)+"\n");
+            writeRaw("bb10-transport-logcat.txt",rawShell("logcat -d -v threadtime -t 1200"));
+        }finally{
+            rawShell("cmd connectivity airplane-mode disable");
+            getInstrumentation().runOnMainSync(()->activity.finish());
+        }
     }
 
     public void testRealNetworkControlAndFrames()throws Exception{

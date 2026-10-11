@@ -1,0 +1,4 @@
+avd=ab_m1_n3
+hw.keyboard=no
+hw.keyboard.charmap=qwerty2
+hw.keyboard.lid=yes

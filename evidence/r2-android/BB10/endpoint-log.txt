@@ -1,0 +1,121 @@
+endpoint connection ended: tls handshake eof
+endpoint connection ended: tls handshake eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 85424b21-5448-4093-af31-7ce15ad00aa0 child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: c3fcea6d-5419-4236-afa3-4d2d980b0a0b child spawned, supervisor started
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: c3fcea6d-5419-4236-afa3-4d2d980b0a0b child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: c3fcea6d-5419-4236-afa3-4d2d980b0a0b child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: c3fcea6d-5419-4236-afa3-4d2d980b0a0b child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: c3fcea6d-5419-4236-afa3-4d2d980b0a0b child spawned, supervisor started
+endpoint connection ended: IO error: Broken pipe (os error 32)
+endpoint connection ended: IO error: Connection reset by peer (os error 54)
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+Error: early eof
+endpoint connection ended: Encoder stream ended
+session media finalize terminal: Encoder stream ended or invalid header
+session media finalize terminal: Encoder stream ended or invalid header
+endpoint session finalize: Encoder stream ended or invalid header
+Error: ENDPOINT_SESSION_FINALIZE_FAILED: Encoder stream ended or invalid header
+session media acquire: 4f59a7ea-736b-41cf-922a-d385f71475df child spawned, supervisor started
+Error: H.264 encoder exceeded five second deadline
+
+Caused by:
+    deadline has elapsed
+endpoint connection ended: Encoder stream ended
+session media acquire: 4f59a7ea-736b-41cf-922a-d385f71475df child spawned, supervisor started
+Error: H.264 encoder exceeded five second deadline
+
+Caused by:
+    deadline has elapsed
+endpoint connection ended: Encoder stream ended
+session media acquire: 4f59a7ea-736b-41cf-922a-d385f71475df child spawned, supervisor started
+Error: H.264 encoder exceeded five second deadline
+
+Caused by:
+    deadline has elapsed
+endpoint connection ended: Encoder stream ended
+session media acquire: 93a4a3ff-c727-4077-8bb4-232589d37f90 child spawned, supervisor started
+Error: endpoint connection ended: early eof
+Encoder stream ended
+session media finalize terminal: Encoder stream ended or invalid header
+media binding release failed: Encoder stream ended or invalid header

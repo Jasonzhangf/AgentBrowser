@@ -1,0 +1,3 @@
+logcat was captured during the probe but is not retained: it contains the
+ordinary DocumentsUI import flow. The transport evidence is in
+bb10-transport.json, which is committed.

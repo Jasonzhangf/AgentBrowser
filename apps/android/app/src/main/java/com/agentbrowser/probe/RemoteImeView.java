@@ -4,11 +4,16 @@ import android.content.Context;
 import android.graphics.Color;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import org.json.JSONObject;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Invisible OS InputConnection for the remote editable target. */
 final class RemoteImeView extends View {
@@ -27,6 +32,23 @@ final class RemoteImeView extends View {
     private boolean inputConnectionReady;
     private String connectionIdentity;
     private Connection connection;
+    private final Handler imeHandler = new Handler(Looper.getMainLooper());
+    private final AtomicInteger showAttempts = new AtomicInteger();
+    private final Runnable imeRetry = new Runnable() {
+        @Override public void run() {
+            // Focus may arrive after the tap. Only a real attempt spends budget,
+            // and the wait itself is bounded so the loop always terminates.
+            if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) {
+                if (showAttempts.incrementAndGet() < 25) imeHandler.postDelayed(this,200);
+                return;
+            }
+            // Insets can remain visible while the IME service is recovering;
+            // spend the bounded budget issuing SHOW requests and let the raw
+            // system gate decide whether the IME actually raised.
+            showInputWhenReady();
+            if (showAttempts.incrementAndGet() < 25) imeHandler.postDelayed(this,200);
+        }
+    };
 
     RemoteImeView(Context context, Host host) {
         super(context);
@@ -62,12 +84,22 @@ final class RemoteImeView extends View {
     }
 
     private void showInputWhenReady() {
-        if (active && host.eligible() && inputConnectionReady) {
-            inputMethodManager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
-        }
+        if (!active || !host.eligible() || !inputConnectionReady || !hasWindowFocus()) return;
+        // A restart here would re-enter onCreateInputConnection and re-arm the
+        // retry loop, so the restart stays on the identity change in sync().
+        // API 30+ may ignore IMM.showSoftInput even after a real tap. Insets is
+        // the window-owned visibility API; retain IMM as a secondary request.
+        WindowInsetsController controller=getWindowInsetsController();
+        if (controller!=null) controller.show(WindowInsets.Type.ime());
+        inputMethodManager.showSoftInput(this, 0);
+    }
+
+    int showAttempts() {
+        return showAttempts.get();
     }
 
     void deactivate() {
+        imeHandler.removeCallbacks(imeRetry);
         active = false;
         inputConnectionReady = false;
         if (connection != null) connection.abandonComposition();
@@ -92,7 +124,10 @@ final class RemoteImeView extends View {
         outAttrs.imeOptions = RemoteInput.imeOptions(context);
         connection = new Connection();
         inputConnectionReady = true;
+        showAttempts.set(0);
+        imeHandler.removeCallbacks(imeRetry);
         post(this::showInputWhenReady);
+        imeHandler.postDelayed(imeRetry,200);
         return connection;
     }
 

@@ -1,0 +1,5 @@
+{
+  "panelState": "configured",
+  "endpoint": "wss:\/\/192.168.0.3:51882\/",
+  "activeGeneration": "{\"schema\":\"agentbrowser.connection.active\",\"version\":1,\"generation_id\":\"03bd68d1e8bb4c68b64c324b8298a3e5\",\"active_revision\":1,\"label\":\"m1-lan-userpath\",\"materials\":[{\"name\":\"endpoint.txt\",\"path\":\"endpoint.txt\",\"sha256\":\"dcf797fc56621be4413b06ac43490077f2ce6a6922f361df0406fa7219321fb6\",\"length\":25},{\"name\":\"ca.der\",\"path\":\"ca.der\",\"sha256\":\"d2b5afd9f568fa9c8b8f424e17227fbec3e67b38b887b779e5b66a812524283f\",\"length\":789},{\"name\":\"client.der\",\"path\":\"client.der\",\"sha256\":\"16cf5f6bba6bdacacb42f5f1eafb354208be982e6404a88ec63f707d49af173d\",\"length\":873},{\"name\":\"key.der\",\"path\":\"key.der\",\"sha256\":\"a018e09d7c6b8a783fb6c747da8a107a10104b0695d4f47f7c8ac5baa792b632\",\"length\":1218}]}"
+}
