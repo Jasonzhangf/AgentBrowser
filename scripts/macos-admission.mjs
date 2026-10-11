@@ -710,7 +710,9 @@ async function main() {
     await waitForWindow(firstApp);
     await sleep(1_500);
     screenshots.push(captureWindow(join(directory, 'waiting.png'), firstApp.pid, false));
-    await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
+    await pressAccessibilityButton(firstApp.pid, '打开菜单', join(directory, 'open-menu.log'));
+    await pressAccessibilityButton(firstApp.pid, '连接', join(directory, 'connect.log'));
+    assertFile(join(directory, 'connect.log'));
     await sleep(4_000);
     await observeHostStatus('connect', 2, 'agent');
     const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid, false);
@@ -722,7 +724,8 @@ async function main() {
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
     const secondApp = await launchApp('app-restarted');
     await waitForWindow(secondApp);
-    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
+    await pressAccessibilityButton(secondApp.pid, '打开菜单', join(directory, 'restart-open-menu.log'));
+    await pressAccessibilityButton(secondApp.pid, '连接', join(directory, 'restart-connect.log'));
     await sleep(4_000);
     const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
     screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), secondApp.pid, false));
@@ -773,7 +776,8 @@ async function main() {
     await sleep(1_500);
     const disconnectedStatus = await observeHostStatus('disconnect', 1, 'agent');
     const reconnectStart = now();
-    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'reconnect.log'));
+    await pressAccessibilityButton(secondApp.pid, '打开菜单', join(directory, 'reconnect-open-menu.log'));
+    await pressAccessibilityButton(secondApp.pid, '连接', join(directory, 'reconnect.log'));
     await sleep(4_000);
     const reconnectStatus = await observeHostStatus('reconnect', 2, 'agent');
     screenshots.push(captureWindow(join(directory, 'reconnect.png'), secondApp.pid, false));
