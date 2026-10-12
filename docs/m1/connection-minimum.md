@@ -242,14 +242,18 @@ Host     [A] endpoint mTLS        ->  [E] session + media/render
 
 ```json
 {
-  "format": "agentbrowser.connection",
-  "version": 1,
   "endpoint": "<host>:<port>",
   "token": "<不透明字符串>"
 }
 ```
 
-没有 p12、没有口令、没有客户端证书、没有 CA、没有传输码、没有 scope、没有 profile、没有 device_id、没有 created_at。
+没有 `format`、没有 `version`、没有 p12、没有口令、没有客户端证书、没有 CA、没有传输码、没有 scope、没有 profile、没有 device_id、没有 created_at。
+
+`format` 与 `version` 只为了让客户端校验它们而存在，所以一并删除。
+
+**导入端不做任何校验**（用户指令 2）。客户端只做四件事：读文件、解 JSON、取 `endpoint` 和 `token`、写两个文件。不检查 format、不检查 version、不检查 endpoint 形状、不检查端口范围、不检查 token 是否空白、不检查未知字段、不检查重复键、不检查文件大小。**唯一的失败码只有一个**：文件读不出、JSON 解不开、或两个字段缺任一。
+
+导入一个错误的文件是允许的，它会在 connect 时失败。这是预期行为：失败发生在真实边界（Host），不在本地猜测。
 
 导入后客户端只写两个文件：`endpoint.txt`、`token`。
 

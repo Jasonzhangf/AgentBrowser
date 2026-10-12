@@ -31,11 +31,10 @@
 | R3 | `system-ime-focus` 门 | `mInputShown=true mServedInputConnection=RemoteInputConnectionImpl{...RemoteImeView$Connection@bda5240}` |
 | R3 | `ascii-lands-in-remote-page` 门 | `ascii='hello' hostFieldText='hello' typingNote=None` |
 | R3 | OB `endpoint.rs` token 端到端 | 真实点击返回 `input.state == "succeeded"`，本地 attach 读到 `window.clicked == 1` |
-| R4 | `scripts/wrong-token-slice.py`，4/4 | `code":"REMOTE_TOKEN_INVALID"`；`readyFrame=False closed=True`；`/media` 403；`adaptersBefore=0 adaptersAfter=0` |
-| I1 | `acceptance-1/bundle.json` | 键集 `[endpoint, format, token, version]` |
-| I1 | `test_export_bundle_public` | 精确四字段文档，0600，无 `p12`/`client_cert`/`scope`/`device_id`/`transfer_code` 字节 |
-| I2 | endpoint 不再有 `--token` | `server.rs` 边缘比对已删；Host 的 `expected == request.token` 是唯一比对 |
-| I3 | `verify-host-service`，21 处 | `HOST_SERVICE_REAL_SUBPROCESS_PASS`，全程零 `trust init` 调用 |
+| R4 | `scripts/wrong-token-slice.py`，2/2 | `code":"REMOTE_TOKEN_INVALID"`；`readyFrame=False closed=True` |
+| I1 | `test_export_bundle_public` | 精确字段集，0600，无 `p12`/`client_cert`/`scope`/`device_id`/`transfer_code` 字节 |
+| I2 | endpoint 不再有 `--token` | `server.rs` 边缘比对已删；唯一比对是 OB `daemon.rs:882` 的 `expected == request.token` |
+| I3 | `verify-host-service` | `HOST_SERVICE_REAL_SUBPROCESS_PASS`（打印点 `scripts/host-service/test_host_service.py:1515`），全程零 `trust init` 调用。**本里程碑未保存该输出**：现存日志来自更早里程碑（`docs/runs/m1-service-endpoint-refresh-r1-20261005/r2/raw/real_subprocess_matrix.log`、`docs/runs/m1-host-service-host10-r1-20261003/evidence/verify.stdout`） |
 
 **Q1 结论：R1–R4 与 I1–I3 各有至少一条黑盒证据，且都有原始行。充分。**
 
@@ -82,7 +81,7 @@
 3. **harness 前置条件会 flake。** `testRemoteImeNoEditorSlice` 第一次运行死在 `ordinary-admission`：DocumentsUI 打开了，但 `Download` 根节点在整个等待期内没有出现（`junit.framework.AssertionFailedError ... NetworkDeviceTest.java:312`）。同样的代码、同样的 `reinstall` 模式刚在 `acceptance-1` 通过，其 logcat 显示 `Download` 在 (627,252) 被点到。这是 harness 前置导航的 flake，不是产品回归。重试一次即过。
    影响：任何依赖 DocumentsUI 的门都可能偶发失败。因此不能把单次失败直接当成产品缺陷，也不能把"重试后通过"当成稳定。
 4. **5 项抓错能力未验证**（§3.2）。其中 `blackbox_b6` 与 `remote_admission_r1.rs` 的错误 token 用例最靠近连接路径。
-5. **OB 2 个测试文件仍在转换**，`remote_admission_r1.rs` 与 `webrtc_endpoint.rs` 未绿。在此之前 OB 测试证据不完整。
+5. **OB 测试已全部转绿**（`remote_admission_r1.rs` 30 passed，`webrtc_endpoint.rs` 19 passed + 3 显式 ignored）。但它们的**抓错能力**未验证（§3.2），所以 OB 侧证据在"能否抓错"这一问上仍不完整。
 
 ## 5. 已删除的错误测试
 
