@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import datetime
 import fcntl
 import hashlib
 import ipaddress
@@ -41,22 +42,13 @@ STATE_NAME = "state.json"
 CONFIG_NAME = "config.json"
 
 # Local trust authority layout and frozen wire values (agentbrowser.connection@1).
+# The authority carries only the endpoint locator and the access token. There is
+# no certificate authority, no device registry and no authorization projection.
 TRUST_DIR_NAME = "trust"
-TRUST_DEVICES_NAME = "devices"
-TRUST_CA_CERT_NAME = "ca.der"
-TRUST_CA_KEY_NAME = "ca-key.der"
 TRUST_SERVER_CERT_NAME = "server.der"
 TRUST_SERVER_KEY_NAME = "server-key.der"
 TRUST_ENDPOINT_NAME = "endpoint.json"
-TRUST_REGISTRY_NAME = "registry.json"
-TRUST_PROJECTION_NAME = "authorized-clients.json"
-
-# Host-local administrative resource owned by the running Obscura Host daemon.
-# The service is a typed client only; it never writes catalog.json.
-ADMIN_SOCKET_NAME = "host-admin.sock"
-ADMIN_SCHEMA_VERSION = 1
-ADMIN_FRAME_LIMIT = 64 * 1024
-ADMIN_REQUEST_TIMEOUT_SECONDS = 30.0
+TRUST_TOKEN_NAME = "token"
 
 # Endpoint applied receipt v1 published by the endpoint after a real bind.
 ENDPOINT_APPLIED_DIR_NAME = "endpoint-applied"
@@ -76,39 +68,19 @@ ENDPOINT_APPLIED_FIELDS = frozenset(
         "endpoint_generation",
         "endpoint_pid",
         "bound_address",
-        "authorization_revision",
-        "registry_sha256",
-        "projection_sha256",
     }
 )
 
-REGISTRY_SCHEMA_VERSION = 2
-PROJECTION_SCHEMA_VERSION = 2
-DEVICE_RECORD_VERSION = 1
-
-# RemoteScope wire names are fixed, lower-case, deduplicated and ordered.
-REMOTE_SCOPES = (
-    "observe_human_control",
-    "profile_read",
-    "profile_create",
-    "profile_select",
-)
-REMOTE_SCOPE_ORDER = {name: index for index, name in enumerate(REMOTE_SCOPES)}
-
-# Transfer code: 16 opaque characters without the ambiguous 0/O/1/I/L.
-TRANSFER_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-TRANSFER_CODE_LENGTH = 16
-
-# PKCS#12 friendly names are fixed and only these three are allowed.
-P12_ALIAS_HOST_CA = "agentbrowser-host-ca"
-P12_ALIAS_ENDPOINT = "agentbrowser-endpoint"
-P12_ALIAS_CLIENT = "agentbrowser-client"
-
-CA_VALIDITY_DAYS = 3650
+# The listener's own TLS identity is service-owned and never enters the user's
+# connection configuration. The client verifies nothing, so no CA exists.
+SERVER_KEY_SIZE = 2048
 DEFAULT_CERT_VALIDITY_DAYS = 397
 MAX_CERT_VALIDITY_DAYS = 398
-KEY_SIZE = 2048
-LABEL_MAX_LENGTH = 64
+
+# The frozen bundle identity.
+BUNDLE_FORMAT = "agentbrowser.connection"
+BUNDLE_VERSION = 1
+TOKEN_BYTES = 32
 
 PARTIAL_EXIT_CODE = 4
 TRUST_EXIT_CODE = 3
@@ -148,18 +120,6 @@ def protocol_version_argument(value: str) -> int:
         return protocol_version_from(int(value, 10), "protocol version")
     except (ValueError, ServiceError) as error:
         raise argparse.ArgumentTypeError("protocol version must be a positive u32") from error
-
-
-def catalog_revision_argument(value: str) -> int:
-    try:
-        revision = int(value, 10)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError(
-            "expected catalog revision must be a non-negative integer"
-        ) from error
-    if revision < 0:
-        raise argparse.ArgumentTypeError("expected catalog revision must be a non-negative integer")
-    return revision
 
 
 def emit(value: dict[str, object]) -> None:
@@ -456,13 +416,6 @@ def load_config(root: Path) -> tuple[dict[str, object], str]:
     # every downstream consumer reads one config identity. The legacy schema
     # never carried a root and cannot enable persistence.
     config["profile_root"] = str(profile_root) if profile_root is not None else None
-    # The Host validates membership targets and remote admission against the
-    # service-owned registry. It is derived here, never stored in config, so a
-    # later `trust init` is picked up without a config rewrite. A service with
-    # no initialized trust authority passes no flag and keeps the declared
-    # catalog/projection refusals.
-    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
-    config["authorization_registry"] = str(registry_path) if registry_path.is_file() else None
     assert_private_directory(root)
     assert_private_directory(root / "run")
     assert_private_directory(root / "logs")
@@ -492,7 +445,6 @@ def validate_state(state: dict[str, object]) -> None:
         "profile_id",
         "profile_mode",
         "profile_root",
-        "authorization_registry",
         "runtime_root",
         "socket_dir",
         "session_id",
@@ -502,7 +454,7 @@ def validate_state(state: dict[str, object]) -> None:
         "started_at_unix",
         "ready_error",
     }
-    missing = sorted(expected - set(state) - {"ready_error", "profile_root", "authorization_registry"})
+    missing = sorted(expected - set(state) - {"ready_error", "profile_root"})
     unknown = sorted(set(state) - expected)
     if missing:
         raise ServiceError(f"service state is missing keys: {', '.join(missing)}")
@@ -569,13 +521,6 @@ def validate_state(state: dict[str, object]) -> None:
         "launchd_rejected",
     }:
         raise ServiceError("service state launch_mode is invalid")
-    state_registry = state.get("authorization_registry")
-    if state_registry is not None:
-        if not isinstance(state_registry, str):
-            raise ServiceError("service state authorization_registry must be a string or null")
-        normalized_registry = Path(state_registry)
-        if not normalized_registry.is_absolute():
-            raise ServiceError("service state authorization_registry must be absolute")
     session_id = state["session_id"]
     ready_error = state.get("ready_error")
     if ready_error is not None and not isinstance(ready_error, str):
@@ -700,20 +645,19 @@ def host_command_matches(
     binary: str,
     socket_dir: str,
     profile_root: str | None,
-    authorization_registry: str | None,
+    access_token: str,
 ) -> bool:
-    if len(argv) < 3 or argv[:3] != [binary, "--socket-dir", socket_dir]:
+    if len(argv) < 5 or argv[:3] != [binary, "--socket-dir", socket_dir]:
         return False
     remainder = argv[3:]
+    if remainder[:2] != ["--access-token", access_token]:
+        return False
+    remainder = remainder[2:]
     # Only the exact declared flags may follow. Each optional flag is present
     # at most once; the order is fixed by host_command so ownership comparison
     # stays exact and an unexpected argument is rejected as a foreign PID.
     if profile_root is not None:
         if remainder[:2] != ["--profile-root", profile_root]:
-            return False
-        remainder = remainder[2:]
-    if authorization_registry is not None:
-        if remainder[:2] != ["--authorization-registry", authorization_registry]:
             return False
         remainder = remainder[2:]
     if remainder == ["--allow-private-network"]:
@@ -726,7 +670,7 @@ def stop_target_status(
     binary: str,
     socket_dir: str,
     profile_root: str | None,
-    authorization_registry: str | None,
+    access_token: str,
 ) -> str:
     snapshot = process_snapshot(pid)
     if snapshot is None:
@@ -738,7 +682,7 @@ def stop_target_status(
     argv = process_argv(pid)
     if argv is None:
         return "unknown"
-    if not host_command_matches(argv, binary, socket_dir, profile_root, authorization_registry):
+    if not host_command_matches(argv, binary, socket_dir, profile_root, access_token):
         return "changed"
     return "owned"
 
@@ -748,9 +692,9 @@ def stop_target_is_verified(
     binary: str,
     socket_dir: str,
     profile_root: str | None,
-    authorization_registry: str | None,
+    access_token: str,
 ) -> bool:
-    status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
+    status = stop_target_status(pid, binary, socket_dir, profile_root, access_token)
     if status == "gone":
         return False
     if status != "owned":
@@ -758,7 +702,7 @@ def stop_target_is_verified(
     return True
 
 
-def state_identity(state: dict[str, object]) -> tuple[bool, str]:
+def state_identity(root: Path, state: dict[str, object]) -> tuple[bool, str]:
     pid = pid_from_state(state)
     if not pid_alive(pid):
         return False, "dead"
@@ -774,13 +718,19 @@ def state_identity(state: dict[str, object]) -> tuple[bool, str]:
     binary = str(state.get("host_binary", ""))
     socket_dir = str(state.get("socket_dir", ""))
     profile_root = state.get("profile_root")
-    authorization_registry = state.get("authorization_registry")
+    # The service always starts the Host with `--access-token`. A recorded state
+    # with no committed token cannot be confirmed as this service's Host, so it
+    # is foreign and is never signalled.
+    try:
+        access_token = load_token(root)
+    except ServiceError:
+        return False, "foreign"
     if not host_command_matches(
         argv,
         binary,
         socket_dir,
         profile_root if isinstance(profile_root, str) else None,
-        authorization_registry if isinstance(authorization_registry, str) else None,
+        access_token,
     ):
         return False, "foreign"
     return True, command
@@ -944,7 +894,6 @@ def state_for(
         "profile_id": config["profile_id"],
         "profile_mode": config["profile_mode"],
         "profile_root": config["profile_root"],
-        "authorization_registry": config.get("authorization_registry"),
         "runtime_root": config["runtime_root"],
         "socket_dir": str(socket_dir),
         "session_id": session_id,
@@ -985,9 +934,9 @@ def stop_pid(
     binary: str,
     socket_dir: str,
     profile_root: str | None,
-    authorization_registry: str | None,
+    access_token: str,
 ) -> None:
-    if not stop_target_is_verified(pid, binary, socket_dir, profile_root, authorization_registry):
+    if not stop_target_is_verified(pid, binary, socket_dir, profile_root, access_token):
         return
     try:
         os.kill(pid, signal.SIGTERM)
@@ -995,11 +944,11 @@ def stop_pid(
         return
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
+        status = stop_target_status(pid, binary, socket_dir, profile_root, access_token)
         if status == "gone":
             return
         time.sleep(0.05)
-    term_status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
+    term_status = stop_target_status(pid, binary, socket_dir, profile_root, access_token)
     if term_status == "gone":
         return
     if term_status != "owned":
@@ -1010,13 +959,13 @@ def stop_pid(
         return
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
+        status = stop_target_status(pid, binary, socket_dir, profile_root, access_token)
         if status == "gone":
             return
         if status != "owned":
             raise ServiceError(f"Host PID identity changed; refusing to signal: {pid}")
         time.sleep(0.05)
-    final_status = stop_target_status(pid, binary, socket_dir, profile_root, authorization_registry)
+    final_status = stop_target_status(pid, binary, socket_dir, profile_root, access_token)
     if final_status == "owned":
         raise ServiceError(f"Host did not stop after explicit PID termination: {pid}")
     if final_status != "gone":
@@ -1026,7 +975,7 @@ def stop_pid(
 def stale_or_running(root: Path, state: dict[str, object] | None) -> str:
     if state is None:
         return "none"
-    alive, detail = state_identity(state)
+    alive, detail = state_identity(root, state)
     if alive:
         return "running"
     if detail == "foreign":
@@ -1041,14 +990,20 @@ def cleanup_stale(root: Path, state: dict[str, object]) -> None:
     remove_state(root)
 
 
-def host_command(config: dict[str, object], socket_dir: Path) -> list[str]:
-    command = [str(config["host_binary"]), "--socket-dir", str(socket_dir)]
+def host_command(
+    config: dict[str, object], socket_dir: Path, access_token: str
+) -> list[str]:
+    """The Host argv. The access token is the one credential on this path."""
+    command = [
+        str(config["host_binary"]),
+        "--socket-dir",
+        str(socket_dir),
+        "--access-token",
+        access_token,
+    ]
     profile_root = config.get("profile_root")
     if profile_root is not None:
         command.extend(["--profile-root", str(profile_root)])
-    authorization_registry = config.get("authorization_registry")
-    if authorization_registry is not None:
-        command.extend(["--authorization-registry", str(authorization_registry)])
     if config["allow_private_network"]:
         command.append("--allow-private-network")
     return command
@@ -1286,6 +1241,10 @@ def install_locked(args: argparse.Namespace, root: Path) -> int:
         "runtime_root": str(runtime_root),
     }
     write_json(config_path(root), config)
+    # The Host compares one token and nothing else, so it must exist before the
+    # first start. `install` owns it: created here, never rotated, so the user
+    # path is install -> start -> panel -> export with no separate trust step.
+    ensure_access_token(root)
     log = log_path(root)
     if not log.exists():
         log.touch(mode=0o600)
@@ -1340,7 +1299,7 @@ def start_locked(args: argparse.Namespace, root: Path, config: dict[str, object]
             cleanup_stale(root, existing)
         socket_dir = make_socket_dir(runtime_root_from(str(config["runtime_root"])))
         log_handle = log_path(root).open("ab")
-        command = host_command(config, socket_dir)
+        command = host_command(config, socket_dir, load_token(root))
         process = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
@@ -1435,7 +1394,7 @@ def command_status(args: argparse.Namespace) -> int:
         payload["ready_error"] = state.get("ready_error")
         emit(payload)
         return 1
-    alive, detail = state_identity(state)
+    alive, detail = state_identity(root, state)
     payload.update({
         "pid": state.get("pid"),
         "session_id": state.get("session_id"),
@@ -1502,7 +1461,7 @@ def command_stop(args: argparse.Namespace) -> int:
 
 
 def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
-    alive, detail = state_identity(state)
+    alive, detail = state_identity(root, state)
     if detail == "foreign":
         raise ServiceError(f"recorded PID is owned by another process; refusing to stop: {state.get('pid')}")
     if state.get("launch_mode") == "launchd_rejected":
@@ -1525,7 +1484,7 @@ def stop_recorded_state(root: Path, state: dict[str, object]) -> None:
             str(state.get("host_binary", "")),
             str(state.get("socket_dir", "")),
             str(state["profile_root"]) if state.get("profile_root") is not None else None,
-            str(state["authorization_registry"]) if state.get("authorization_registry") is not None else None,
+            load_token(root),
         )
     # An owned endpoint is part of this service's lifecycle: stop it through the
     # same declared verified-PID path before removing the Host runtime. A
@@ -1564,7 +1523,7 @@ def command_launchd(args: argparse.Namespace) -> int:
         if state_status == "stale" and existing is not None:
             cleanup_stale(root, existing)
         socket_dir = make_socket_dir(runtime_root_from(str(config["runtime_root"])))
-        command = host_command(config, socket_dir)
+        command = host_command(config, socket_dir, load_token(root))
         write_json(
             state_path(root),
             state_for(config, config_hash, os.getpid(), socket_dir, "launchd_starting", None),
@@ -1626,8 +1585,85 @@ def command_launchd(args: argparse.Namespace) -> int:
             release_start_lock(lock_fd)
 
 
-def sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
+def crypto_modules() -> SimpleNamespace:
+    """Load the cryptography primitives the service-owned listener identity needs."""
+    import cryptography.hazmat.primitives.asymmetric.ec as ec
+    import cryptography.hazmat.primitives.hashes as hashes
+    import cryptography.hazmat.primitives.serialization as serialization
+    import cryptography.x509 as x509
+    import cryptography.x509.oid as oid
+
+    return SimpleNamespace(
+        ec=ec, hashes=hashes, serialization=serialization, x509=x509, oid=oid
+    )
+
+
+def generate_server_certificate(
+    host: str, host_kind: str, validity_days: int
+) -> tuple[bytes, bytes]:
+    """Generate the listener's own self-signed TLS identity.
+
+    This certificate authenticates the endpoint to nobody: the client verifies
+    no server certificate and the token is the only credential. It exists so the
+    endpoint can terminate TLS.
+    """
+    modules = crypto_modules()
+    key = modules.ec.generate_private_key(modules.ec.SECP256R1())
+    name = modules.x509.Name(
+        [modules.x509.NameAttribute(modules.oid.NameOID.COMMON_NAME, host)]
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    subject_alternative_name = (
+        modules.x509.IPAddress(ipaddress.ip_address(host))
+        if host_kind == "ip"
+        else modules.x509.DNSName(host)
+    )
+    certificate = (
+        modules.x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(modules.x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=validity_days))
+        .add_extension(
+            modules.x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            modules.x509.ExtendedKeyUsage(
+                [modules.oid.ExtendedKeyUsageOID.SERVER_AUTH]
+            ),
+            critical=False,
+        )
+        .add_extension(
+            modules.x509.SubjectAlternativeName([subject_alternative_name]),
+            critical=False,
+        )
+        .sign(key, modules.hashes.SHA256())
+    )
+    return (
+        certificate.public_bytes(modules.serialization.Encoding.DER),
+        key.private_bytes(
+            modules.serialization.Encoding.DER,
+            modules.serialization.PrivateFormat.PKCS8,
+            modules.serialization.NoEncryption(),
+        ),
+    )
+
+
+def endpoint_host_san(value: str) -> tuple[str, str]:
+    """Classify the declared public endpoint host as a DNS name or an IP literal."""
+    host = value.strip()
+    if not host or any(character.isspace() for character in host):
+        raise ServiceError(
+            "endpoint host is not a bare host or IP literal",
+            TRUST_EXIT_CODE,
+            code="ENDPOINT_HOST_INVALID",
+        )
+    try:
+        return "ip", str(ipaddress.ip_address(host))
+    except ValueError:
+        return "dns", host
 
 
 def trust_root(root: Path) -> Path:
@@ -1638,448 +1674,50 @@ def trust_path(root: Path, name: str) -> Path:
     return trust_root(root) / name
 
 
-def trust_device_path(root: Path, device_id: str) -> Path:
-    return trust_root(root) / TRUST_DEVICES_NAME / f"{device_id}.json"
+def ensure_access_token(root: Path) -> str:
+    """Create the connection token once, at install time, and never rotate it.
 
-
-def crypto_modules() -> SimpleNamespace:
-    try:
-        import datetime as datetime_module
-        import ipaddress as ipaddress_module
-        from cryptography import x509 as x509_module
-        from cryptography.hazmat.primitives import hashes as hashes_module
-        from cryptography.hazmat.primitives import serialization as serialization_module
-        from cryptography.hazmat.primitives.asymmetric import rsa as rsa_module
-        from cryptography.hazmat.primitives.serialization import pkcs12 as pkcs12_module
-        from cryptography.x509.oid import ExtendedKeyUsageOID as eku_oid
-        from cryptography.x509.oid import NameOID as name_oid
-    except ImportError as error:
-        raise ServiceError(
-            "trust primitives require the installed OpenSSL-backed cryptography library",
-            TRUST_EXIT_CODE,
-            code="TRUST_CRYPTO_UNAVAILABLE",
-        ) from error
-    return SimpleNamespace(
-        datetime=datetime_module,
-        ipaddress=ipaddress_module,
-        x509=x509_module,
-        hashes=hashes_module,
-        serialization=serialization_module,
-        rsa=rsa_module,
-        pkcs12=pkcs12_module,
-        ExtendedKeyUsageOID=eku_oid,
-        NameOID=name_oid,
-    )
-
-
-def generate_transfer_code() -> str:
-    import secrets
-
-    return "".join(secrets.choice(TRANSFER_CODE_ALPHABET) for _ in range(TRANSFER_CODE_LENGTH))
-
-
-def validate_transfer_code(value: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != TRANSFER_CODE_LENGTH
-        or any(character not in TRANSFER_CODE_ALPHABET for character in value)
-    ):
-        raise ServiceError("transfer code has an invalid shape", TRUST_EXIT_CODE, code="TRANSFER_CODE_INVALID")
-    return value
-
-
-def endpoint_host_san(value: str) -> tuple[str, str]:
-    if not isinstance(value, str) or not value or any(character.isspace() for character in value):
-        raise ServiceError(
-            "endpoint host must be a non-empty DNS name or IP address",
-            TRUST_EXIT_CODE,
-            code="ENDPOINT_HOST_INVALID",
-        )
-    ipaddress = crypto_modules().ipaddress
-    try:
-        address = ipaddress.ip_address(value)
-    except ValueError:
-        if len(value) > 253 or ":" in value or value.endswith(".") or "/" in value:
-            raise ServiceError(
-                f"endpoint host is not a valid DNS name: {value}",
-                TRUST_EXIT_CODE,
-                code="ENDPOINT_HOST_INVALID",
-            )
-        return "dns", value
-    if address.is_unspecified or address.is_multicast:
-        raise ServiceError(
-            f"endpoint host cannot be a wildcard or multicast address: {value}",
-            TRUST_EXIT_CODE,
-            code="ENDPOINT_HOST_INVALID",
-        )
-    return "ip", str(address)
-
-
-def endpoint_ws_url(host: str, host_kind: str, port: int) -> str:
-    """Build the WSS endpoint URL for an already accepted endpoint host.
-
-    The certificate SAN uses the unbracketed IP literal, but a URL authority
-    must bracket an IPv6 literal so the host and port stay parseable.
+    The Host compares this token and nothing else, so it must exist before the
+    first start. It lives beside the locator, outside the config, so creating it
+    cannot change the config hash that service state pins.
     """
-    authority = host
-    if host_kind == "ip" and crypto_modules().ipaddress.ip_address(host).version == 6:
-        authority = f"[{host}]"
-    return f"wss://{authority}:{port}/"
+    assert_private_directory(root)
+    assert_private_directory(trust_root(root))
+    path = trust_path(root, TRUST_TOKEN_NAME)
+    if path.is_file():
+        return load_token(root)
+    token = secrets.token_urlsafe(TOKEN_BYTES)
+    write_bytes(path, token.encode("ascii"), 0o600)
+    return token
 
 
-def _key_usage(x509: object, *, digital_signature: bool, key_encipherment: bool, key_cert_sign: bool) -> object:
-    return x509.KeyUsage(
-        digital_signature=digital_signature,
-        content_commitment=False,
-        key_encipherment=key_encipherment,
-        data_encipherment=False,
-        key_agreement=False,
-        key_cert_sign=key_cert_sign,
-        crl_sign=key_cert_sign,
-        encipher_only=False,
-        decipher_only=False,
-    )
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
-def _der_certificate(certificate: object, serialization: object) -> bytes:
-    return certificate.public_bytes(serialization.Encoding.DER)
+def endpoint_text(host: str, host_kind: str, port: int) -> str:
+    """The frozen bundle endpoint: exactly ``<host>:<port>``."""
+    if host_kind == "ip" and ":" in host:
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
 
 
-def _der_private_key(key: object, serialization: object) -> bytes:
-    return key.private_bytes(
-        serialization.Encoding.DER,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
-
-
-def generate_ca(common_name: str) -> tuple[bytes, bytes]:
-    modules = crypto_modules()
-    x509 = modules.x509
-    now = modules.datetime.datetime.now(modules.datetime.timezone.utc)
-    key = modules.rsa.generate_private_key(public_exponent=65537, key_size=KEY_SIZE)
-    subject = x509.Name([x509.NameAttribute(modules.NameOID.COMMON_NAME, common_name)])
-    certificate = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(subject)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - modules.datetime.timedelta(minutes=5))
-        .not_valid_after(now + modules.datetime.timedelta(days=CA_VALIDITY_DAYS))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(
-            _key_usage(x509, digital_signature=False, key_encipherment=False, key_cert_sign=True),
-            critical=True,
-        )
-        .add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-            critical=False,
-        )
-        .sign(key, modules.hashes.SHA256())
-    )
-    return (
-        _der_certificate(certificate, modules.serialization),
-        _der_private_key(key, modules.serialization),
-    )
-
-
-def generate_leaf(
-    ca_certificate: object,
-    ca_key: object,
-    *,
-    common_name: str,
-    server_auth: bool,
-    validity_days: int,
-    san: tuple[str, str] | None = None,
-) -> tuple[bytes, bytes, bytes, int, int]:
-    modules = crypto_modules()
-    x509 = modules.x509
-    now = modules.datetime.datetime.now(modules.datetime.timezone.utc)
-    not_before = now - modules.datetime.timedelta(minutes=5)
-    not_after = now + modules.datetime.timedelta(days=validity_days)
-    key = modules.rsa.generate_private_key(public_exponent=65537, key_size=KEY_SIZE)
-    builder = (
-        x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(modules.NameOID.COMMON_NAME, common_name)]))
-        .issuer_name(ca_certificate.subject)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(not_before)
-        .not_valid_after(not_after)
-        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-        .add_extension(
-            _key_usage(
-                x509,
-                digital_signature=True,
-                key_encipherment=server_auth,
-                key_cert_sign=False,
-            ),
-            critical=True,
-        )
-        .add_extension(
-            x509.ExtendedKeyUsage(
-                [modules.ExtendedKeyUsageOID.SERVER_AUTH if server_auth else modules.ExtendedKeyUsageOID.CLIENT_AUTH]
-            ),
-            critical=False,
-        )
-        .add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-            critical=False,
-        )
-        .add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
-            critical=False,
-        )
-    )
-    if san is not None:
-        kind, value = san
-        general_name = x509.IPAddress(modules.ipaddress.ip_address(value)) if kind == "ip" else x509.DNSName(value)
-        builder = builder.add_extension(
-            x509.SubjectAlternativeName([general_name]),
-            critical=False,
-        )
-    certificate = builder.sign(ca_key, modules.hashes.SHA256())
-    return (
-        _der_certificate(certificate, modules.serialization),
-        _der_private_key(key, modules.serialization),
-        _der_certificate(ca_certificate, modules.serialization),
-        int(not_before.timestamp()),
-        int(not_after.timestamp()),
-    )
-
-
-def serialize_registry(registry: dict[str, object]) -> bytes:
-    return (json.dumps(registry, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-
-
-def projection_content(
-    registry_sha256: str,
-    authorization_revision: int,
-    clients: list[dict[str, object]],
-) -> bytes:
-    document = {
-        "schema_version": PROJECTION_SCHEMA_VERSION,
-        "authorization_revision": authorization_revision,
-        "registry_sha256": registry_sha256,
-        "clients": clients,
-    }
-    return (json.dumps(document, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-
-
-def projection_client(device: dict[str, object]) -> dict[str, object]:
-    grant = device["initial_profile_grant"]
-    return {
-        "device_id": device["device_id"],
-        "client_certificate_sha256": device["client_certificate_sha256"],
-        "scopes": list(device["scopes"]),
-        "initial_profile_grant": {
-            "selection": grant["selection"],
-            "authorization_revision": grant["authorization_revision"],
-        },
-    }
-
-
-def normalize_scopes(values: list[str] | None) -> list[str]:
-    if values is None:
-        raise ServiceError(
-            "an explicit remote scope set is required",
-            TRUST_EXIT_CODE,
-            code="REGISTRY_SCOPE_REQUIRED",
-        )
-    if not isinstance(values, list):
-        raise ServiceError(
-            "remote scopes must be an explicit list",
-            TRUST_EXIT_CODE,
-            code="REGISTRY_SCOPE_REQUIRED",
-        )
-    unique = set()
-    for value in values:
-        if value not in REMOTE_SCOPE_ORDER:
-            raise ServiceError(
-                f"unsupported remote scope: {value}",
-                TRUST_EXIT_CODE,
-                code="REGISTRY_SCOPE_REQUIRED",
-            )
-        unique.add(value)
-    return sorted(unique, key=lambda name: REMOTE_SCOPE_ORDER[name])
-
-
-def parse_initial_profile(value: str) -> object:
-    if value == "default_profile":
-        return "default_profile"
-    prefix = "profile_id:"
-    if isinstance(value, str) and value.startswith(prefix):
-        profile_id = value[len(prefix):]
-        if profile_id and PROFILE_PATTERN.fullmatch(profile_id):
-            return {"profile_id": profile_id}
-    raise ServiceError(
-        "an explicit initial profile grant is required",
-        TRUST_EXIT_CODE,
-        code="MISSING_INITIAL_PROFILE_GRANT",
-    )
-
-
-def validate_selection(selection: object) -> None:
-    if selection == "default_profile":
-        return
-    if (
-        isinstance(selection, dict)
-        and set(selection) == {"profile_id"}
-        and isinstance(selection["profile_id"], str)
-        and PROFILE_PATTERN.fullmatch(selection["profile_id"])
-    ):
-        return
-    raise ServiceError(
-        "initial profile grant selection is invalid",
-        TRUST_EXIT_CODE,
-        code="MISSING_INITIAL_PROFILE_GRANT",
-    )
-
-
-def validate_device(device: object) -> None:
-    if not isinstance(device, dict):
-        raise ServiceError("registry device must be an object")
-    expected = {
-        "device_id",
-        "device_label",
-        "client_certificate_sha256",
-        "scopes",
-        "initial_profile_grant",
-        "scope_revision",
-        "status",
-        "not_before_unix",
-        "not_after_unix",
-        "created_at_unix",
-        "revoked_at_unix",
-    }
-    if set(device) != expected:
-        raise ServiceError("registry device has unsupported or missing fields")
-    if not isinstance(device["device_id"], str) or not device["device_id"]:
-        raise ServiceError("registry device_id is invalid")
-    if not isinstance(device["device_label"], str) or not 1 <= len(device["device_label"]) <= LABEL_MAX_LENGTH:
-        raise ServiceError("registry device_label is invalid")
-    fingerprint = device["client_certificate_sha256"]
-    if not isinstance(fingerprint, str) or not SHA256_PATTERN.fullmatch(fingerprint):
-        raise ServiceError("registry client_certificate_sha256 is invalid")
-    scopes = device["scopes"]
-    if not isinstance(scopes, list) or any(scope not in REMOTE_SCOPE_ORDER for scope in scopes):
-        raise ServiceError("registry scopes are invalid")
-    if scopes != sorted(set(scopes), key=lambda name: REMOTE_SCOPE_ORDER[name]):
-        raise ServiceError("registry scopes are not deduplicated and ordered")
-    grant = device["initial_profile_grant"]
-    if not isinstance(grant, dict) or set(grant) != {"selection", "authorization_revision"}:
-        raise ServiceError("registry initial_profile_grant is invalid")
-    validate_selection(grant["selection"])
-    for field in ("scope_revision", "not_before_unix", "not_after_unix", "created_at_unix"):
-        if type(device[field]) is not int or device[field] < 0:
-            raise ServiceError(f"registry {field} is invalid")
-    if type(grant["authorization_revision"]) is not int or grant["authorization_revision"] < 0:
-        raise ServiceError("registry initial_profile_grant authorization_revision is invalid")
-    if device["status"] not in {"active", "revoked"}:
-        raise ServiceError("registry device status is invalid")
-    revoked_at = device["revoked_at_unix"]
-    if device["status"] == "revoked":
-        if type(revoked_at) is not int or revoked_at < 0:
-            raise ServiceError("revoked device requires revoked_at_unix")
-    elif revoked_at is not None:
-        raise ServiceError("active device cannot have revoked_at_unix")
-
-
-def validate_registry(registry: object) -> None:
-    if not isinstance(registry, dict):
-        raise ServiceError("trust registry must be an object")
-    if set(registry) != {"schema_version", "authorization_revision", "host_id", "devices"}:
-        raise ServiceError("trust registry has unsupported or missing fields")
-    if registry["schema_version"] != REGISTRY_SCHEMA_VERSION:
-        raise ServiceError("trust registry schema_version must be 2")
-    if type(registry["authorization_revision"]) is not int or registry["authorization_revision"] < 0:
-        raise ServiceError("trust registry authorization_revision is invalid")
-    if not isinstance(registry["host_id"], str) or not registry["host_id"]:
-        raise ServiceError("trust registry host_id is invalid")
-    devices = registry["devices"]
-    if not isinstance(devices, list):
-        raise ServiceError("trust registry devices must be a list")
-    seen = set()
-    for device in devices:
-        validate_device(device)
-        if device["device_id"] in seen:
-            raise ServiceError("trust registry has duplicate device_id")
-        seen.add(device["device_id"])
-
-
-def parse_trust_registry(registry_bytes: bytes) -> dict[str, object]:
-    try:
-        registry = json.loads(registry_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ServiceError(f"invalid trust registry: {error}") from error
-    if not isinstance(registry, dict):
-        raise ServiceError("trust registry must be a JSON object")
-    validate_registry(registry)
-    return registry
-
-
-def load_trust_registry(root: Path) -> dict[str, object]:
-    path = trust_path(root, TRUST_REGISTRY_NAME)
+def load_token(root: Path) -> str:
+    path = trust_path(root, TRUST_TOKEN_NAME)
     if not path.is_file():
-        raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
-    return parse_trust_registry(path.read_bytes())
-
-
-def find_device(registry: dict[str, object], device_id: str) -> dict[str, object] | None:
-    for device in registry["devices"]:
-        if device["device_id"] == device_id:
-            return device
-    return None
-
-
-def load_device_record(root: Path, device_id: str) -> dict[str, object] | None:
-    path = trust_device_path(root, device_id)
-    if not path.is_file():
-        return None
-    return load_json(path, "device record")
-
-
-def rebind_active_grants(registry: dict[str, object], revision: int) -> None:
-    for device in registry["devices"]:
-        if device["status"] == "active":
-            device["initial_profile_grant"]["authorization_revision"] = revision
-
-
-def refresh_projection(root: Path, registry: dict[str, object], registry_bytes: bytes) -> tuple[bytes, str]:
-    registry_sha = sha256_bytes(registry_bytes)
-    clients = [
-        projection_client(device)
-        for device in registry["devices"]
-        if device["status"] == "active"
-    ]
-    content = projection_content(registry_sha, registry["authorization_revision"], clients)
-    return content, registry_sha
-
-
-def write_registry(root: Path, registry: dict[str, object]) -> bytes:
-    content = serialize_registry(registry)
-    try:
-        write_bytes(trust_path(root, TRUST_REGISTRY_NAME), content, 0o600)
-    except OSError as error:
         raise ServiceError(
-            f"cannot persist trust registry: {error}",
-            PARTIAL_EXIT_CODE,
-            code="REGISTRY_WRITE_FAILED",
-        ) from error
-    return content
-
-
-def write_projection(root: Path, content: bytes) -> str:
-    try:
-        write_bytes(trust_path(root, TRUST_PROJECTION_NAME), content, 0o600)
-    except OSError as error:
+            "trust authority has no access token",
+            TRUST_EXIT_CODE,
+            code="TRUST_NOT_INITIALIZED",
+        )
+    token = path.read_text(encoding="ascii").strip()
+    if not token:
         raise ServiceError(
-            f"cannot persist authorized-clients projection: {error}",
-            PARTIAL_EXIT_CODE,
-            code="PROJECTION_WRITE_FAILED",
-        ) from error
-    return sha256_bytes(content)
+            "trust authority access token is empty",
+            TRUST_EXIT_CODE,
+            code="TRUST_NOT_INITIALIZED",
+        )
+    return token
 
 
 def trust_endpoint(root: Path) -> dict[str, object]:
@@ -2087,72 +1725,52 @@ def trust_endpoint(root: Path) -> dict[str, object]:
 
 
 def trust_init_locked(args: argparse.Namespace, root: Path) -> int:
-    directory = trust_root(root)
-    if directory.exists() or trust_path(root, TRUST_REGISTRY_NAME).exists():
+    host_kind, host = endpoint_host_san(args.endpoint_host)
+    port = args.endpoint_port
+    if type(port) is not int or not 1 <= port <= 65535:
         raise ServiceError(
-            "trust authority already initialized; reinitialize is refused",
+            "endpoint port must be an integer in 1..65535",
             TRUST_EXIT_CODE,
-            code="TRUST_ALREADY_INITIALIZED",
+            code="ENDPOINT_PORT_INVALID",
         )
-    validity_days = args.validity_days
-    if type(validity_days) is not int or not 1 <= validity_days <= MAX_CERT_VALIDITY_DAYS:
-        raise ServiceError(
-            f"leaf validity must be 1..{MAX_CERT_VALIDITY_DAYS} days",
-            TRUST_EXIT_CODE,
-            code="CERT_VALIDITY_INVALID",
+    # `install` already created the token. This step records where the endpoint
+    # is reachable and keeps the listener identity; it is a panel step, not a
+    # lifecycle prerequisite, so it is idempotent and never rotates the token.
+    token = ensure_access_token(root)
+    server_cert_path = trust_path(root, TRUST_SERVER_CERT_NAME)
+    server_key_path = trust_path(root, TRUST_SERVER_KEY_NAME)
+    if server_cert_path.is_file() and server_key_path.is_file():
+        server_cert = server_cert_path.read_bytes()
+    else:
+        server_cert, server_key = generate_server_certificate(
+            host, host_kind, DEFAULT_CERT_VALIDITY_DAYS
         )
-    san = endpoint_host_san(args.endpoint_host)
-    assert_private_directory(root)
-    assert_private_directory(directory)
-    assert_private_directory(directory / TRUST_DEVICES_NAME)
-    ca_cert, ca_key = generate_ca("AgentBrowser Host CA")
-    server_cert, server_key, _, not_before, not_after = generate_leaf(
-        crypto_modules().x509.load_der_x509_certificate(ca_cert),
-        crypto_modules().serialization.load_der_private_key(ca_key, password=None),
-        common_name=san[1],
-        server_auth=True,
-        validity_days=validity_days,
-        san=san,
-    )
-    host_id = uuid.uuid4().hex
-    write_bytes(trust_path(root, TRUST_CA_CERT_NAME), ca_cert, 0o644)
-    write_bytes(trust_path(root, TRUST_CA_KEY_NAME), ca_key, 0o600)
-    write_bytes(trust_path(root, TRUST_SERVER_CERT_NAME), server_cert, 0o644)
-    write_bytes(trust_path(root, TRUST_SERVER_KEY_NAME), server_key, 0o600)
+        write_bytes(server_cert_path, server_cert, 0o644)
+        write_bytes(server_key_path, server_key, 0o600)
+    locator_path = trust_path(root, TRUST_ENDPOINT_NAME)
+    generation = 0
+    if locator_path.is_file():
+        generation = int(trust_endpoint(root)["endpoint_generation"])
     write_json(
-        trust_path(root, TRUST_ENDPOINT_NAME),
+        locator_path,
         {
-            "endpoint_host": san[1],
-            "endpoint_host_kind": san[0],
-            "endpoint_port": args.endpoint_port,
+            "endpoint_host": host,
+            "endpoint_host_kind": host_kind,
+            "endpoint_port": port,
             # The applied-receipt generation is a service-owned monotonic stamp
             # that lives only in this locator. It starts at 0 before any
             # endpoint bind; the endpoint refresh sequence advances it and the
             # strict consumer reads it from here, never from a second store.
-            "endpoint_generation": 0,
+            "endpoint_generation": generation,
         },
     )
-    registry: dict[str, object] = {
-        "schema_version": REGISTRY_SCHEMA_VERSION,
-        "authorization_revision": 0,
-        "host_id": host_id,
-        "devices": [],
-    }
-    registry_bytes = write_registry(root, registry)
-    content, registry_sha = refresh_projection(root, registry, registry_bytes)
-    projection_sha = write_projection(root, content)
     emit({
         "state": "initialized",
-        "host_id": host_id,
-        "authorization_revision": 0,
-        "registry_sha256": registry_sha,
-        "projection_sha256": projection_sha,
-        "ca_sha256": sha256_bytes(ca_cert),
+        "endpoint": endpoint_text(host, host_kind, port),
+        "endpoint_host": host,
+        "endpoint_port": port,
+        "token_sha256": sha256_bytes(token.encode("ascii")),
         "server_sha256": sha256_bytes(server_cert),
-        "endpoint_host": san[1],
-        "endpoint_port": args.endpoint_port,
-        "server_not_before_unix": not_before,
-        "server_not_after_unix": not_after,
     })
     return 0
 
@@ -2166,407 +1784,34 @@ def command_trust_init(args: argparse.Namespace) -> int:
         release_start_lock(lock_fd)
 
 
-def projection_publication_state(
-    root: Path,
-    registry: dict[str, object],
-    registry_bytes: bytes,
-) -> tuple[str, str | None]:
-    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-    if not projection_path.is_file():
-        return "missing", None
-    projection_bytes = projection_path.read_bytes()
-    projection_sha = sha256_bytes(projection_bytes)
-    expected, _ = refresh_projection(root, registry, registry_bytes)
-    return ("current" if projection_bytes == expected else "stale"), projection_sha
-
-
 def trust_status(root: Path) -> dict[str, object]:
-    """Single public calculation of committed trust state.
-
-    Projection publication is a file fact owned here. Endpoint applied
-    authorization is separate: it requires the endpoint owner's typed applied
-    receipt (revision + registry/projection material + PID). Status now
-    consumes the declared locator generation through the same strict verifier
-    the refresh sequence and export gate use, so ``authorization_state`` is
-    ``refreshed`` exactly when one committed endpoint receipt verifies; it
-    never waits for or persists a generation, and it invents no endpoint PID.
-    """
-    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
-    if not registry_path.is_file():
-        raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
-    registry_bytes = registry_path.read_bytes()
-    registry = parse_trust_registry(registry_bytes)
-    registry_sha = sha256_bytes(registry_bytes)
-    projection_state, projection_sha = projection_publication_state(root, registry, registry_bytes)
-    active_devices = [device for device in registry["devices"] if device["status"] == "active"]
-    authorization = _endpoint_authorization_state(root)
+    """Single public calculation of the committed connection configuration."""
+    if not trust_path(root, TRUST_ENDPOINT_NAME).is_file():
+        raise ServiceError(
+            "trust authority is not initialized",
+            TRUST_EXIT_CODE,
+            code="TRUST_NOT_INITIALIZED",
+        )
+    locator = trust_endpoint(root)
+    token = load_token(root)
+    authorization = _endpoint_endpoint_state(root)
+    host = str(locator["endpoint_host"])
+    host_kind = str(locator["endpoint_host_kind"])
+    port = int(locator["endpoint_port"])
     return {
         "state": "trust",
-        "host_id": registry["host_id"],
-        "authorization_revision": registry["authorization_revision"],
-        "registry_sha256": registry_sha,
-        "projection_sha256": projection_sha,
-        "projection_state": projection_state,
-        "authorization_state": authorization["authorization_state"],
+        "endpoint": endpoint_text(host, host_kind, port),
+        "endpoint_host": host,
+        "endpoint_port": port,
+        "endpoint_generation": locator.get("endpoint_generation", 0),
+        "token_sha256": sha256_bytes(token.encode("ascii")),
+        "endpoint_state": authorization["endpoint_state"],
         "endpoint_pid": authorization["endpoint_pid"],
-        "endpoint_generation": authorization["endpoint_generation"],
-        "active_clients": len(active_devices),
-        "devices": [
-            {
-                "device_id": device["device_id"],
-                "device_label": device["device_label"],
-                "client_certificate_sha256": device["client_certificate_sha256"],
-                "scopes": device["scopes"],
-                "initial_profile_grant": device["initial_profile_grant"],
-                "scope_revision": device["scope_revision"],
-                "status": device["status"],
-            }
-            for device in registry["devices"]
-        ],
     }
 
 
 def command_trust_status(args: argparse.Namespace) -> int:
     emit(trust_status(root_from(args.root)))
-    return 0
-
-
-def _admin_error(message: str) -> ServiceError:
-    return ServiceError(message, TRUST_EXIT_CODE, code="ADMIN_FRAME_MALFORMED")
-
-
-def _admin_require_text(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise _admin_error(f"host-admin {field} must be a non-empty string")
-    return value
-
-
-def _admin_require_bool(value: object, field: str) -> bool:
-    if not isinstance(value, bool):
-        raise _admin_error(f"host-admin {field} must be a boolean")
-    return value
-
-
-def _admin_require_revision(value: object, field: str) -> int:
-    if type(value) is not int or value < 0:
-        raise _admin_error(f"host-admin {field} must be a non-negative integer")
-    return value
-
-
-def _admin_require_intent(value: object) -> str:
-    # Intent is required and never inferred from enrollment or target presence.
-    if value not in ("grant", "remove"):
-        raise _admin_error("host-admin membership intent must be exactly grant or remove")
-    return str(value)
-
-
-def _admin_validate_members(value: object, label: str) -> list[str]:
-    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
-        raise _admin_error(f"host-admin {label} members must be a list of non-empty device ids")
-    return list(value)
-
-
-def _admin_validate_profile(value: object, label: str) -> dict[str, object]:
-    # The real Host serializes the catalog profile receipt as
-    # `profile_id`, `display_name`, `default`, `owner_device_id`, `members`.
-    expected = {"profile_id", "display_name", "default", "owner_device_id", "members"}
-    if not isinstance(value, dict) or set(value) != expected:
-        raise _admin_error(f"host-admin {label} profile receipt is malformed")
-    owner = value["owner_device_id"]
-    if owner is not None:
-        owner = _admin_require_text(owner, f"{label} owner_device_id")
-    return {
-        "profile_id": _admin_require_text(value["profile_id"], f"{label} profile_id"),
-        "display_name": _admin_require_text(value["display_name"], f"{label} display_name"),
-        "default": _admin_require_bool(value["default"], f"{label} default"),
-        "owner_device_id": owner,
-        "members": _admin_validate_members(value["members"], label),
-    }
-
-
-def _admin_validate_membership_receipt(value: object) -> dict[str, object]:
-    expected = {"receipt_type", "catalog_revision", "profile_id", "device_id", "owner_device_id", "members"}
-    if not isinstance(value, dict) or set(value) != expected:
-        raise _admin_error("host-admin membership receipt is malformed")
-    receipt_type = value["receipt_type"]
-    if receipt_type not in ("export_eligible", "removed"):
-        raise _admin_error("host-admin membership receipt_type must be export_eligible or removed")
-    return {
-        "receipt_type": receipt_type,
-        "catalog_revision": _admin_require_revision(value["catalog_revision"], "membership catalog_revision"),
-        "profile_id": _admin_require_text(value["profile_id"], "membership profile_id"),
-        "device_id": _admin_require_text(value["device_id"], "membership device_id"),
-        "owner_device_id": _admin_require_text(value["owner_device_id"], "membership owner_device_id"),
-        "members": _admin_validate_members(value["members"], "membership"),
-    }
-
-
-def _admin_read_frame(connection: socket.socket) -> bytes:
-    buffer = bytearray()
-    while True:
-        try:
-            chunk = connection.recv(4096)
-        except OSError as error:
-            raise ServiceError(
-                f"host-admin response transport failed: {error}",
-                TRUST_EXIT_CODE,
-                code="CATALOG_UNAVAILABLE",
-            ) from error
-        if not chunk:
-            if not buffer:
-                raise ServiceError(
-                    "host-admin owner closed the connection without a response",
-                    TRUST_EXIT_CODE,
-                    code="CATALOG_UNAVAILABLE",
-                )
-            raise _admin_error("host-admin response frame ended before a newline")
-        buffer.extend(chunk)
-        if b"\n" in buffer:
-            line, _, remainder = bytes(buffer).partition(b"\n")
-            if remainder:
-                raise _admin_error("host-admin response frame has trailing bytes")
-            if len(line) > ADMIN_FRAME_LIMIT:
-                raise _admin_error("host-admin response frame exceeds the size limit")
-            return line
-        if len(buffer) > ADMIN_FRAME_LIMIT:
-            raise _admin_error("host-admin response frame exceeds the size limit")
-
-
-def _admin_exchange(socket_path: Path, payload: bytes) -> bytes:
-    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        connection.settimeout(ADMIN_REQUEST_TIMEOUT_SECONDS)
-        connection.connect(str(socket_path))
-        connection.sendall(payload)
-        return _admin_read_frame(connection)
-    except ServiceError:
-        raise
-    except OSError as error:
-        raise ServiceError(
-            f"host-admin catalog owner is unavailable: {error}",
-            TRUST_EXIT_CODE,
-            code="CATALOG_UNAVAILABLE",
-        ) from error
-    finally:
-        connection.close()
-
-
-def _admin_call(
-    socket_path: Path,
-    op: str,
-    fields: dict[str, object],
-    required_keys: frozenset[str],
-    allowed_keys: frozenset[str] | None = None,
-) -> dict[str, object]:
-    if allowed_keys is None:
-        allowed_keys = required_keys
-    request_id = secrets.randbits(64)
-    request: dict[str, object] = {"schema_version": ADMIN_SCHEMA_VERSION, "id": request_id, "op": op}
-    request.update(fields)
-    payload = (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-    if len(payload) > ADMIN_FRAME_LIMIT:
-        raise _admin_error("host-admin request exceeds the frame size limit")
-    raw = _admin_exchange(Path(socket_path), payload)
-    try:
-        document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise _admin_error("host-admin response is not a UTF-8 JSON object") from error
-    if not isinstance(document, dict):
-        raise _admin_error("host-admin response must be a JSON object")
-    if document.get("schema_version") != ADMIN_SCHEMA_VERSION:
-        raise _admin_error("host-admin response schema_version must be 1")
-    if document.get("id") != request_id:
-        raise _admin_error("host-admin response id does not match the request")
-    state = document.get("state")
-    if state == "error":
-        # The real Host serializes a flat `{schema_version,id,state,code,
-        # message}` error object; the code is the single typed refusal.
-        if set(document) != {"schema_version", "id", "state", "code", "message"}:
-            raise _admin_error("host-admin error response has unsupported fields")
-        code = document.get("code")
-        message = document.get("message")
-        if not isinstance(code, str) or not code or not isinstance(message, str):
-            raise _admin_error("host-admin error response is malformed")
-        raise ServiceError(message, TRUST_EXIT_CODE, code=code)
-    if state != "ok":
-        raise _admin_error("host-admin response state must be ok or error")
-    body = set(document) - {"schema_version", "id", "state"}
-    if not required_keys <= body or not body <= allowed_keys:
-        raise _admin_error("host-admin ok response has unsupported or missing fields")
-    return {key: document[key] for key in body}
-
-
-def admin_catalog_info(socket_path: Path) -> dict[str, object]:
-    """Read the Host-owned profile catalog through the local admin socket."""
-    result = _admin_call(
-        socket_path,
-        "admin.catalog.info",
-        {},
-        frozenset({"catalog_revision", "default_profile_id", "profiles"}),
-    )
-    default_profile_id = result["default_profile_id"]
-    if default_profile_id is not None:
-        default_profile_id = _admin_require_text(default_profile_id, "default_profile_id")
-    profiles = result["profiles"]
-    if not isinstance(profiles, list):
-        raise _admin_error("host-admin catalog profiles must be a list")
-    return {
-        "catalog_revision": _admin_require_revision(result["catalog_revision"], "catalog_revision"),
-        "default_profile_id": default_profile_id,
-        "profiles": [_admin_validate_profile(entry, "catalog") for entry in profiles],
-    }
-
-
-def _admin_catalog_mutation(socket_path: Path, op: str, fields: dict[str, object]) -> dict[str, object]:
-    # `admin.catalog.create` returns `catalog_revision` + `profile`;
-    # `admin.catalog.select` additionally returns `default_profile_id`. Both
-    # real shapes are accepted; a missing `profile` stays malformed.
-    result = _admin_call(
-        socket_path,
-        op,
-        fields,
-        frozenset({"catalog_revision", "profile"}),
-        frozenset({"catalog_revision", "profile", "default_profile_id"}),
-    )
-    return {
-        "catalog_revision": _admin_require_revision(result["catalog_revision"], "catalog_revision"),
-        "profile_receipt": _admin_validate_profile(result["profile"], "catalog"),
-    }
-
-
-def admin_catalog_create(
-    socket_path: Path,
-    display_name: str,
-    make_default: bool,
-    expected_catalog_revision: int | None,
-) -> dict[str, object]:
-    fields: dict[str, object] = {
-        "display_name": _admin_require_text(display_name, "display_name"),
-        "make_default": _admin_require_bool(make_default, "make_default"),
-        "attempt_id": str(uuid.uuid4()),
-    }
-    if expected_catalog_revision is not None:
-        fields["expected_catalog_revision"] = _admin_require_revision(
-            expected_catalog_revision, "expected_catalog_revision"
-        )
-    return _admin_catalog_mutation(socket_path, "admin.catalog.create", fields)
-
-
-def admin_catalog_select(
-    socket_path: Path,
-    profile_id: str,
-    expected_catalog_revision: int | None,
-) -> dict[str, object]:
-    fields: dict[str, object] = {
-        "profile_id": _admin_require_text(profile_id, "profile_id"),
-        "attempt_id": str(uuid.uuid4()),
-    }
-    if expected_catalog_revision is not None:
-        fields["expected_catalog_revision"] = _admin_require_revision(
-            expected_catalog_revision, "expected_catalog_revision"
-        )
-    return _admin_catalog_mutation(socket_path, "admin.catalog.select", fields)
-
-
-def admin_membership_set(
-    socket_path: Path,
-    intent: str,
-    profile_id: str,
-    owner_device_id: str,
-    device_id: str,
-    members: list[str],
-    expected_catalog_revision: int | None,
-) -> dict[str, object]:
-    """Send one typed membership request and return the committed proof."""
-    fields: dict[str, object] = {
-        "intent": _admin_require_intent(intent),
-        "profile_id": _admin_require_text(profile_id, "profile_id"),
-        "owner_device_id": _admin_require_text(owner_device_id, "owner_device_id"),
-        "device_id": _admin_require_text(device_id, "device_id"),
-        "members": _admin_validate_members(members, "membership request"),
-        "attempt_id": str(uuid.uuid4()),
-    }
-    if expected_catalog_revision is not None:
-        fields["expected_catalog_revision"] = _admin_require_revision(
-            expected_catalog_revision, "expected_catalog_revision"
-        )
-    # The real Host returns the committed `catalog_revision` next to the
-    # `membership_receipt`; both must agree so the receipt cannot drift from
-    # the committed catalog state it claims to prove.
-    result = _admin_call(
-        socket_path,
-        "admin.membership.set",
-        fields,
-        frozenset({"catalog_revision", "membership_receipt"}),
-    )
-    receipt = _admin_validate_membership_receipt(result["membership_receipt"])
-    committed_revision = _admin_require_revision(result["catalog_revision"], "membership catalog_revision")
-    if receipt["catalog_revision"] != committed_revision:
-        raise _admin_error("host-admin membership receipt revision does not match the committed catalog")
-    return {"membership_receipt": receipt}
-
-
-def _admin_cli_socket(root: Path) -> Path:
-    """Locate the live Host-owned admin socket declared by one service root.
-
-    A root without a recorded running Host has no catalog owner. That is the
-    declared catalog-unavailable refusal: the service never guesses a socket
-    path, never scans other runtimes, and never reads catalog.json to answer.
-    """
-    socket_path = _admin_socket_path(root)
-    if socket_path is None:
-        raise ServiceError(
-            "no running Host catalog owner is declared for this service root",
-            TRUST_EXIT_CODE,
-            code="CATALOG_UNAVAILABLE",
-        )
-    return socket_path
-
-
-def command_admin_catalog_list(args: argparse.Namespace) -> int:
-    emit(admin_catalog_info(_admin_cli_socket(root_from(args.root))))
-    return 0
-
-
-def command_admin_catalog_create(args: argparse.Namespace) -> int:
-    emit(
-        admin_catalog_create(
-            _admin_cli_socket(root_from(args.root)),
-            args.display_name,
-            args.default,
-            args.expected_catalog_revision,
-        )
-    )
-    return 0
-
-
-def command_admin_catalog_select(args: argparse.Namespace) -> int:
-    emit(
-        admin_catalog_select(
-            _admin_cli_socket(root_from(args.root)),
-            args.profile_id,
-            args.expected_catalog_revision,
-        )
-    )
-    return 0
-
-
-def command_admin_membership_set(args: argparse.Namespace) -> int:
-    # The typed intent guard runs before any connection, so an unknown intent is
-    # the declared ADMIN_FRAME_MALFORMED refusal and never a catalog-unavailable
-    # guess about the owner.
-    intent = _admin_require_intent(args.intent)
-    emit(
-        admin_membership_set(
-            _admin_cli_socket(root_from(args.root)),
-            intent,
-            args.profile_id,
-            args.owner_device_id,
-            args.device_id,
-            list(args.member or []),
-            args.expected_catalog_revision,
-        )
-    )
     return 0
 
 
@@ -2741,7 +1986,7 @@ def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[st
             TRUST_EXIT_CODE,
             code="ENDPOINT_RECEIPT_MALFORMED",
         )
-    for field in ("endpoint_generation", "endpoint_pid", "authorization_revision"):
+    for field in ("endpoint_generation", "endpoint_pid"):
         if type(document[field]) is not int or document[field] < 0:
             raise ServiceError(
                 f"endpoint applied receipt {field} is invalid",
@@ -2760,13 +2005,6 @@ def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[st
             TRUST_EXIT_CODE,
             code="ENDPOINT_RECEIPT_MALFORMED",
         )
-    for field in ("registry_sha256", "projection_sha256"):
-        if not isinstance(document[field], str) or not SHA256_PATTERN.fullmatch(document[field]):
-            raise ServiceError(
-                f"endpoint applied receipt {field} is invalid",
-                TRUST_EXIT_CODE,
-                code="ENDPOINT_RECEIPT_MALFORMED",
-            )
     locator = trust_endpoint(root)
     if document["endpoint_generation"] != generation:
         raise ServiceError(
@@ -2810,55 +2048,11 @@ def _verify_endpoint_applied(root: Path, path: Path, generation: int) -> dict[st
             TRUST_EXIT_CODE,
             code="ENDPOINT_BIND_MISMATCH",
         )
-    registry_path = trust_path(root, TRUST_REGISTRY_NAME)
-    if not registry_path.is_file():
-        raise ServiceError("trust authority is not initialized", TRUST_EXIT_CODE, code="TRUST_NOT_INITIALIZED")
-    try:
-        registry_bytes = registry_path.read_bytes()
-    except OSError as error:
-        raise ServiceError(
-            f"cannot read trust registry: {error}",
-            TRUST_EXIT_CODE,
-            code="ENDPOINT_NOT_REFRESHED",
-        ) from error
-    registry = parse_trust_registry(registry_bytes)
-    registry_sha = sha256_bytes(registry_bytes)
-    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-    if not projection_path.is_file():
-        raise ServiceError(
-            "authorized-clients projection is missing",
-            TRUST_EXIT_CODE,
-            code="PROJECTION_MATERIAL_CONFLICT",
-        )
-    try:
-        projection_bytes = projection_path.read_bytes()
-    except OSError as error:
-        raise ServiceError(
-            f"cannot read authorized-clients projection: {error}",
-            TRUST_EXIT_CODE,
-            code="ENDPOINT_NOT_REFRESHED",
-        ) from error
-    projection_sha = sha256_bytes(projection_bytes)
-    expected_projection, _ = refresh_projection(root, registry, registry_bytes)
-    if (
-        projection_bytes != expected_projection
-        or document["authorization_revision"] != registry["authorization_revision"]
-        or document["registry_sha256"] != registry_sha
-        or document["projection_sha256"] != projection_sha
-    ):
-        raise ServiceError(
-            "endpoint applied receipt does not match the committed authorization material",
-            TRUST_EXIT_CODE,
-            code="PROJECTION_MATERIAL_CONFLICT",
-        )
     return {
         "status": "refreshed",
         "endpoint_pid": document["endpoint_pid"],
         "endpoint_generation": document["endpoint_generation"],
         "bound_address": document["bound_address"],
-        "authorization_revision": document["authorization_revision"],
-        "registry_sha256": document["registry_sha256"],
-        "projection_sha256": document["projection_sha256"],
     }
 
 
@@ -2986,10 +2180,6 @@ def endpoint_command(
         str(trust / TRUST_SERVER_CERT_NAME),
         "--server-key",
         str(trust / TRUST_SERVER_KEY_NAME),
-        "--client-ca",
-        str(trust / TRUST_CA_CERT_NAME),
-        "--authorized-clients",
-        str(trust / TRUST_PROJECTION_NAME),
         "--media-bin",
         str(media_binary),
         "--ffmpeg",
@@ -3106,8 +2296,8 @@ def cleanup_endpoint_lifecycle(root: Path, config: dict[str, object]) -> None:
     remove_endpoint_process_record(root)
 
 
-def _endpoint_authorization_state(root: Path) -> dict[str, object]:
-    """Compute the single public endpoint authorization projection.
+def _endpoint_endpoint_state(root: Path) -> dict[str, object]:
+    """Compute the single public endpoint applied projection.
 
     Reads the declared locator generation, then strictly verifies the exact
     ``<generation>.json`` endpoint receipt. A verified receipt yields
@@ -3118,7 +2308,7 @@ def _endpoint_authorization_state(root: Path) -> dict[str, object]:
     generation = locator.get("endpoint_generation")
     if type(generation) is not int or generation < 0:
         return {
-            "authorization_state": "not_refreshed",
+            "endpoint_state": "not_refreshed",
             "endpoint_pid": None,
             "endpoint_generation": None,
         }
@@ -3126,12 +2316,12 @@ def _endpoint_authorization_state(root: Path) -> dict[str, object]:
         verified = wait_endpoint_applied(root, generation=generation, timeout_seconds=0.0)
     except ServiceError:
         return {
-            "authorization_state": "not_refreshed",
+            "endpoint_state": "not_refreshed",
             "endpoint_pid": None,
             "endpoint_generation": generation,
         }
     return {
-        "authorization_state": "refreshed",
+        "endpoint_state": "refreshed",
         "endpoint_pid": verified["endpoint_pid"],
         "endpoint_generation": verified["endpoint_generation"],
     }
@@ -3147,7 +2337,7 @@ def _endpoint_partial_facts(
     bound_address: str | None = None,
 ) -> dict[str, object]:
     return {
-        "authorization_state": "not_refreshed",
+        "endpoint_state": "not_refreshed",
         "error": code,
         "cause": cause,
         "last_step": step,
@@ -3221,16 +2411,16 @@ def _reclaim_failed_endpoint_child(
 
 
 def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]:
-    """Own the declared nine-step endpoint refresh sequence.
+    """Own the declared endpoint refresh sequence.
 
-    Steps (repair-design §4.3): publish the matching projection; allocate the
-    next service-owned generation in the existing locator; stop the old
-    endpoint through the declared lifecycle; remove the old generation receipt
-    file; start the endpoint with the new generation receipt path; bounded-wait
-    for that exact file; verify JSON/generation/PID/address/revision/digests;
-    expose ``refreshed`` with PID and generation; otherwise expose
-    ``not_refreshed`` with typed partial facts. Cancel of the bounded wait
-    releases only the waiter and never stops or cleans up the endpoint.
+    Steps: allocate the next service-owned generation in the existing locator;
+    stop the old endpoint through the declared lifecycle; remove the old
+    generation receipt file; start the endpoint with the new generation receipt
+    path; bounded-wait for that exact file; verify
+    JSON/generation/PID/address; expose ``refreshed`` with PID and generation;
+    otherwise expose ``not_refreshed`` with typed partial facts. Cancel of the
+    bounded wait releases only the waiter and never stops or cleans up the
+    endpoint.
     """
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds < 0:
         raise ServiceError(
@@ -3253,23 +2443,6 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
                 step="host_required", code="ENDPOINT_NOT_REFRESHED", cause="host_not_running"
             ),
         )
-    # Step 1: read the committed registry and publish the matching projection.
-    try:
-        registry_path = trust_path(root, TRUST_REGISTRY_NAME)
-        if not registry_path.is_file():
-            raise ServiceError(
-                "trust authority is not initialized",
-                TRUST_EXIT_CODE,
-                code="TRUST_NOT_INITIALIZED",
-            )
-        registry_bytes = registry_path.read_bytes()
-        registry = parse_trust_registry(registry_bytes)
-        expected_projection, _ = refresh_projection(root, registry, registry_bytes)
-        projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-        if not projection_path.is_file() or projection_path.read_bytes() != expected_projection:
-            write_projection(root, expected_projection)
-    except (ServiceError, OSError) as error:
-        raise _endpoint_refresh_failure(error, step="publish_projection", generation=None) from error
     # Preflight: resolve the public locator into the numeric local bind and
     # confirm it is assignable before the generation changes or the old
     # endpoint stops. The one resolved numeric bind is kept and reused for the
@@ -3410,16 +2583,13 @@ def refresh_endpoint(root: Path, *, timeout_seconds: float) -> dict[str, object]
                 }
             ) == "owned" else None,
         ) from error
-    # Step 8: expose the refreshed result with the endpoint PID and generation.
+    # Expose the refreshed result with the endpoint PID and generation.
     return {
         "state": "refreshed",
-        "authorization_state": "refreshed",
+        "endpoint_state": "refreshed",
         "endpoint_pid": verified["endpoint_pid"],
         "endpoint_generation": verified["endpoint_generation"],
         "bound_address": verified["bound_address"],
-        "authorization_revision": verified["authorization_revision"],
-        "registry_sha256": verified["registry_sha256"],
-        "projection_sha256": verified["projection_sha256"],
     }
 
 
@@ -3434,389 +2604,35 @@ def command_trust_endpoint_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
-def enroll_device(
-    root: Path,
-    *,
-    label: str,
-    scopes: list[str] | None,
-    selection: object,
-    validity_days: int = DEFAULT_CERT_VALIDITY_DAYS,
-) -> dict[str, object]:
-    lock_fd = acquire_start_lock(root, blocking=True)
-    try:
-        return _enroll_device_locked(
-            root,
-            label=label,
-            scopes=scopes,
-            selection=selection,
-            validity_days=validity_days,
-        )
-    finally:
-        release_start_lock(lock_fd)
-
-
-def _enroll_device_locked(
-    root: Path,
-    *,
-    label: str,
-    scopes: list[str] | None,
-    selection: object,
-    validity_days: int = DEFAULT_CERT_VALIDITY_DAYS,
-) -> dict[str, object]:
-    if not isinstance(label, str) or not 1 <= len(label) <= LABEL_MAX_LENGTH or not label.isprintable():
-        raise ServiceError(
-            f"device label must be 1..{LABEL_MAX_LENGTH} printable characters",
-            TRUST_EXIT_CODE,
-            code="DEVICE_LABEL_INVALID",
-        )
-    if type(validity_days) is not int or not 1 <= validity_days <= MAX_CERT_VALIDITY_DAYS:
-        raise ServiceError(
-            f"leaf validity must be 1..{MAX_CERT_VALIDITY_DAYS} days",
-            TRUST_EXIT_CODE,
-            code="CERT_VALIDITY_INVALID",
-        )
-    normalized_scopes = normalize_scopes(scopes)
-    validate_selection(selection)
-    registry = load_trust_registry(root)
-    modules = crypto_modules()
-    ca_cert_bytes = trust_path(root, TRUST_CA_CERT_NAME).read_bytes()
-    ca_key_bytes = trust_path(root, TRUST_CA_KEY_NAME).read_bytes()
-    ca_certificate = modules.x509.load_der_x509_certificate(ca_cert_bytes)
-    ca_key = modules.serialization.load_der_private_key(ca_key_bytes, password=None)
-    device_id = str(uuid.uuid4())
-    client_cert, client_key, _, not_before, not_after = generate_leaf(
-        ca_certificate,
-        ca_key,
-        common_name=f"AgentBrowser device {device_id}",
-        server_auth=False,
-        validity_days=validity_days,
-    )
-    fingerprint = sha256_bytes(client_cert)
-    created_at = int(time.time())
-    record = {
-        "device_record_version": DEVICE_RECORD_VERSION,
-        "device_id": device_id,
-        "device_label": label,
-        "client_certificate_sha256": fingerprint,
-        "client_certificate_der_base64": base64.b64encode(client_cert).decode("ascii"),
-        "client_key_pkcs8_der_base64": base64.b64encode(client_key).decode("ascii"),
-        "not_before_unix": not_before,
-        "not_after_unix": not_after,
-    }
-    record_path = trust_device_path(root, device_id)
-    write_json(record_path, record)
-    revision = registry["authorization_revision"] + 1
-    rebind_active_grants(registry, revision)
-    registry["authorization_revision"] = revision
-    registry["devices"].append({
-        "device_id": device_id,
-        "device_label": label,
-        "client_certificate_sha256": fingerprint,
-        "scopes": normalized_scopes,
-        "initial_profile_grant": {
-            "selection": selection,
-            "authorization_revision": revision,
-        },
-        "scope_revision": revision,
-        "status": "active",
-        "not_before_unix": not_before,
-        "not_after_unix": not_after,
-        "created_at_unix": created_at,
-        "revoked_at_unix": None,
-    })
-    try:
-        registry_bytes = write_registry(root, registry)
-    except ServiceError:
-        try:
-            record_path.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-    content, registry_sha = refresh_projection(root, registry, registry_bytes)
-    try:
-        projection_sha = write_projection(root, content)
-    except ServiceError as error:
-        return {
-            "state": "partial",
-            "error": "PARTIAL_REGISTRY_COMMIT",
-            "cause": error.code,
-            "message": str(error),
-            "device_id": device_id,
-            "authorization_revision": revision,
-            "registry_sha256": registry_sha,
-            "projection_sha256": None,
-            "endpoint_refresh": "required",
-            "catalog_membership": "unavailable",
-        }
-    return {
-        "state": "enrolled",
-        "device_id": device_id,
-        "authorization_revision": revision,
-        "registry_sha256": registry_sha,
-        "projection_sha256": projection_sha,
-        "client_certificate_sha256": fingerprint,
-        "scopes": normalized_scopes,
-        "initial_profile_grant": registry["devices"][-1]["initial_profile_grant"],
-        "endpoint_refresh": "required",
-        "catalog_membership": "unavailable",
-    }
-
-
-def command_trust_provision(args: argparse.Namespace) -> int:
-    root = root_from(args.root)
-    result = enroll_device(
-        root,
-        label=args.label,
-        scopes=args.scope,
-        selection=parse_initial_profile(args.initial_profile),
-        validity_days=args.validity_days,
-    )
-    emit(result)
-    return 0 if result.get("state") != "partial" else PARTIAL_EXIT_CODE
-
-
-def revoke_device(root: Path, device_id: str) -> dict[str, object]:
-    lock_fd = acquire_start_lock(root, blocking=True)
-    try:
-        return _revoke_device_locked(root, device_id)
-    finally:
-        release_start_lock(lock_fd)
-
-
-def _revoke_device_locked(root: Path, device_id: str) -> dict[str, object]:
-    registry = load_trust_registry(root)
-    device = find_device(registry, device_id)
-    if device is None:
-        raise ServiceError(
-            f"unknown device: {device_id}",
-            TRUST_EXIT_CODE,
-            code="DEVICE_NOT_FOUND",
-        )
-    if device["status"] == "revoked":
-        registry_bytes = trust_path(root, TRUST_REGISTRY_NAME).read_bytes()
-        content, registry_sha = refresh_projection(root, registry, registry_bytes)
-        projection_sha = write_projection(root, content)
-        return {
-            "state": "revoked",
-            "device_id": device_id,
-            "authorization_revision": registry["authorization_revision"],
-            "registry_sha256": registry_sha,
-            "projection_sha256": projection_sha,
-            "already_revoked": True,
-            "endpoint_refresh": "required",
-        }
-    revision = registry["authorization_revision"] + 1
-    rebind_active_grants(registry, revision)
-    registry["authorization_revision"] = revision
-    device["status"] = "revoked"
-    device["revoked_at_unix"] = int(time.time())
-    registry_bytes = write_registry(root, registry)
-    content, registry_sha = refresh_projection(root, registry, registry_bytes)
-    try:
-        projection_sha = write_projection(root, content)
-    except ServiceError as error:
-        return {
-            "state": "partial",
-            "error": "PARTIAL_REGISTRY_COMMIT",
-            "cause": error.code,
-            "message": str(error),
-            "device_id": device_id,
-            "authorization_revision": revision,
-            "registry_sha256": registry_sha,
-            "projection_sha256": None,
-            "endpoint_refresh": "required",
-        }
-    return {
-        "state": "revoked",
-        "device_id": device_id,
-        "authorization_revision": revision,
-        "registry_sha256": registry_sha,
-        "projection_sha256": projection_sha,
-        "already_revoked": False,
-        "endpoint_refresh": "required",
-    }
-
-
-def command_trust_revoke(args: argparse.Namespace) -> int:
-    root = root_from(args.root)
-    result = revoke_device(root, args.device_id)
-    emit(result)
-    return 0 if result.get("state") != "partial" else PARTIAL_EXIT_CODE
-
-
-def build_device_transfer_p12(root: Path, device_id: str, transfer_code: str) -> bytes:
-    validate_transfer_code(transfer_code)
-    registry = load_trust_registry(root)
-    device = find_device(registry, device_id)
-    if device is None:
-        raise ServiceError(f"unknown device: {device_id}", TRUST_EXIT_CODE, code="DEVICE_NOT_FOUND")
-    if device["status"] != "active":
-        raise ServiceError(
-            "device is not a current active registry entry",
-            TRUST_EXIT_CODE,
-            code="BUNDLE_NOT_READY",
-        )
-    record = load_device_record(root, device_id)
-    if record is None:
-        raise ServiceError(f"device material is missing: {device_id}", TRUST_EXIT_CODE, code="BUNDLE_NOT_READY")
-    modules = crypto_modules()
-    ca_certificate = modules.x509.load_der_x509_certificate(trust_path(root, TRUST_CA_CERT_NAME).read_bytes())
-    server_certificate = modules.x509.load_der_x509_certificate(trust_path(root, TRUST_SERVER_CERT_NAME).read_bytes())
-    client_certificate = modules.x509.load_der_x509_certificate(
-        base64.b64decode(record["client_certificate_der_base64"], validate=True)
-    )
-    client_key = modules.serialization.load_der_private_key(
-        base64.b64decode(record["client_key_pkcs8_der_base64"], validate=True),
-        password=None,
-    )
-    return modules.pkcs12.serialize_key_and_certificates(
-        name=P12_ALIAS_CLIENT.encode("ascii"),
-        key=client_key,
-        cert=client_certificate,
-        cas=[
-            modules.pkcs12.PKCS12Certificate(server_certificate, P12_ALIAS_ENDPOINT.encode("ascii")),
-            modules.pkcs12.PKCS12Certificate(ca_certificate, P12_ALIAS_HOST_CA.encode("ascii")),
-        ],
-        encryption_algorithm=modules.serialization.BestAvailableEncryption(transfer_code.encode("ascii")),
-    )
+def _running_socket_dir(root: Path) -> Path | None:
+    state = load_state(root)
+    if state is None or state["launch_mode"] not in {"subprocess", "launchd"}:
+        return None
+    return Path(str(state["socket_dir"]))
 
 
 def export_bundle(
     root: Path,
-    device_id: str,
     output_path: Path,
     *,
-    membership_receipt: dict[str, object] | None = None,
     endpoint_receipt: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    registry = load_trust_registry(root)
-    device = find_device(registry, device_id)
-    if device is None or device["status"] != "active" or load_device_record(root, device_id) is None:
+    if not isinstance(endpoint_receipt, dict) or endpoint_receipt.get("status") != "refreshed":
         raise ServiceError(
-            "device is not a current active registry entry",
-            TRUST_EXIT_CODE,
-            code="BUNDLE_NOT_READY",
-        )
-    if device["initial_profile_grant"]["authorization_revision"] != registry["authorization_revision"]:
-        raise ServiceError(
-            "device grant is not bound to the current registry revision",
-            TRUST_EXIT_CODE,
-            code="BUNDLE_NOT_READY",
-        )
-    if membership_receipt is None:
-        raise ServiceError(
-            "Host profile catalog membership is unavailable; bundle cannot be marked usable",
-            TRUST_EXIT_CODE,
-            code="PROFILE_CATALOG_UNAVAILABLE",
-        )
-    # A usable grant is the Host-owned committed proof: export_eligible, bound
-    # to this device and owner, with the target inside the exact applied members.
-    # A removed or target-omitting result is never an eligible grant. Type,
-    # keys and list membership are validated before owner_device_id is read, so
-    # malformed or non-object input keeps the typed write refusal.
-    if (
-        not isinstance(membership_receipt, dict)
-        or membership_receipt.get("receipt_type") != "export_eligible"
-        or membership_receipt.get("device_id") != device_id
-        or type(membership_receipt.get("catalog_revision")) is not int
-        or membership_receipt["catalog_revision"] < 0
-        or not isinstance(membership_receipt.get("profile_id"), str)
-        or not membership_receipt["profile_id"]
-        or not isinstance(membership_receipt.get("members"), list)
-        or any(
-            not isinstance(member, str) or not member
-            for member in membership_receipt["members"]
-        )
-        or device_id not in membership_receipt["members"]
-        or "owner_device_id" not in membership_receipt
-    ):
-        raise ServiceError(
-            "profile membership receipt does not match the enrolled device and profile",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_WRITE_FAILED",
-        )
-    selection = device["initial_profile_grant"]["selection"]
-    if isinstance(selection, dict) and membership_receipt["profile_id"] != selection["profile_id"]:
-        raise ServiceError(
-            "profile membership receipt does not match the initial profile grant",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_WRITE_FAILED",
-        )
-    # Only an explicitly null owner in an otherwise valid receipt shape is the
-    # legacy-catalog migration signal.
-    if membership_receipt["owner_device_id"] is None:
-        raise ServiceError(
-            "profile has no committed owner; migrate ownership through the public membership operation before export",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_MIGRATION_REQUIRED",
-        )
-    # A non-string or empty owner is a malformed grant, never a migration.
-    if (
-        not isinstance(membership_receipt["owner_device_id"], str)
-        or not membership_receipt["owner_device_id"]
-        or membership_receipt["owner_device_id"] not in membership_receipt["members"]
-    ):
-        raise ServiceError(
-            "profile membership receipt does not match the enrolled device and profile",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_WRITE_FAILED",
-        )
-    if endpoint_receipt is None:
-        raise ServiceError(
-            "running endpoint has not applied the current authorization",
+            "running endpoint has not applied the current endpoint generation",
             TRUST_EXIT_CODE,
             code="ENDPOINT_REFRESH_REQUIRED",
         )
-    registry_bytes = trust_path(root, TRUST_REGISTRY_NAME).read_bytes()
-    registry_sha = sha256_bytes(registry_bytes)
-    projection_path = trust_path(root, TRUST_PROJECTION_NAME)
-    if not projection_path.is_file():
-        raise ServiceError(
-            "authorized-clients projection is missing",
-            TRUST_EXIT_CODE,
-            code="ENDPOINT_REFRESH_REQUIRED",
-        )
-    expected_projection, _ = refresh_projection(root, registry, registry_bytes)
-    projection_bytes = projection_path.read_bytes()
-    if projection_bytes != expected_projection:
-        raise ServiceError(
-            "authorized-clients projection does not match the current registry",
-            TRUST_EXIT_CODE,
-            code="PROJECTION_MATERIAL_CONFLICT",
-        )
-    projection_sha = sha256_bytes(projection_bytes)
-    if (
-        not isinstance(endpoint_receipt, dict)
-        or endpoint_receipt.get("status") != "refreshed"
-        or type(endpoint_receipt.get("endpoint_pid")) is not int
-        or endpoint_receipt["endpoint_pid"] <= 0
-        or endpoint_receipt.get("authorization_revision") != registry["authorization_revision"]
-        or endpoint_receipt.get("registry_sha256") != registry_sha
-        or endpoint_receipt.get("projection_sha256") != projection_sha
-    ):
-        raise ServiceError(
-            "endpoint applied receipt does not match the current registry revision or material",
-            TRUST_EXIT_CODE,
-            code="PROJECTION_MATERIAL_CONFLICT",
-        )
-    transfer_code = generate_transfer_code()
-    p12 = build_device_transfer_p12(root, device_id, transfer_code)
-    endpoint = trust_endpoint(root)
-    endpoint_url = endpoint_ws_url(
-        str(endpoint["endpoint_host"]),
-        str(endpoint["endpoint_host_kind"]),
-        int(endpoint["endpoint_port"]),
-    )
+    locator = trust_endpoint(root)
+    host = str(locator["endpoint_host"])
+    host_kind = str(locator["endpoint_host_kind"])
+    port = int(locator["endpoint_port"])
+    token = load_token(root)
     document = {
-        "format": "agentbrowser.connection",
-        "version": 1,
-        "transport": "wss",
-        "endpoint": endpoint_url,
-        "device_id": device_id,
-        "device_label": device["device_label"],
-        "created_at_unix": int(time.time()),
-        "p12_base64": base64.b64encode(p12).decode("ascii"),
-        "p12_sha256": sha256_bytes(p12),
+        "format": BUNDLE_FORMAT,
+        "version": BUNDLE_VERSION,
+        "endpoint": endpoint_text(host, host_kind, port),
+        "token": token,
     }
     content = (json.dumps(document, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     try:
@@ -3830,95 +2646,9 @@ def export_bundle(
     return {
         "state": "exported",
         "verified_bundle": str(output_path),
-        "transfer_code": transfer_code,
-        "authorization_revision": registry["authorization_revision"],
-        "registry_sha256": registry_sha,
-        "projection_sha256": projection_sha,
+        "endpoint": document["endpoint"],
+        "token_sha256": sha256_bytes(token.encode("ascii")),
     }
-
-
-def _running_socket_dir(root: Path) -> Path | None:
-    state = load_state(root)
-    if state is None or state["launch_mode"] not in {"subprocess", "launchd"}:
-        return None
-    return Path(str(state["socket_dir"]))
-
-
-def _admin_socket_path(root: Path) -> Path | None:
-    socket_dir = _running_socket_dir(root)
-    if socket_dir is None:
-        return None
-    return socket_dir / ADMIN_SOCKET_NAME
-
-
-def _export_membership_receipt(root: Path, device_id: str) -> dict[str, object] | None:
-    """Obtain the real Host-owned export_eligible grant proof for one device.
-
-    Returns ``None`` when no live Host catalog owner can produce a grant, so the
-    export boundary keeps its declared catalog-unavailable refusal. A reachable
-    owner's typed denial is propagated unchanged; no proof is ever fabricated.
-    """
-    socket_path = _admin_socket_path(root)
-    if socket_path is None or not socket_path.exists():
-        return None
-    registry = load_trust_registry(root)
-    device = find_device(registry, device_id)
-    if device is None or device["status"] != "active" or load_device_record(root, device_id) is None:
-        return None
-    selection = device["initial_profile_grant"]["selection"]
-    try:
-        catalog = admin_catalog_info(socket_path)
-    except ServiceError as error:
-        if error.code == "CATALOG_UNAVAILABLE":
-            return None
-        raise
-    profile_id = selection["profile_id"] if isinstance(selection, dict) else catalog["default_profile_id"]
-    if not isinstance(profile_id, str) or not profile_id:
-        raise ServiceError(
-            "Host catalog has no committed profile for the enrolled device",
-            TRUST_EXIT_CODE,
-            code="PROFILE_NOT_FOUND",
-        )
-    profile = next((entry for entry in catalog["profiles"] if entry["profile_id"] == profile_id), None)
-    if profile is None:
-        raise ServiceError(
-            f"Host catalog has no profile {profile_id}",
-            TRUST_EXIT_CODE,
-            code="PROFILE_NOT_FOUND",
-        )
-    # Export consumes the committed membership exactly as the Host reports it.
-    # Only an explicit authorized grant entry point may submit a member set
-    # that adds the target; export must never re-authorize a removed or
-    # target-omitting membership by inserting the target here.
-    owner_device_id = profile["owner_device_id"]
-    members = list(profile["members"])
-    if owner_device_id is None:
-        raise ServiceError(
-            "profile has no committed owner; migrate ownership through the public membership operation before export",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_MIGRATION_REQUIRED",
-        )
-    if (
-        not isinstance(owner_device_id, str)
-        or not owner_device_id
-        or owner_device_id not in members
-        or device_id not in members
-    ):
-        raise ServiceError(
-            "profile membership does not include the enrolled device; export refuses without re-granting",
-            TRUST_EXIT_CODE,
-            code="PROFILE_ACCESS_WRITE_FAILED",
-        )
-    result = admin_membership_set(
-        socket_path,
-        "grant",
-        profile_id,
-        owner_device_id,
-        device_id,
-        members,
-        catalog["catalog_revision"],
-    )
-    return result["membership_receipt"]
 
 
 def _export_endpoint_receipt(root: Path) -> dict[str, object]:
@@ -3930,43 +2660,28 @@ def _export_endpoint_receipt(root: Path) -> dict[str, object]:
             TRUST_EXIT_CODE,
             code="ENDPOINT_REFRESH_REQUIRED",
         )
-    return wait_endpoint_applied(root, generation=generation, timeout_seconds=ENDPOINT_REFRESH_TIMEOUT_SECONDS)
+    return wait_endpoint_applied(
+        root, generation=generation, timeout_seconds=ENDPOINT_REFRESH_TIMEOUT_SECONDS
+    )
 
 
 def command_trust_export(args: argparse.Namespace) -> int:
     root = root_from(args.root)
     output_path = normalize_absolute(args.output, "bundle output")
-    membership_receipt = _export_membership_receipt(root, args.device_id)
-    endpoint_receipt = _export_endpoint_receipt(root) if membership_receipt is not None else None
-    result = export_bundle(
-        root,
-        args.device_id,
-        output_path,
-        membership_receipt=membership_receipt,
-        endpoint_receipt=endpoint_receipt,
-    )
-    # The default CLI contract never emits the one-time code. The native Mac
-    # provisioning owner opts into an in-process handoff over this pipe; it
-    # immediately renders the value in its secure AppKit modal and never logs
-    # or persists it.
-    if not args.include_transfer_code:
-        result = {key: value for key, value in result.items() if key != "transfer_code"}
-    emit(result)
+    endpoint_receipt = _export_endpoint_receipt(root)
+    emit(export_bundle(root, output_path, endpoint_receipt=endpoint_receipt))
     return 0
 
 
 def trust_summary(root: Path) -> dict[str, object] | None:
-    if not trust_path(root, TRUST_REGISTRY_NAME).is_file():
+    if not trust_path(root, TRUST_ENDPOINT_NAME).is_file():
         return None
     status = trust_status(root)
     return {
-        "authorization_revision": status["authorization_revision"],
-        "authorization_state": status["authorization_state"],
-        "registry_sha256": status["registry_sha256"],
-        "projection_sha256": status["projection_sha256"],
-        "projection_state": status["projection_state"],
-        "endpoint_pid": status["endpoint_pid"],
+        "endpoint": status["endpoint"],
         "endpoint_generation": status["endpoint_generation"],
+        "endpoint_state": status["endpoint_state"],
+        "endpoint_pid": status["endpoint_pid"],
     }
 
 
@@ -4005,99 +2720,35 @@ def parser() -> argparse.ArgumentParser:
     launchd = commands.add_parser("launchd", help="exec the configured Host for an already loaded launchd agent")
     add_root_option(launchd)
 
-    trust = commands.add_parser("trust", help="own the local CA, device registry and authorized-client projection")
+    trust = commands.add_parser("trust", help="own the endpoint locator and the access token")
     trust_commands = trust.add_subparsers(dest="trust_command", required=True)
 
-    trust_init = trust_commands.add_parser("init", help="initialize the private trust root exactly once")
+    trust_init = trust_commands.add_parser(
+        "init",
+        help=(
+            "record the endpoint locator, keeping the existing access token and listener identity"
+        ),
+    )
     add_root_option(trust_init)
-    trust_init.add_argument("--endpoint-host", required=True, help="endpoint DNS name or IP used as the server SAN")
+    trust_init.add_argument("--endpoint-host", required=True, help="endpoint DNS name or IP literal")
     trust_init.add_argument("--endpoint-port", type=int, default=8443)
-    trust_init.add_argument("--validity-days", type=int, default=DEFAULT_CERT_VALIDITY_DAYS)
 
-    trust_status = trust_commands.add_parser("status", help="report the committed registry and projection")
+    trust_status = trust_commands.add_parser("status", help="report the endpoint locator and the token digest")
     add_root_option(trust_status)
 
-    trust_provision = trust_commands.add_parser("provision", help="enroll one device with explicit scopes and initial grant")
-    add_root_option(trust_provision)
-    trust_provision.add_argument("--label", required=True)
-    trust_provision.add_argument("--scope", action="append")
-    trust_provision.add_argument("--initial-profile", required=True)
-    trust_provision.add_argument("--validity-days", type=int, default=DEFAULT_CERT_VALIDITY_DAYS)
-
-    trust_revoke = trust_commands.add_parser("revoke", help="revoke one enrolled device")
-    add_root_option(trust_revoke)
-    trust_revoke.add_argument("--device-id", required=True)
-
-    trust_export = trust_commands.add_parser("export", help="export a connection bundle after every receipt matches")
-    add_root_option(trust_export)
-    trust_export.add_argument("--device-id", required=True)
-    trust_export.add_argument("--output", required=True)
-    trust_export.add_argument(
-        "--include-transfer-code",
-        action="store_true",
-        help="return the one-time code to the native provisioning owner only",
+    trust_export = trust_commands.add_parser(
+        "export", help="write the connection bundle for the running endpoint"
     )
+    add_root_option(trust_export)
+    trust_export.add_argument("--output", required=True)
 
     trust_endpoint_refresh = trust_commands.add_parser(
         "endpoint-refresh",
-        help="own the declared nine-step endpoint refresh sequence and expose the refreshed result",
+        help="own the declared endpoint refresh sequence and expose the refreshed result",
     )
     add_root_option(trust_endpoint_refresh)
     trust_endpoint_refresh.add_argument("--timeout", type=float, default=ENDPOINT_REFRESH_TIMEOUT_SECONDS)
 
-    admin = commands.add_parser(
-        "admin",
-        help="read or change the Host profile catalog through the local admin socket",
-    )
-    admin_commands = admin.add_subparsers(dest="admin_command", required=True)
-
-    admin_catalog = admin_commands.add_parser("catalog", help="own the Host profile catalog")
-    admin_catalog_commands = admin_catalog.add_subparsers(dest="admin_catalog_command", required=True)
-
-    admin_catalog_list = admin_catalog_commands.add_parser(
-        "list",
-        help="report the committed catalog revision, default profile and profiles",
-    )
-    add_root_option(admin_catalog_list)
-
-    admin_catalog_create = admin_catalog_commands.add_parser(
-        "create",
-        help="create one profile owned by the local device",
-    )
-    add_root_option(admin_catalog_create)
-    admin_catalog_create.add_argument("--display-name", required=True)
-    admin_catalog_create.add_argument("--default", action="store_true")
-    admin_catalog_create.add_argument("--expected-catalog-revision", type=catalog_revision_argument)
-
-    admin_catalog_select = admin_catalog_commands.add_parser(
-        "select",
-        help="select one existing profile as the catalog default",
-    )
-    add_root_option(admin_catalog_select)
-    admin_catalog_select.add_argument("--profile-id", required=True)
-    admin_catalog_select.add_argument("--expected-catalog-revision", type=catalog_revision_argument)
-
-    admin_membership = admin_commands.add_parser(
-        "membership",
-        help="write one explicit Host-owned membership change",
-    )
-    admin_membership_commands = admin_membership.add_subparsers(
-        dest="admin_membership_command", required=True
-    )
-
-    admin_membership_set = admin_membership_commands.add_parser(
-        "set",
-        help="apply one explicit grant or remove member set",
-    )
-    add_root_option(admin_membership_set)
-    admin_membership_set.add_argument("--profile-id", required=True)
-    # `--intent` deliberately has no argparse choices: an unknown intent is the
-    # typed ADMIN_FRAME_MALFORMED refusal, not a command-line syntax error.
-    admin_membership_set.add_argument("--intent", required=True, help="exactly grant or remove")
-    admin_membership_set.add_argument("--owner-device-id", required=True)
-    admin_membership_set.add_argument("--device-id", required=True)
-    admin_membership_set.add_argument("--member", action="append")
-    admin_membership_set.add_argument("--expected-catalog-revision", type=catalog_revision_argument)
     return result
 
 
@@ -4121,29 +2772,11 @@ def main(argv: list[str] | None = None) -> int:
                 return command_trust_init(args)
             if args.trust_command == "status":
                 return command_trust_status(args)
-            if args.trust_command == "provision":
-                return command_trust_provision(args)
-            if args.trust_command == "revoke":
-                return command_trust_revoke(args)
             if args.trust_command == "export":
                 return command_trust_export(args)
             if args.trust_command == "endpoint-refresh":
                 return command_trust_endpoint_refresh(args)
             raise ServiceError(f"unsupported trust command: {args.trust_command}")
-        if args.command == "admin":
-            if args.admin_command == "catalog":
-                if args.admin_catalog_command == "list":
-                    return command_admin_catalog_list(args)
-                if args.admin_catalog_command == "create":
-                    return command_admin_catalog_create(args)
-                if args.admin_catalog_command == "select":
-                    return command_admin_catalog_select(args)
-                raise ServiceError(f"unsupported admin catalog command: {args.admin_catalog_command}")
-            if args.admin_command == "membership":
-                if args.admin_membership_command == "set":
-                    return command_admin_membership_set(args)
-                raise ServiceError(f"unsupported admin membership command: {args.admin_membership_command}")
-            raise ServiceError(f"unsupported admin command: {args.admin_command}")
         raise ServiceError(f"unsupported command: {args.command}")
     except ServiceError as error:
         if error.code:

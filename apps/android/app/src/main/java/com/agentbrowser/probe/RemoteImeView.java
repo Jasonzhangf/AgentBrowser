@@ -72,6 +72,11 @@ final class RemoteImeView extends View {
             connectionIdentity = identity;
             active = true;
             requestFocus();
+            // The input method may still be serving this view from an earlier
+            // activation. requestFocus alone does not make it call
+            // onCreateInputConnection again, so the show path would stay
+            // disarmed; a restart asks the service for a fresh connection.
+            inputMethodManager.restartInput(this);
             post(this::showInputWhenReady);
         } else if (!eligible && active) {
             deactivate();
@@ -96,6 +101,27 @@ final class RemoteImeView extends View {
 
     int showAttempts() {
         return showAttempts.get();
+    }
+
+    /**
+     * A real user tap on the remote page asks for the keyboard again. The tap
+     * itself is delivered to the remote document, so this is the only local
+     * signal that the user wants input: the remote editor can already be
+     * focused with an unchanged identity, and neither activation nor
+     * onCreateInputConnection fires again in that case. Re-arm the bounded show
+     * retry for whatever editor the tap focused; it stays a no-op while the
+     * remote page has no writable editor.
+     */
+    void requestImeForUserGesture() {
+        if (!active || !host.eligible()) return;
+        armShowRetry();
+    }
+
+    /** Arm the bounded show retry that turns a show request into a raised IME. */
+    private void armShowRetry() {
+        showAttempts.set(0);
+        imeHandler.removeCallbacks(imeRetry);
+        imeHandler.postDelayed(imeRetry, 200);
     }
 
     void deactivate() {
@@ -124,10 +150,8 @@ final class RemoteImeView extends View {
         outAttrs.imeOptions = RemoteInput.imeOptions(context);
         connection = new Connection();
         inputConnectionReady = true;
-        showAttempts.set(0);
-        imeHandler.removeCallbacks(imeRetry);
         post(this::showInputWhenReady);
-        imeHandler.postDelayed(imeRetry,200);
+        armShowRetry();
         return connection;
     }
 

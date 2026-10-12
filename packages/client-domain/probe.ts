@@ -95,14 +95,12 @@ export interface BrowserProfilesProjection {
   items: BrowserProfileProjection[];
 }
 
-export type ConnectionSetupState = 'required' | 'configured' | 'opening' | 'importing' | 'unresolved' | 'unavailable' | 'error';
+export type ConnectionSetupState = 'unconfigured' | 'configured';
 
 export interface ConnectionSetupProjection {
   state: ConnectionSetupState;
   error: string | null;
   label?: string | null;
-  repair_import_allowed?: boolean;
-  active_revision?: number;
 }
 
 export interface BrowserCapabilities {
@@ -129,8 +127,6 @@ export type ProbeCommand =
   | { op: 'close_tab'; epoch: number; tabId: string }
   | { op: 'open_connection_setup' }
   | { op: 'import_connection' }
-  | { op: 'retry_connection_setup' }
-  | { op: 'repair_connection_import' }
   | { op: 'select_profile'; profileId: string }
   | { op: 'set_video_quality'; sessionId: string; generation: number; profile: VideoQualityProfile; lowLatency: boolean };
 
@@ -178,8 +174,8 @@ export interface NativePort {
 
 const probeStates: ProbeState[] = ['idle', 'starting', 'playing', 'stopping', 'stopped', 'completed', 'error'];
 const qualityProfiles: VideoQualityProfile[] = ['low', 'balanced', 'high'];
-const connectionSetupStates: ConnectionSetupState[] = ['required', 'configured', 'opening', 'importing', 'unresolved', 'unavailable', 'error'];
-const connectionSetupKeys = new Set(['state', 'error', 'label', 'repair_import_allowed', 'active_revision']);
+const connectionSetupStates: ConnectionSetupState[] = ['unconfigured', 'configured'];
+const connectionSetupKeys = new Set(['state', 'error', 'label']);
 const presentationRejectionReasons: PresentationRejectionReason[] = ['NO_AUTHORITY', 'ACTIVITY_NOT_RESUMED', 'GEOMETRY_UNAVAILABLE'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -307,9 +303,7 @@ function validConnectionSetup(value: unknown): value is ConnectionSetupProjectio
       || !Object.keys(value).every(key => connectionSetupKeys.has(key))
       || !connectionSetupStates.includes(value.state as ConnectionSetupState)
       || !(value.error === null || typeof value.error === 'string')
-      || !(value.label === undefined || value.label === null || isPrintableLabel(value.label))
-      || !(value.repair_import_allowed === undefined || typeof value.repair_import_allowed === 'boolean')
-      || !(value.active_revision === undefined || isNonNegativeInteger(value.active_revision))) {
+      || !(value.label === undefined || value.label === null || isPrintableLabel(value.label))) {
     return false;
   }
   return true;

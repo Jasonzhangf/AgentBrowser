@@ -1510,11 +1510,11 @@ fn load_pairing() -> Result<Pairing, String> {
     }
     let endpoint = String::from_utf8(read_pairing_file(&root, "endpoint.txt", 4096)?)
         .map_err(|_| "PAIRING_ENDPOINT_ENCODING".to_string())?;
+    let token = String::from_utf8(read_pairing_file(&root, "token", 4096)?)
+        .map_err(|_| "PAIRING_TOKEN_ENCODING".to_string())?;
     Ok(Pairing {
         endpoint: endpoint.trim().to_owned(),
-        server_ca_der: read_pairing_file(&root, "ca.der", 65536)?,
-        client_cert_der: read_pairing_file(&root, "client.der", 65536)?,
-        client_key_pkcs8_der: read_pairing_file(&root, "key.der", 65536)?,
+        token: token.trim().to_owned(),
     })
 }
 
@@ -1523,12 +1523,6 @@ fn read_pairing_file(root: &Path, name: &str, max: u64) -> Result<Vec<u8>, Strin
     let metadata = std::fs::metadata(&path).map_err(|_| format!("PAIRING_FILE_MISSING:{name}"))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max {
         return Err(format!("PAIRING_FILE_INVALID:{name}"));
-    }
-    #[cfg(unix)]
-    if name == "key.der"
-        && std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o077 != 0
-    {
-        return Err("PAIRING_KEY_PERMISSIONS".into());
     }
     std::fs::read(path).map_err(|_| format!("PAIRING_FILE_READ_FAILED:{name}"))
 }

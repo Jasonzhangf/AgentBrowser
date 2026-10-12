@@ -57,29 +57,27 @@ test('remote-owned chrome projections parse without inventing local state', () =
   assert.equal(snapshot.videoQuality?.effective.generation, 1);
 });
 
-test('connectionSetup admits unresolved and unavailable typed projections', () => {
-  const unresolved = parseSnapshot(JSON.stringify({
+test('connectionSetup admits exactly the frozen configured and unconfigured projections', () => {
+  const unconfigured = parseSnapshot(JSON.stringify({
     ...base,
     source: 'network',
     connectionState: 'stopped',
-    networkConfigured: true,
-    connectionSetup: {state: 'unresolved', error: 'CONFIG_ACTIVE_COMMIT_UNRESOLVED', label: null, repair_import_allowed: false},
+    networkConfigured: false,
+    connectionSetup: {state: 'unconfigured', error: null, label: null},
     capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
   }));
-  assert.equal(unresolved.connectionSetup?.state, 'unresolved');
-  assert.equal(unresolved.connectionSetup?.repair_import_allowed, false);
+  assert.equal(unconfigured.connectionSetup?.state, 'unconfigured');
 
-  const unavailable = parseSnapshot(JSON.stringify({
+  const configured = parseSnapshot(JSON.stringify({
     ...base,
     source: 'network',
     connectionState: 'stopped',
     networkConfigured: true,
-    connectionSetup: {state: 'unavailable', error: 'CONFIG_ACTIVE_REFERENCE_INVALID', label: 'Phone', repair_import_allowed: true, active_revision: 2},
+    connectionSetup: {state: 'configured', error: null, label: 'Phone'},
     capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
   }));
-  assert.equal(unavailable.connectionSetup?.label, 'Phone');
-  assert.equal(unavailable.connectionSetup?.repair_import_allowed, true);
-  assert.equal(unavailable.connectionSetup?.active_revision, 2);
+  assert.equal(configured.connectionSetup?.state, 'configured');
+  assert.equal(configured.connectionSetup?.label, 'Phone');
 });
 
 test('connectionSetup rejects sensitive, overlength, control, and malformed fields', () => {
@@ -90,27 +88,14 @@ test('connectionSetup rejects sensitive, overlength, control, and malformed fiel
     {state: 'configured', error: null, label: 'x'.repeat(65)},
     {state: 'configured', error: null, label: 'bad\nlabel'},
     {state: 'configured', error: null, label: '\u202Eevil'},
-    {state: 'configured', error: null, repair_import_allowed: 'yes'},
-    {state: 'configured', error: null, active_revision: -1},
+    {state: 'configured', error: null, repair_import_allowed: true},
+    {state: 'configured', error: null, active_revision: 2},
+    {state: 'required', error: null},
+    {state: 'unresolved', error: null},
+    {state: 'unavailable', error: null},
   ]) {
     assert.throws(() => parseSnapshot(JSON.stringify({...base, connectionSetup: projection})), /INVALID/);
   }
-});
-
-test('retry and repair commands are the frozen native reconciliation names', () => {
-  const commands: unknown[] = [];
-  const port = androidPort({
-    request(raw) {
-      commands.push(JSON.parse(raw));
-      return JSON.stringify(base);
-    },
-  });
-  port.request({op: 'retry_connection_setup'});
-  port.request({op: 'repair_connection_import'});
-  assert.deepEqual(commands, [
-    {op: 'retry_connection_setup'},
-    {op: 'repair_connection_import'},
-  ]);
 });
 
 test('native rejection is preserved and unknown capability remains unavailable', () => {

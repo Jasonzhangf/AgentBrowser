@@ -28,20 +28,7 @@ type HarnessScenario =
   | 'capability-missing'
   | 'capability-missing-setup'
   | 'capability-false'
-  | 'unresolved-legacy-true'
-  | 'unresolved-still'
-  | 'configured-retry'
-  | 'unavailable-repair'
-  | 'unavailable-no-repair'
-  | 'unavailable-repair-cancel'
-  | 'configured-repair'
-  | 'configured-repaired'
-  | 'connected-unresolved'
-  | 'connected-unavailable'
-  | 'configured-long-label'
-  | 'opening'
-  | 'importing'
-  | 'error-legacy';
+  | 'configured-long-label';
 type QualityProfile = 'low' | 'balanced' | 'high';
 type ProbeCommand = Record<string, unknown> & {op: string};
 type CapabilityMode = 'true' | 'missing' | 'false';
@@ -67,7 +54,6 @@ const state = {
   revokeControlOnNextStatus: false,
   revokeCapabilityOnNextStatus: false,
   statusErrorsRemaining: 0,
-  repairCancelledOnce: false,
 };
 
 // Request counter and public-boundary trace for black-box evidence.
@@ -195,7 +181,7 @@ function snapshot() {
         controlMode: 'observe',
         pending: null,
         networkConfigured: false,
-        connectionSetup: {state: 'required', error: null},
+        connectionSetup: {state: 'unconfigured', error: null},
         capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
         layout: layout(),
       };
@@ -207,7 +193,7 @@ function snapshot() {
         error: 'HOST_REJECTED',
         connectionState: 'error',
         controlMode: 'observe',
-        connectionSetup: {state: 'error', error: 'Host 拒绝连接'},
+        connectionSetup: {state: 'unconfigured', error: 'Host 拒绝连接'},
         layout: layout(),
       };
     case 'configured':
@@ -227,122 +213,6 @@ function snapshot() {
         capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
         layout: layout(),
       };
-    case 'unresolved-legacy-true':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: true,
-        connectionSetup: {state: 'unresolved', error: 'CONFIG_ACTIVE_COMMIT_UNRESOLVED', label: null, repair_import_allowed: false},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'unresolved-still':
-      return {
-        ...stoppedBase(),
-        connectionSetup: {state: 'unresolved', error: 'CONFIG_ACTIVE_COMMIT_UNRESOLVED', label: null, repair_import_allowed: false},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'configured-retry':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: true,
-        connectionSetup: {state: 'configured', error: null, label: 'Recovered phone', repair_import_allowed: false, active_revision: 4},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'unavailable-repair':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: true,
-        connectionSetup: {state: 'unavailable', error: 'CONFIG_ACTIVE_REFERENCE_INVALID', label: 'Damaged phone', repair_import_allowed: true, active_revision: 2},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'unavailable-no-repair':
-      return {
-        ...stoppedBase(),
-        connectionSetup: {state: 'unavailable', error: 'CONFIG_ACTIVE_REFERENCE_INVALID', label: null, repair_import_allowed: false, active_revision: 2},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'unavailable-repair-cancel':
-      return {
-        ...stoppedBase(),
-        connectionSetup: {state: 'unavailable', error: 'CONFIG_ACTIVE_REFERENCE_INVALID', label: 'Cancelled phone', repair_import_allowed: true, active_revision: 2},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'configured-repair':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: true,
-        connectionSetup: {state: 'configured', error: null, label: 'Configured phone', repair_import_allowed: false, active_revision: 3},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'configured-repaired':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: true,
-        connectionSetup: {state: 'configured', error: null, label: 'Repaired phone', repair_import_allowed: false, active_revision: 6},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'connected-unresolved':
-      return {
-        ...connectedBase(),
-        connectionSetup: {state: 'unresolved', error: 'CONFIG_ACTIVE_COMMIT_UNRESOLVED', label: null, repair_import_allowed: false},
-      };
-    case 'connected-unavailable':
-      return {
-        ...connectedBase(),
-        connectionSetup: {state: 'unavailable', error: 'CONFIG_ACTIVE_REFERENCE_INVALID', label: 'Current phone', repair_import_allowed: true, active_revision: 2},
-      };
     case 'configured-long-label':
       return {
         state: 'idle',
@@ -356,58 +226,7 @@ function snapshot() {
         controlMode: 'observe',
         pending: null,
         networkConfigured: true,
-        connectionSetup: {state: 'configured', error: null, label: `PhoneLabel${'x'.repeat(54)}`, repair_import_allowed: false, active_revision: 5},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'opening':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: false,
-        connectionSetup: {state: 'opening', error: null, label: null, repair_import_allowed: false},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'importing':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: false,
-        connectionSetup: {state: 'importing', error: null, label: null, repair_import_allowed: false},
-        capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
-        layout: layout(),
-      };
-    case 'error-legacy':
-      return {
-        state: 'idle',
-        generation: state.generation,
-        renderedFrames: 0,
-        released: true,
-        codec: '',
-        error: null,
-        source: 'network',
-        connectionState: 'stopped',
-        controlMode: 'observe',
-        pending: null,
-        networkConfigured: true,
-        connectionSetup: {state: 'error', error: 'CONNECTION_SETUP_FAILED', label: null, repair_import_allowed: false},
+        connectionSetup: {state: 'configured', error: null, label: `PhoneLabel${'x'.repeat(54)}`},
         capabilities: {navigation: false, tabs: false, profiles: false, connectionSetup: true, quality: false},
         layout: layout(),
       };
@@ -488,7 +307,7 @@ function snapshot() {
         controlMode: 'observe',
         pending: null,
         networkConfigured: false,
-        connectionSetup: {state: 'required', error: null},
+        connectionSetup: {state: 'unconfigured', error: null},
         profiles: {available: true, selectedProfileId: 'profile-1', items: [{id: 'profile-1', name: '默认 Profile', active: true}]},
         layout: layout(),
       };
@@ -532,36 +351,11 @@ function applyCommand(command: ProbeCommand) {
       state.generation += 1;
       return snapshot();
     case 'disconnect':
-      if (state.scenario === 'connected-unresolved') state.scenario = 'unresolved-still';
-      else if (state.scenario === 'connected-unavailable') state.scenario = 'unavailable-repair';
-      else state.scenario = 'configured';
+      state.scenario = 'configured';
       state.generation += 1;
       return snapshot();
     case 'open_connection_setup':
     case 'import_connection':
-    case 'repair_connection_import':
-      if (state.scenario === 'unavailable-repair-cancel' && !state.repairCancelledOnce) {
-        state.repairCancelledOnce = true;
-        state.generation += 1;
-        return snapshot();
-      }
-      if (['unavailable-repair', 'unavailable-repair-cancel', 'configured-repair'].includes(state.scenario)) {
-        state.scenario = 'configured-repaired';
-        state.generation += 1;
-        return snapshot();
-      }
-      state.scenario = 'configured';
-      state.generation += 1;
-      return snapshot();
-    case 'retry_connection_setup':
-      if (state.scenario === 'unresolved-still') return snapshot();
-      if (state.scenario === 'unresolved-legacy-true') {
-        state.scenario = 'configured-retry';
-        state.generation += 1;
-        return snapshot();
-      }
-      if (state.scenario === 'configured-retry') return snapshot();
-      return snapshot();
     case 'takeover':
       state.scenario = 'control';
       return snapshot();
@@ -700,7 +494,6 @@ window.addEventListener('message', event => {
     state.revokeControlOnNextStatus = false;
     state.revokeCapabilityOnNextStatus = false;
     state.statusErrorsRemaining = 0;
-    state.repairCancelledOnce = false;
     state.commands.length = 0;
     stats.events.length = 0;
     state.presentation = 'browsing';

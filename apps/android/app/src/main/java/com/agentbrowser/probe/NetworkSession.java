@@ -285,7 +285,7 @@ final class NetworkSession {
         try{
             NativeConnection.load();
             NativeConnection.TransportConfig config=NativeConnection.TransportConfig.wss();
-            opened=NativeConnection.open(activeBinding.endpoint(),activeBinding.ca(),activeBinding.clientCert(),activeBinding.clientKey(),config);
+            opened=NativeConnection.open(activeBinding.endpoint(),activeBinding.token(),config);
             JSONObject status=new JSONObject(NativeConnection.command(opened,0,0,0,0,0,0,0,""));
             synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";selectedTransport=config.transport().name().toLowerCase(java.util.Locale.ROOT);flushViewport();}
             poll(expected);
@@ -405,8 +405,7 @@ final class NetworkSession {
         token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="stopping";
         resetEditing();
         long old=handle;handle=0;main.post(release);
-        ActiveConfiguration released=binding;binding=null;
-        if(released!=null)connectionSetup.release(released);
+        binding=null;
         notifyImeSync();
         worker.execute(()->{
             try{if(old!=0)NativeConnection.close(old);synchronized(this){state="stopped";}}
@@ -415,9 +414,8 @@ final class NetworkSession {
     }
     synchronized void close(){if(closed)return;disconnect();closed=true;worker.shutdown();}
     private void terminate(long expected,Exception failure){
-        long old;ActiveConfiguration released;
-        synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);released=binding;binding=null;failState(failure);}
-        if(released!=null)connectionSetup.release(released);
+        long old;
+        synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);binding=null;failState(failure);}
         try{if(old!=0)NativeConnection.close(old);}catch(Exception close){failure.addSuppressed(close);synchronized(this){error=failure+"; close: "+close;}}
         main.post(release);
     }

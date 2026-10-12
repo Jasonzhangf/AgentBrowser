@@ -18,7 +18,7 @@ use tokio::{
 use tokio_rustls::{
     rustls::{
         self,
-        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
+        pki_types::{CertificateDer, ServerName, UnixTime},
     },
     TlsConnector,
 };
@@ -44,12 +44,11 @@ pub(crate) trait Backend: Send {
     fn close<'a>(&'a mut self) -> BackendFuture<'a, ()>;
 }
 
-/// Explicit prepaired direct endpoint; credentials remain in the native owner.
+/// The necessary connection configuration: the endpoint address and the bearer
+/// token. The token is the only credential on the connection path.
 pub struct Pairing {
     pub endpoint: String,
-    pub server_ca_der: Vec<u8>,
-    pub client_cert_der: Vec<u8>,
-    pub client_key_pkcs8_der: Vec<u8>,
+    pub token: String,
 }
 
 #[derive(Clone, Debug)]
@@ -535,40 +534,86 @@ async fn establish(
     Ok((bootstrap.control, media, bootstrap.status, bootstrap.id))
 }
 
+/// TLS for the direct endpoint. The bundle carries no CA, so the transport
+/// cannot verify the Host certificate; the token is the only credential. This
+/// verifier therefore accepts the presented server certificate and keeps the
+/// handshake signature checks the crypto provider owns.
+#[derive(Debug)]
+struct TokenOnlyServerVerifier(Arc<rustls::crypto::CryptoProvider>);
+
+impl rustls::client::danger::ServerCertVerifier for TokenOnlyServerVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 async fn establish_control(
     pairing: Pairing,
     viewport: Option<ViewportDeclaration>,
 ) -> Result<Bootstrap, Failure> {
-    let base = url::Url::parse(&pairing.endpoint).map_err(transport)?;
+    // The frozen bundle carries the endpoint as exactly `<host>:<port>`.
+    let base = url::Url::parse(&format!("wss://{}", pairing.endpoint)).map_err(transport)?;
     if base.scheme() != "wss"
         || base.host_str().is_none()
+        || base.port().is_none()
         || !base.username().is_empty()
         || base.password().is_some()
         || base.query().is_some()
         || base.fragment().is_some()
         || !matches!(base.path(), "" | "/")
     {
-        return Err(Failure::Protocol(
-            "Expected plain wss endpoint origin".into(),
-        ));
+        return Err(Failure::Protocol("Expected <host>:<port> endpoint".into()));
     }
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(pairing.server_ca_der))
-        .map_err(transport)?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(transport)?
-    .with_root_certificates(roots)
-    .with_client_auth_cert(
-        vec![CertificateDer::from(pairing.client_cert_der)],
-        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pairing.client_key_pkcs8_der)),
-    )
-    .map_err(transport)?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(transport)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(TokenOnlyServerVerifier(provider)))
+        .with_no_client_auth();
     let tls = TlsConnector::from(Arc::new(config));
-    let (mut control, token) = open(&base, "/control", &tls, None).await?;
+    let (mut control, token) = open(&base, "/control", &tls, Some(&pairing.token)).await?;
     let session = match response(&mut control).await? {
         Response::Ready {
             version: HOST_PROTOCOL_VERSION,
@@ -678,17 +723,10 @@ async fn next(socket: &mut Socket) -> Result<Message, Failure> {
 async fn response(socket: &mut Socket) -> Result<Response, Failure> {
     match next(socket).await? {
         Message::Text(text) if text.len() <= 1024 * 1024 => {
-            eprintln!("TASK19_RAW_CONTROL_FRAME text={text}");
             serde_json::from_str(&text).map_err(|error| Failure::Protocol(error.to_string()))
         }
-        Message::Binary(bytes) => {
-            eprintln!("TASK19_RAW_CONTROL_FRAME binary_len={} bytes={:02x?}", bytes.len(), bytes);
-            Err(Failure::Protocol("Expected bounded control JSON".into()))
-        }
-        other => {
-            eprintln!("TASK19_RAW_CONTROL_FRAME other={other:?}");
-            Err(Failure::Protocol("Expected bounded control JSON".into()))
-        }
+        Message::Binary(_) => Err(Failure::Protocol("Expected bounded control JSON".into())),
+        _ => Err(Failure::Protocol("Expected bounded control JSON".into())),
     }
 }
 
@@ -923,6 +961,7 @@ async fn execute<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
     use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};
 
     struct PendingVideoBackend {

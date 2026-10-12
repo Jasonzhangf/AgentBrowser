@@ -516,6 +516,10 @@ public final class MainActivity extends Activity {
             if (action == MotionEvent.ACTION_UP) {
                 gestureOperationId = null;
                 gestureEventSequence = 0;
+                // A completed tap is the user's request for input on whatever the
+                // remote page focused; a drag never reaches here. The IME bridge
+                // re-arms its bounded show and stays a no-op without an editor.
+                if (remoteIme != null) remoteIme.requestImeForUserGesture();
             }
             return true;
         }
@@ -743,8 +747,7 @@ public final class MainActivity extends Activity {
             try {
                 org.json.JSONObject json = new org.json.JSONObject(raw);
                 String op = json.optString("op", "");
-                if (java.util.Set.of("open_connection_setup", "import_connection",
-                        "repair_connection_import", "retry_connection_setup").contains(op)) {
+                if (java.util.Set.of("open_connection_setup", "import_connection").contains(op)) {
                     var task = new java.util.concurrent.FutureTask<String>(() -> dispatchConnectionSetup(json));
                     runOnUiThread(task);
                     return task.get(2, java.util.concurrent.TimeUnit.SECONDS);
@@ -781,8 +784,6 @@ public final class MainActivity extends Activity {
         switch (op) {
             case "open_connection_setup" -> { requireFields(value, "op"); connectionSetup.onOpenRequested(); }
             case "import_connection" -> { requireFields(value, "op"); connectionSetup.onImportRequested(); }
-            case "repair_connection_import" -> { requireFields(value, "op"); connectionSetup.onRepairImportRequested(); }
-            case "retry_connection_setup" -> { requireFields(value, "op"); connectionSetup.onRetryReconcileRequested(); }
             default -> throw new IllegalArgumentException("UNKNOWN_CONNECTION_SETUP_COMMAND");
         }
         return currentSnapshot().toString();

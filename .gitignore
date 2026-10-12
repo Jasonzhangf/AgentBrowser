@@ -16,6 +16,7 @@ dist/
 .gradle/
 build/
 local.properties
+__pycache__/
 /evidence/
 /.appsdk/records/evidence/android-probe/
 /.appsdk/records/fix-candidate-record-android-probe.json

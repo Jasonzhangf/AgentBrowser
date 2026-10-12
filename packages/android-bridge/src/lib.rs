@@ -2,7 +2,7 @@
 //! TLS, browser ABI and control arbitration stay in their existing owners.
 use std::{collections::{HashMap,VecDeque}, net::IpAddr, sync::{Arc, Mutex, OnceLock}, time::Duration};
 use agentbrowser_connection::{Connection, Connector, DisplayedFrame, EditingInput, EditingOutcome, Failure, Input, Pairing, PresentedFrame, WebRtcConfig, protocol::{InputBinding, InputEvent, ResultValue, VideoPacket, ViewportDeclaration, Device, Orientation}};
-use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
+use jni::{JNIEnv, objects::{JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
 
 mod account;
 
@@ -79,12 +79,10 @@ fn encoder_unavailable_error(session_id: &str, message: &str) -> String {
     })
 }
 
-fn pairing(env: &mut JNIEnv, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray) -> Result<Pairing> {
+fn pairing(env: &mut JNIEnv, endpoint: JString, token: JString) -> Result<Pairing> {
     Ok(Pairing {
         endpoint: env.get_string(&endpoint).map_err(error)?.into(),
-        server_ca_der: env.convert_byte_array(ca).map_err(error)?,
-        client_cert_der: env.convert_byte_array(cert).map_err(error)?,
-        client_key_pkcs8_der: env.convert_byte_array(key).map_err(error)?,
+        token: env.get_string(&token).map_err(error)?.into(),
     })
 }
 
@@ -108,22 +106,22 @@ fn open_native(pairing: Pairing, transport: NativeTransport) -> Result<jlong> {
 
 #[no_mangle]
 pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_open(
-    mut env: JNIEnv, _: JClass, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray,
+    mut env: JNIEnv, _: JClass, endpoint: JString, token: JString,
 ) -> jlong {
     let result = (|| -> Result<jlong> {
-        open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::Wss)
+        open_native(pairing(&mut env, endpoint, token)?, NativeTransport::Wss)
     })();
     match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_openWebRtc(
-    mut env: JNIEnv, _: JClass, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray, bind_ip: JString,
+    mut env: JNIEnv, _: JClass, endpoint: JString, token: JString, bind_ip: JString,
 ) -> jlong {
     let result = (|| -> Result<jlong> {
         let bind_ip: String = env.get_string(&bind_ip).map_err(error)?.into();
         let bind_ip = parse_webrtc_bind_ip(&bind_ip)?;
-        open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::WebRtc(bind_ip))
+        open_native(pairing(&mut env, endpoint, token)?, NativeTransport::WebRtc(bind_ip))
     })();
     match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
 }

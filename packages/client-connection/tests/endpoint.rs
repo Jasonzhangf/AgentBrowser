@@ -3,6 +3,9 @@ use std::{path::PathBuf, process::Stdio, time::Duration, os::unix::fs::{DirBuild
 use agentbrowser_connection::{Connector, DisplayedFrame, EditingInput, EditingOutcome, Failure, Input, Pairing, PresentedFrame, protocol::{Command, ControlPhase, EditingState, EditorContext, InputBinding, InputEnvelope, InputEvent, InputLeaseKind, InputReceipt, InputState, Mode, Operation, PresentedFrameIdentity, Request, Response, ResultValue, SessionStatus, VideoPacket}};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// The one credential on the connection path.
+const TOKEN: &str = "connection-test-token";
+
 #[tokio::test]
 async fn real_host_observe_input_and_reconnect() {
     tokio::time::timeout(Duration::from_secs(40), exercise()).await.unwrap();
@@ -19,14 +22,9 @@ async fn exercise() {
     let ca = params.self_signed(&ca_key).unwrap();
     let server_key = rcgen::KeyPair::generate().unwrap();
     let server = rcgen::CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into()]).unwrap().signed_by(&server_key, &ca, &ca_key).unwrap();
-    let key = rcgen::KeyPair::generate().unwrap();
-    let mut params = rcgen::CertificateParams::new(vec![]).unwrap();
-    params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-    let client = params.signed_by(&key, &ca, &ca_key).unwrap();
     std::fs::write(root.join("server.der"), server.der()).unwrap();
     std::fs::write(root.join("key.der"), server_key.serialize_der()).unwrap();
     std::fs::set_permissions(root.join("key.der"), std::fs::Permissions::from_mode(0o600)).unwrap();
-    std::fs::write(root.join("ca.der"), ca.der()).unwrap();
     let mut host = tokio::process::Command::new(bin.join("obscura-host")).arg("--socket-dir").arg(root.join("host"))
         .stdout(Stdio::null()).stderr(Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
     wait(root.join("host/host.sock")).await;
@@ -43,15 +41,11 @@ async fn exercise() {
         .arg("--listen").arg(address.to_string()).arg("--host-dir").arg(root.join("host"))
         .arg("--socket-dir").arg(root.join("endpoint"))
         .arg("--server-cert").arg(root.join("server.der")).arg("--server-key").arg(root.join("key.der"))
-        .arg("--client-ca").arg(root.join("ca.der")).arg("--media-bin").arg(bin.join("obscura-media"))
+        .arg("--media-bin").arg(bin.join("obscura-media"))
         .stdout(Stdio::null()).stderr(Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
     wait(root.join("endpoint/encoded.sock")).await;
-    let pairing = || Pairing { endpoint: format!("wss://{address}"), server_ca_der: ca.der().to_vec(),
-        client_cert_der: client.der().to_vec(), client_key_pkcs8_der: key.serialize_der() };
+    let pairing = || Pairing { endpoint: address.to_string(), token: TOKEN.to_string() };
     let mut connector = Connector::default();
-    let mut untrusted = pairing();
-    untrusted.server_ca_der = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap().cert.der().to_vec();
-    assert!(connector.connect(untrusted, None).await.is_err(), "Server trust cannot be bypassed");
     let mut connection = connector.connect(pairing(), None).await.unwrap();
     assert_eq!(connection.initial_status.session_id, navigated.session_id);
     let displayed = loop {
@@ -152,14 +146,9 @@ async fn exercise_editing() {
     let ca = params.self_signed(&ca_key).unwrap();
     let server_key = rcgen::KeyPair::generate().unwrap();
     let server = rcgen::CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into()]).unwrap().signed_by(&server_key, &ca, &ca_key).unwrap();
-    let key = rcgen::KeyPair::generate().unwrap();
-    let mut params = rcgen::CertificateParams::new(vec![]).unwrap();
-    params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-    let client = params.signed_by(&key, &ca, &ca_key).unwrap();
     std::fs::write(root.join("server.der"), server.der()).unwrap();
     std::fs::write(root.join("key.der"), server_key.serialize_der()).unwrap();
     std::fs::set_permissions(root.join("key.der"), std::fs::Permissions::from_mode(0o600)).unwrap();
-    std::fs::write(root.join("ca.der"), ca.der()).unwrap();
     let mut host = tokio::process::Command::new(bin.join("obscura-host")).arg("--socket-dir").arg(root.join("host"))
         .stdout(Stdio::null()).stderr(Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
     wait(root.join("host/host.sock")).await;
@@ -174,11 +163,10 @@ async fn exercise_editing() {
         .arg("--listen").arg(address.to_string()).arg("--host-dir").arg(root.join("host"))
         .arg("--socket-dir").arg(root.join("endpoint"))
         .arg("--server-cert").arg(root.join("server.der")).arg("--server-key").arg(root.join("key.der"))
-        .arg("--client-ca").arg(root.join("ca.der")).arg("--media-bin").arg(bin.join("obscura-media"))
+        .arg("--media-bin").arg(bin.join("obscura-media"))
         .stdout(Stdio::null()).stderr(Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
     wait(root.join("endpoint/encoded.sock")).await;
-    let pairing = || Pairing { endpoint: format!("wss://{address}"), server_ca_der: ca.der().to_vec(),
-        client_cert_der: client.der().to_vec(), client_key_pkcs8_der: key.serialize_der() };
+    let pairing = || Pairing { endpoint: address.to_string(), token: TOKEN.to_string() };
     let mut connector = Connector::default();
     let connection = connector.connect(pairing(), None).await.unwrap();
     let observed = connection.status().await.unwrap();

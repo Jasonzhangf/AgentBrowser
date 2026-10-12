@@ -1573,65 +1573,29 @@ private final class HostProvisioningBridge {
         return (socketDir as NSString).appendingPathComponent("host-admin.sock")
     }
 
-    func listProfiles() -> Result<[String: Any], HostProvisioningError> {
-        return invoke(["admin", "catalog", "list"], timeout: 20)
+    /// Initialize the endpoint locator exactly once. The service generates and
+    /// owns the access token, so the Mac never reads it, shows it, logs it, or
+    /// stores it.
+    func initTrust(endpointHost: String, endpointPort: Int) -> Result<[String: Any], HostProvisioningError> {
+        return invoke(
+            ["trust", "init", "--endpoint-host", endpointHost, "--endpoint-port", String(endpointPort)],
+            timeout: 60
+        )
     }
 
-    func createProfile(displayName: String, makeDefault: Bool, expectedRevision: Int?) -> Result<[String: Any], HostProvisioningError> {
-        var arguments = ["admin", "catalog", "create", "--display-name", displayName]
-        if makeDefault {
-            arguments.append("--default")
-        }
-        appendRevision(expectedRevision, to: &arguments)
-        return invoke(arguments, timeout: 20)
-    }
-
-    func selectProfile(profileId: String, expectedRevision: Int?) -> Result<[String: Any], HostProvisioningError> {
-        var arguments = ["admin", "catalog", "select", "--profile-id", profileId]
-        appendRevision(expectedRevision, to: &arguments)
-        return invoke(arguments, timeout: 20)
-    }
-
-    func enrollDevice(label: String, scopes: [String], profileId: String) -> Result<[String: Any], HostProvisioningError> {
-        var arguments = ["trust", "provision", "--label", label, "--initial-profile", "profile_id:\(profileId)"]
-        for scope in scopes {
-            arguments.append(contentsOf: ["--scope", scope])
-        }
-        return invoke(arguments, timeout: 60)
-    }
-
-    func grantMembership(profileId: String, deviceId: String, expectedRevision: Int?) -> Result<[String: Any], HostProvisioningError> {
-        var arguments = [
-            "admin", "membership", "set",
-            "--intent", "grant",
-            "--owner-device-id", "local",
-            "--profile-id", profileId,
-            "--device-id", deviceId,
-            "--member", "local",
-            "--member", deviceId,
-        ]
-        appendRevision(expectedRevision, to: &arguments)
-        return invoke(arguments, timeout: 30)
-    }
-
+    /// Re-bind the endpoint and record the applied receipt the export requires.
     func refreshEndpoint(timeout: Int) -> Result<[String: Any], HostProvisioningError> {
         return invoke(["trust", "endpoint-refresh", "--timeout", String(timeout)], timeout: Double(timeout) + 10)
     }
 
-    func verifyEndpoint() -> Result<[String: Any], HostProvisioningError> {
+    func endpointStatus() -> Result<[String: Any], HostProvisioningError> {
         return invoke(["trust", "status"], timeout: 20)
     }
 
-    func exportBundle(deviceId: String, outputPath: String) -> Result<[String: Any], HostProvisioningError> {
-        // The protected bundle requires a one-time code. This explicit flag
-        // hands it directly to the native AppKit owner; it never enters argv,
-        // logs, the bundle JSON, or the WebView.
-        return invoke(["trust", "export", "--device-id", deviceId, "--output", outputPath, "--include-transfer-code"], timeout: 60)
-    }
-
-    private func appendRevision(_ revision: Int?, to arguments: inout [String]) {
-        guard let revision else { return }
-        arguments.append(contentsOf: ["--expected-catalog-revision", String(revision)])
+    /// Write the one connection file. The bundle is the only artifact the phone
+    /// needs, and the token inside it is the only credential on the path.
+    func exportBundle(outputPath: String) -> Result<[String: Any], HostProvisioningError> {
+        return invoke(["trust", "export", "--output", outputPath], timeout: 60)
     }
 
     private func invoke(_ arguments: [String], timeout: TimeInterval) -> Result<[String: Any], HostProvisioningError> {
@@ -1767,23 +1731,20 @@ private func firstLine(_ text: String) -> String {
 /// grant membership, refreshes and verifies the endpoint, saves the bundle
 /// through `NSSavePanel`, and shows the one-time transfer code in a native
 /// modal. Secrets never enter the WebView, snapshots, logs, or argv.
+/// Native AppKit sheet that produces the one connection file. It initializes
+/// the endpoint locator if needed, re-binds the endpoint, and writes the
+/// `.abconnection` bundle through `NSSavePanel`. The service generates and owns
+/// the access token, so the Mac never reads, shows, logs, or stores it.
 private final class ProvisioningSheetController: NSWindowController, NSWindowDelegate {
     private let provisioning: HostProvisioningBridge
     private let provisioningAvailable: Bool
     private let onClose: () -> Void
 
     private var statusLabel: NSTextField!
-    private var profilePopUp: NSPopUpButton!
-    private var displayNameField: NSTextField!
-    private var defaultButton: NSButton!
-    private var deviceLabelField: NSTextField!
-    private var scopeButtons: [(scope: String, button: NSButton)] = []
-    private var createButton: NSButton!
+    private var hostField: NSTextField!
+    private var portField: NSTextField!
     private var exportButton: NSButton!
 
-    private var catalogRevision: Int?
-    private var profiles: [[String: Any]] = []
-    private var createdProfileId: String?
     private var busy = false
     private var closed = false
 
@@ -1792,12 +1753,12 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
         self.provisioningAvailable = available
         self.onClose = onClose
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 220),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "配置手机连接"
+        window.title = "生成连接文件"
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -1812,48 +1773,29 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
     private func buildContent() {
         guard let window else { return }
         statusLabel = NSTextField(wrappingLabelWithString: "")
-        statusLabel.preferredMaxLayoutWidth = 520
+        statusLabel.preferredMaxLayoutWidth = 380
 
-        profilePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-        profilePopUp.target = self
-        profilePopUp.action = #selector(profileSelectionChanged(_:))
+        hostField = NSTextField(string: "127.0.0.1")
+        hostField.placeholderString = "手机可访问的主机名或 IP"
 
-        displayNameField = NSTextField(string: "")
-        displayNameField.placeholderString = "新配置名称"
+        portField = NSTextField(string: "8443")
+        portField.placeholderString = "端口"
 
-        defaultButton = NSButton(checkboxWithTitle: "设为默认配置", target: nil, action: nil)
-
-        deviceLabelField = NSTextField(string: "Android phone")
-        deviceLabelField.placeholderString = "设备名称"
-
-        scopeButtons = ["observe_human_control", "profile_read", "profile_create", "profile_select"].map { scope in
-            let button = NSButton(checkboxWithTitle: scope, target: nil, action: nil)
-            button.state = .on
-            return (scope, button)
-        }
-        let scopeStack = NSStackView(views: scopeButtons.map { $0.button })
-        scopeStack.orientation = .horizontal
-        scopeStack.spacing = 8
-
-        createButton = NSButton(title: "创建 / 选择配置", target: self, action: #selector(createOrSelectProfile(_:)))
-        exportButton = NSButton(title: "登记并导出…", target: self, action: #selector(beginEnrollment(_:)))
+        exportButton = NSButton(title: "生成连接文件…", target: self, action: #selector(beginExport(_:)))
         let cancelButton = NSButton(title: "取消", target: self, action: #selector(cancel(_:)))
         cancelButton.keyEquivalent = "\u{1b}"
 
         let grid = NSGridView(views: [
             [gridLabel("状态"), statusLabel],
-            [gridLabel("配置"), profilePopUp],
-            [gridLabel("名称"), displayNameField],
-            [gridLabel("设备名称"), deviceLabelField],
-            [gridLabel("权限"), scopeStack],
-            [NSGridCell.emptyContentView, defaultButton],
+            [gridLabel("端点主机"), hostField],
+            [gridLabel("端点端口"), portField],
         ])
         grid.rowSpacing = 10
         grid.columnSpacing = 12
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .fill
 
-        let buttonRow = NSStackView(views: [createButton, exportButton, cancelButton])
+        let buttonRow = NSStackView(views: [exportButton, cancelButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 10
         buttonRow.distribution = .fillEqually
@@ -1881,196 +1823,51 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
     }
 
     private func begin() {
-        if !provisioningAvailable {
+        guard provisioningAvailable else {
             setStatus("本机管理服务不可用。请先安装并运行 Host 服务。", code: "HOST_PROVISIONING_UNAVAILABLE")
             setBusy(false)
             return
         }
-        refreshProfiles()
-    }
-
-    private func refreshProfiles() {
-        setBusy(true)
-        setStatus("正在读取配置…", code: nil)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let result = self.provisioning.listProfiles()
-            DispatchQueue.main.async {
-                self.setBusy(false)
-                switch result {
-                case .success(let payload):
-                    self.applyCatalog(payload)
-                case .failure(let error):
-                    self.setStatus("读取配置失败。", code: error.code)
-                    self.setBusy(false)
-                }
-            }
-        }
-    }
-
-    private func applyCatalog(_ payload: [String: Any]) {
-        catalogRevision = payload["catalog_revision"] as? Int
-        let rawProfiles = payload["profiles"] as? [[String: Any]] ?? []
-        profiles = rawProfiles
-        profilePopUp.removeAllItems()
-        var selectedIndex = 0
-        for (index, profile) in rawProfiles.enumerated() {
-            let title = (profile["display_name"] as? String) ?? (profile["profile_id"] as? String) ?? "profile"
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.representedObject = profile["profile_id"] as? String
-            profilePopUp.menu?.addItem(item)
-            if let created = createdProfileId, created == (profile["profile_id"] as? String) {
-                selectedIndex = index
-            }
-        }
-        if !rawProfiles.isEmpty {
-            profilePopUp.menu?.addItem(.separator())
-        }
-        profilePopUp.menu?.addItem(NSMenuItem(title: "新建配置…", action: nil, keyEquivalent: ""))
-        if !rawProfiles.isEmpty {
-            profilePopUp.selectItem(at: selectedIndex)
-        } else {
-            profilePopUp.selectItem(at: 0)
-        }
-        profileSelectionChanged(nil)
-        setStatus("已读取 \(rawProfiles.count) 个配置。", code: nil)
+        setStatus("填写手机可访问的端点，然后生成连接文件。", code: nil)
         setBusy(false)
     }
 
-    @objc private func profileSelectionChanged(_ sender: Any?) {
-        let creating = profilePopUp.indexOfSelectedItem >= profiles.count
-        displayNameField.isEnabled = creating && !busy
-        defaultButton.isEnabled = creating && !busy
-        createButton.title = creating ? "创建配置" : "选择配置"
+    @objc private func beginExport(_ sender: Any?) {
+        let host = hostField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else {
+            setStatus("端点主机不能为空。", code: "ENDPOINT_HOST_REQUIRED")
+            return
+        }
+        guard let port = Int(portField.stringValue.trimmingCharacters(in: .whitespaces)),
+              (1...65535).contains(port) else {
+            setStatus("端点端口必须是 1 到 65535。", code: "ENDPOINT_PORT_INVALID")
+            return
+        }
+        guard let outputPath = chooseOutputPath() else { return }
+        setBusy(true)
+        setStatus("正在生成连接文件…", code: nil)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.runExport(host: host, port: port, outputPath: outputPath)
+        }
     }
 
-    @objc private func createOrSelectProfile(_ sender: Any?) {
-        guard !busy else { return }
-        if profilePopUp.indexOfSelectedItem >= profiles.count {
-            let name = displayNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else {
-                setStatus("请输入配置名称。", code: "PROFILE_NAME_REQUIRED")
+    private func runExport(host: String, port: Int, outputPath: String) {
+        // `trust status` is the service's own typed locator read. A missing
+        // locator is the only state that may initialize it; `trust init` itself
+        // refuses to re-initialize, so a later failure is reported, not retried.
+        if case .failure = provisioning.endpointStatus() {
+            guard unwrap(provisioning.initTrust(endpointHost: host, endpointPort: port), step: "初始化端点") != nil else {
                 return
             }
-            runCreate(displayName: name, makeDefault: defaultButton.state == .on)
-        } else if let profileId = profilePopUp.selectedItem?.representedObject as? String {
-            runSelect(profileId: profileId)
-        } else {
-            setStatus("请选择配置。", code: "PROFILE_REQUIRED")
         }
-    }
-
-    private func runCreate(displayName: String, makeDefault: Bool) {
-        setBusy(true)
-        setStatus("正在创建配置…", code: nil)
-        let revision = catalogRevision
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let result = self.provisioning.createProfile(displayName: displayName, makeDefault: makeDefault, expectedRevision: revision)
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let payload):
-                    self.createdProfileId = (payload["profile"] as? [String: Any])?["profile_id"] as? String
-                        ?? payload["profile_id"] as? String
-                    self.refreshProfiles()
-                case .failure(let error):
-                    self.setBusy(false)
-                    self.setStatus("创建配置失败。", code: error.code)
-                }
-            }
-        }
-    }
-
-    private func runSelect(profileId: String) {
-        setBusy(true)
-        setStatus("正在选择配置…", code: nil)
-        let revision = catalogRevision
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let result = self.provisioning.selectProfile(profileId: profileId, expectedRevision: revision)
-            DispatchQueue.main.async {
-                self.setBusy(false)
-                switch result {
-                case .success:
-                    self.createdProfileId = profileId
-                    self.setStatus("已选择配置。", code: nil)
-                case .failure(let error):
-                    self.setStatus("选择配置失败。", code: error.code)
-                }
-            }
-        }
-    }
-
-    @objc private func beginEnrollment(_ sender: Any?) {
-        guard !busy else { return }
-        guard profilePopUp.indexOfSelectedItem < profiles.count,
-              let profileId = profilePopUp.selectedItem?.representedObject as? String else {
-            setStatus("请先选择或创建配置。", code: "PROFILE_REQUIRED")
+        guard unwrap(provisioning.refreshEndpoint(timeout: 30), step: "绑定端点") != nil else { return }
+        guard let exported = unwrap(provisioning.exportBundle(outputPath: outputPath), step: "导出连接文件") else {
             return
         }
-        let label = deviceLabelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty, label.count <= 64 else {
-            setStatus("请输入 1–64 个字符的设备名称。", code: "DEVICE_LABEL_INVALID")
-            return
-        }
-        let scopes = scopeButtons.filter { $0.button.state == .on }.map { $0.scope }
-        guard !scopes.isEmpty else {
-            setStatus("请至少选择一项权限。", code: "REGISTRY_SCOPE_REQUIRED")
-            return
-        }
-        setBusy(true)
-        setStatus("正在登记设备…", code: nil)
-        let revision = catalogRevision
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.runEnrollmentFlow(label: label, scopes: scopes, profileId: profileId, revision: revision)
-        }
-    }
-
-    private func runEnrollmentFlow(label: String, scopes: [String], profileId: String, revision: Int?) {
-        let enrollment = provisioning.enrollDevice(label: label, scopes: scopes, profileId: profileId)
-        guard let enroll = unwrap(enrollment, step: "登记设备") else { return }
-        guard let deviceId = enroll["device_id"] as? String, !deviceId.isEmpty else {
-            return fail("登记设备", "HOST_SERVICE_OUTPUT_MALFORMED")
-        }
-        guard unwrap(provisioning.grantMembership(profileId: profileId, deviceId: deviceId, expectedRevision: revision), step: "写入授权") != nil else {
-            return
-        }
-        guard let refresh = unwrap(provisioning.refreshEndpoint(timeout: 30), step: "刷新端点"),
-              refresh["state"] as? String == "refreshed" else {
-            return fail("刷新端点", "ENDPOINT_NOT_REFRESHED")
-        }
-        guard let verify = unwrap(provisioning.verifyEndpoint(), step: "校验端点"),
-              verify["authorization_state"] as? String == "refreshed" else {
-            return fail("校验端点", "ENDPOINT_NOT_REFRESHED")
-        }
-        // The save panel must run on the main thread; cancel keeps every
-        // committed upstream receipt and never repeats an unknown mutation.
+        let endpoint = (exported["endpoint"] as? String) ?? "\(host):\(port)"
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard let outputPath = self.chooseOutputPath() else {
-                self.setBusy(false)
-                self.setStatus("已取消导出。已提交的登记与授权保持不变。", code: nil)
-                return
-            }
-            self.setStatus("正在导出连接包…", code: nil)
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                guard let self else { return }
-                let export = self.provisioning.exportBundle(deviceId: deviceId, outputPath: outputPath)
-                DispatchQueue.main.async {
-                    self.setBusy(false)
-                    switch export {
-                    case .success(let payload):
-                        guard let code = payload["transfer_code"] as? String, !code.isEmpty else {
-                            self.setStatus("连接包已写出，但服务未返回一次性传输码。", code: "HOST_SERVICE_TRANSFER_CODE_UNAVAILABLE")
-                            return
-                        }
-                        self.setStatus("连接包已保存。", code: nil)
-                        self.showTransferCode(code)
-                    case .failure(let error):
-                        self.setStatus("导出失败。", code: error.code)
-                    }
-                }
-            }
+            self?.setBusy(false)
+            self?.setStatus("已写入连接文件。\n端点：\(endpoint)\n路径：\(outputPath)", code: nil)
         }
     }
 
@@ -2099,32 +1896,6 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
         return url.path
     }
 
-    private func showTransferCode(_ code: String) {
-        // Shown only in this native modal. Never written to the WebView,
-        // snapshots, logs, argv, or evidence.
-        let alert = NSAlert()
-        alert.messageText = "一次性传输码"
-        alert.informativeText = "请在手机上输入此传输码。关闭此窗口后不会再显示。"
-        let field = NSTextField(labelWithString: code)
-        field.font = NSFont.monospacedSystemFont(ofSize: 18, weight: .semibold)
-        field.isSelectable = true
-        alert.accessoryView = field
-        alert.addButton(withTitle: "复制传输码")
-        alert.addButton(withTitle: "完成")
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            // User-mediated handoff: the user pastes this into Android's
-            // visible protected dialog. The value never enters diagnostics.
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(code, forType: .string)
-            let copied = NSAlert()
-            copied.messageText = "传输码已复制"
-            copied.informativeText = "请在 Android 的 Transfer code 对话框中粘贴，然后点击 IMPORT。"
-            copied.addButton(withTitle: "完成")
-            copied.runModal()
-        }
-    }
-
     private func setStatus(_ text: String, code: String?) {
         if let code {
             statusLabel.stringValue = "\(text)\n\(code)"
@@ -2135,16 +1906,9 @@ private final class ProvisioningSheetController: NSWindowController, NSWindowDel
 
     private func setBusy(_ busy: Bool) {
         self.busy = busy
-        let creating = profilePopUp.indexOfSelectedItem >= profiles.count
-        createButton.isEnabled = !busy && provisioningAvailable
-        exportButton.isEnabled = !busy && provisioningAvailable && !profiles.isEmpty
-        profilePopUp.isEnabled = !busy && provisioningAvailable
-        displayNameField.isEnabled = !busy && provisioningAvailable && creating
-        defaultButton.isEnabled = !busy && provisioningAvailable && creating
-        deviceLabelField.isEnabled = !busy && provisioningAvailable
-        for (_, button) in scopeButtons {
-            button.isEnabled = !busy && provisioningAvailable
-        }
+        exportButton.isEnabled = !busy && provisioningAvailable
+        hostField.isEnabled = !busy
+        portField.isEnabled = !busy
     }
 
     @objc private func cancel(_ sender: Any?) {

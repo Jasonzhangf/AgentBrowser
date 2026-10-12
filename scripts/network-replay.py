@@ -12,7 +12,6 @@ import pathlib
 import select
 import subprocess
 import time
-import urllib.parse
 import uuid
 
 from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
@@ -149,10 +148,14 @@ with (evidence / "network-host.log").open("wb") as log:
         bundle_sha256 = hashlib.sha256(bundle.read_bytes()).hexdigest()
         # The fixture binds loopback on this host, so the device reaches it only
         # through its own loopback while adb owns the exact reverse mapping.
-        endpoint = urllib.parse.urlsplit(ready["endpoint"])
-        if endpoint.port is None or not 1 <= endpoint.port <= 65535:
-            raise RuntimeError(f"Fixture endpoint has no usable TCP port: {ready['endpoint']}")
-        reverse_port = endpoint.port
+        # The fixture endpoint is exactly `<host>:<port>` under the token
+        # contract. Only its TCP port is needed here, because adb owns the
+        # exact reverse mapping.
+        endpoint_text = str(ready["endpoint"])
+        endpoint_port = int(endpoint_text.rsplit(":", 1)[-1]) if ":" in endpoint_text else 0
+        if not 1 <= endpoint_port <= 65535:
+            raise RuntimeError(f"Fixture endpoint has no usable TCP port: {endpoint_text}")
+        reverse_port = endpoint_port
         if reverse_rows(adb_reverse_list(), reverse_port):
             raise RuntimeError(f"Device-side tcp:{reverse_port} already has reverse mappings")
         subprocess.run(["adb", "-s", serial, "reverse", f"tcp:{reverse_port}", f"tcp:{reverse_port}"], check=True)
@@ -165,7 +168,6 @@ with (evidence / "network-host.log").open("wb") as log:
         (evidence / "fixture-pairing.json").write_text(json.dumps({
             "runId": run_id,
             "fixture": pairing,
-            "deviceId": ready["deviceId"],
             "endpoint": ready["endpoint"],
             "bundleSha256": bundle_sha256,
             "session": ready["session"],

@@ -160,7 +160,7 @@ test('quality keeps requested and effective as separate algebra', () => {
 });
 
 test('only typed chrome commands cross the native port', () => {
-  for (const op of ['go_back', 'go_forward', 'reload', 'new_tab', 'select_tab', 'close_tab', 'open_connection_setup', 'import_connection', 'retry_connection_setup', 'repair_connection_import', 'select_profile', 'navigate', 'set_presentation']) {
+  for (const op of ['go_back', 'go_forward', 'reload', 'new_tab', 'select_tab', 'close_tab', 'open_connection_setup', 'import_connection', 'select_profile', 'navigate', 'set_presentation']) {
     assert.match(probe, new RegExp(`op: '${op}'`), `expected typed command ${op}`);
   }
   for (const op of ['input_text', 'send_text', 'click', 'scroll', 'play', 'stop', 'remote_ime', 'chrome_inset']) {
@@ -178,15 +178,15 @@ test('connection admission comes from the typed native setup projection only', (
   assert.doesNotMatch(main, /connectionSetupAvailable\s*=.*networkConfigured/);
 });
 
-test('unresolved and unavailable recovery actions are explicit and bounded', () => {
-  assert.match(main, /id="connection-retry"/);
-  assert.match(main, /op: 'retry_connection_setup'/);
-  assert.match(main, /setup\.state === 'unavailable' && setup\.repair_import_allowed === true/);
-  assert.match(main, /op: 'repair_connection_import'/);
-  assert.match(main, /需要显式重试校准；不会自动重试或重放导入/);
+test('the setup panel is only pick-file plus configured or unconfigured', () => {
+  assert.match(main, /id="connection-setup"/);
+  assert.match(main, /id="connection-import"/);
+  assert.match(main, /setup\.state === 'unconfigured'/);
   assert.match(main, /当前原生版本未提供连接设置能力或投影/);
-  assert.doesNotMatch(main, /setInterval\([^)]*retry_connection_setup/);
-  assert.doesNotMatch(main, /setTimeout\([^)]*retry_connection_setup/);
+  for (const removed of ['connection-retry', 'connection-repair', 'retry_connection_setup', 'repair_connection_import', 'repair_import_allowed', 'active_revision']) {
+    assert.equal(main.includes(removed), false, `removed ceremony must be gone: ${removed}`);
+    assert.equal(probe.includes(removed), false, `removed ceremony must be gone from probe: ${removed}`);
+  }
 });
 
 test('connection setup UI has no private credential or transport inputs', () => {

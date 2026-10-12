@@ -1,9 +1,8 @@
 """Real user path on the live service-lifecycle Host.
 
-Ordinary protected import, ordinary connect, a real HTTPS document through the
+Ordinary no-code import, ordinary connect, a real HTTPS document through the
 ordinary address bar, remote video, a real touch, and the RAW system IME gate.
-The transfer code is captured in-process in this same shell, passed only as a
-transient instrumentation argument, and never printed or persisted.
+The exported bundle carries only the necessary connection configuration.
 """
 import sys
 
@@ -33,8 +32,13 @@ SLICE_ARTIFACTS = {
     "testBb10TransportProbe": "bb10-transport.json",
     "testBb08FocusLayoutSlice": "bb08-focus-layout.json",
     "testBb14ContinuousSlice": "bb14-continuous.json",
+    "testRemoteImeReraiseSlice": "ime-reraise.json",
+    "testRemoteImeNoEditorSlice": "ime-no-editor.json",
 }
-SLICE_EXTRA_ARTIFACTS = {}
+SLICE_EXTRA_ARTIFACTS = {
+    "testRemoteImeReraiseSlice": ("focus-trace.txt", "dumpsys-input-method.txt",
+                                  "dumpsys-input-method-pre-tap.txt"),
+}
 
 root = pathlib.Path(__file__).resolve().parent.parent
 serial = os.environ["ANDROID_SERIAL"]
@@ -42,7 +46,6 @@ launcher = pathlib.Path(os.environ.get("HOST_SERVICE_LAUNCHER", str(root / "scri
 service_root = pathlib.Path(
     os.environ.get("HOST_SERVICE_ROOT", str(pathlib.Path.home() / "Library/Application Support/AgentBrowser/host-service"))
 ).expanduser()
-device_id = os.environ["HOST_DEVICE_ID"]
 page_url = os.environ.get("REAL_PATH_URL", "https://www.selenium.dev/selenium/web/web-form.html")
 ascii_text = os.environ.get("REAL_PATH_TEXT", "hello")
 tap_x = os.environ.get("REAL_PATH_TAP_X", "196")
@@ -230,20 +233,18 @@ try:
         {"runId": run_id, "serial": serial, "port": endpoint_port,
          "noReverse": no_reverse, "before": reverse_before, "after": reverse_after}, indent=2) + "\n")
 
-    # Step 1: the one-time transfer code, captured in this same shell.
+    # Step 1: export the pairing bundle. It carries only the necessary
+    # connection configuration: endpoint, device id and the paired client
+    # certificate/key material, written as a no-code PKCS#12.
     exported = subprocess.run(
-        [str(launcher), "trust", "export", "--root", str(service_root), "--device-id", device_id,
-         "--output", str(private / "pairing.abconnection"), "--include-transfer-code"],
+        [str(launcher), "trust", "export", "--root", str(service_root),
+         "--output", str(private / "pairing.abconnection")],
         capture_output=True, text=True, check=True,
     )
     try:
-        payload = json.loads(exported.stdout)
+        json.loads(exported.stdout)
     except ValueError:
-        # The raw stdout carries the code, so it must never reach an exception message.
         raise SystemExit("trust export did not return JSON")
-    code = payload.get("transfer_code")
-    if not isinstance(code, str) or not code:
-        raise SystemExit("trust export returned no transfer code")
     bundle = private / "pairing.abconnection"
     bundle_sha256 = hashlib.sha256(bundle.read_bytes()).hexdigest()
 
@@ -251,7 +252,7 @@ try:
     adb("push", str(bundle), "/sdcard/Download/pairing.abconnection")
     device_sha256 = shell(f"sha256sum /sdcard/Download/pairing.abconnection").split()[0]
     (evidence / "bundle.json").write_text(json.dumps({
-        "runId": run_id, "deviceId": device_id, "serviceRoot": str(service_root),
+        "runId": run_id, "serial": serial, "serviceRoot": str(service_root),
         "endpointPort": endpoint_port, "bundleSha256": bundle_sha256, "deviceSha256": device_sha256,
         "deviceCopyMatches": device_sha256 == bundle_sha256,
     }, indent=2) + "\n")
@@ -259,17 +260,21 @@ try:
                 f"device sha256 {device_sha256} vs exported {bundle_sha256}"):
         raise SystemExit(2)
 
-    # Step 3: the ordinary DocumentsUI import with the protected transfer code.
-    admission = instrumentation(ADMISSION_METHOD, [("transferCode", code)], ((TEST_CLASS, ADMISSION_METHOD),))
+    # Step 3: the ordinary DocumentsUI import of the no-code bundle.
+    admission = instrumentation(ADMISSION_METHOD, [], ((TEST_CLASS, ADMISSION_METHOD),))
     admission_evidence = pull("admission.json")
     if admission_evidence is None:
         admission_evidence = b"{}"
     admission_json = json.loads(admission_evidence)
     admitted_endpoint = str(admission_json.get("endpoint") or "")
-    admission_ok = admission.ok and (not expected_endpoint or expected_endpoint in admitted_endpoint)
+    # The frozen minimum contract publishes exactly endpoint.txt and token.
+    materials_ok = bool(admission_json.get("endpointPublished")) and bool(admission_json.get("tokenPublished"))
+    admission_ok = (admission.ok and materials_ok
+                    and (not expected_endpoint or expected_endpoint in admitted_endpoint))
     gate("ordinary-admission", admission_ok,
          f"panel={admission_json.get('panelState')} endpoint={admitted_endpoint} expected={expected_endpoint or None} "
-         f"generation={admission_json.get('activeGeneration')} parser={admission.status}")
+         f"endpointPublished={admission_json.get('endpointPublished')} "
+         f"tokenPublished={admission_json.get('tokenPublished')} parser={admission.status}")
     if not admission_ok:
         raise SystemExit("ordinary admission did not prove the expected endpoint; stopping before connect/browse")
 
@@ -326,7 +331,7 @@ try:
 
     (evidence / "run.json").write_text(json.dumps({
         "runId": run_id, "serial": serial, "pageUrl": page_url, "asciiText": ascii_text,
-        "tapX": tap_x, "tapY": tap_y, "deviceId": device_id, "bundleSha256": bundle_sha256,
+        "tapX": tap_x, "tapY": tap_y, "bundleSha256": bundle_sha256,
         "admissionParser": admission.status, "realPathParser": real_path.status,
         "realPath": real_path_json, "gates": gates,
     }, indent=2) + "\n")

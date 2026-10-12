@@ -67,17 +67,13 @@ function chromeModeLabel(snapshot: ProbeSnapshot): string {
 
 function connectionSetupProjection(snapshot: ProbeSnapshot) {
   if (snapshot.connectionSetup) return snapshot.connectionSetup;
-  return {state: 'required' as const, error: null};
+  return {state: 'unconfigured' as const, error: null};
 }
 
 function statusSummary(snapshot: ProbeSnapshot): string {
   if (snapshot.source !== 'network') return '未连接 Host';
   const setup = connectionSetupProjection(snapshot);
-  if (setup.state === 'required') return '需要配置连接';
-  if (setup.state === 'unresolved') return '连接配置提交状态未确认';
-  if (setup.state === 'unavailable') return '连接配置不可用';
-  if (setup.state === 'opening') return '正在打开连接设置';
-  if (setup.state === 'importing') return '正在导入连接信息';
+  if (setup.state === 'unconfigured') return '需要配置连接';
   if (snapshot.connectionState === 'connecting') return '正在连接 Host';
   if (snapshot.connectionState === 'stopping') return '正在断开';
   if (snapshot.connectionState === 'stopped') return '已断开，Host 页面保留';
@@ -93,15 +89,7 @@ function statusSummary(snapshot: ProbeSnapshot): string {
 function statusMeta(snapshot: ProbeSnapshot): string {
   if (snapshot.source !== 'network') return '本地浏览器 chrome';
   const setup = connectionSetupProjection(snapshot);
-  if (setup.state === 'required') return '请先配置或导入连接';
-  if (setup.state === 'unresolved') return '需要显式重试校准；不会自动重试或重放导入';
-  if (setup.state === 'unavailable') {
-    return setup.repair_import_allowed === true
-      ? '现有配置无效；请显式替换连接包'
-      : '现有配置无效；原生未允许替换连接包';
-  }
-  if (setup.state === 'opening') return '等待原生配置入口';
-  if (setup.state === 'importing') return '等待原生导入入口';
+  if (setup.state === 'unconfigured') return '请先选择并导入连接文件';
   if (snapshot.connectionState === 'connecting') return '正在建立连接';
   if (snapshot.connectionState === 'stopping') return '正在释放本地连接';
   if (snapshot.connectionState === 'stopped') return 'Host 页面保留';
@@ -206,10 +194,9 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
   const canNavigate = connected && snapshot.controlMode === 'control' && Boolean(snapshot.inputReady) && snapshot.epoch !== undefined && navigationAvailable;
   const canManageTabs = canManageTabsSnapshot(snapshot);
   const canSelectProfile = profilesAvailable && !connectionActive && !snapshot.pending;
-  const setupBusy = setup.state === 'opening' || setup.state === 'importing';
-  const ordinarySetupAvailable = connectionSetupAvailable && (setup.state === 'required' || setup.state === 'configured' || setup.state === 'error');
-  const connectionConfigured = hasConnectionSetupProjection && (setup.state === 'configured' || setup.state === 'error');
-  const canConnect = connectionSetupAvailable && !connectionActive && !setupBusy && connectionConfigured;
+  const ordinarySetupAvailable = connectionSetupAvailable;
+  const connectionConfigured = hasConnectionSetupProjection && setup.state === 'configured';
+  const canConnect = connectionSetupAvailable && !connectionActive && connectionConfigured;
   const canDisconnect = connectionActive;
   const canTakeover = connected && snapshot.epoch !== undefined && snapshot.controlMode !== 'control' && snapshot.controlMode !== 'waiting';
   const canRelease = connected && snapshot.controlMode === 'control';
@@ -522,24 +509,17 @@ function Panel({ctx, onDrawerFooterTarget}: {ctx: Context; onDrawerFooterTarget:
             <strong className="status-title" style={{overflowWrap: 'anywhere'}}>{statusSummary(snapshot)}</strong>
             <span className="status-meta">{statusMeta(snapshot)}</span>
             {setup.label && <span className="detail" data-connection-label={setup.label} style={{overflowWrap: 'anywhere'}}>连接：{setup.label}</span>}
-            {setup.state === 'configured' && <span className="detail" data-active-revision={setup.active_revision ?? 'unknown'}>配置版本：{setup.active_revision ?? '原生未提供'}</span>}
           </div>
-          {(setup.state === 'required' || setup.state === 'configured' || setup.state === 'unresolved' || setup.state === 'unavailable' || setup.state === 'error') && <>
+          {connectionSetupAvailable && <>
             <div className="setup-actions" role="group" aria-label="连接配置">
-              <button id="connection-setup" type="button" disabled={!ordinarySetupAvailable || setupBusy} onClick={() => request({op: 'open_connection_setup'})}>配置连接</button>
-              <button id="connection-import" className="secondary" type="button" disabled={!ordinarySetupAvailable || setupBusy} onClick={() => request({op: 'import_connection'})}>导入</button>
+              <button id="connection-setup" type="button" disabled={!ordinarySetupAvailable} onClick={() => request({op: 'open_connection_setup'})}>配置连接</button>
+              <button id="connection-import" className="secondary" type="button" disabled={!ordinarySetupAvailable} onClick={() => request({op: 'import_connection'})}>导入</button>
             </div>
-            {setup.state === 'unresolved' && <div className="setup-actions" role="group" aria-label="连接恢复">
-              <button id="connection-retry" type="button" disabled={!connectionSetupAvailable} onClick={() => request({op: 'retry_connection_setup'})}>重试校准</button>
-            </div>}
-            {setup.state === 'unavailable' && setup.repair_import_allowed === true && <div className="setup-actions" role="group" aria-label="连接恢复">
-              <button id="connection-repair" type="button" disabled={!connectionSetupAvailable} onClick={() => request({op: 'repair_connection_import'})}>替换连接包</button>
-            </div>}
-            {!connectionSetupAvailable && <p className="capability-unavailable" role="status">当前原生版本未提供连接设置能力或投影</p>}
           </>}
+          {!connectionSetupAvailable && <p className="capability-unavailable" role="status">当前原生版本未提供连接设置能力或投影</p>}
           {setup.error && <p className="error" role="alert" aria-live="assertive">{setup.error}</p>}
           <div className="remote-actions" role="group" aria-label="连接操作">
-            <button id="connect" type="button" disabled={!canConnect} onClick={() => request({op: 'connect'})}>{setup.state === 'error' ? '重试连接' : '连接'}</button>
+            <button id="connect" type="button" disabled={!canConnect} onClick={() => request({op: 'connect'})}>连接</button>
             <button id="disconnect" className="secondary" type="button" disabled={!canDisconnect} onClick={() => request({op: 'disconnect'})}>断开</button>
             <button id="takeover" type="button" disabled={!canTakeover} onClick={() => request({op: 'takeover', epoch: snapshot.epoch!})}>接管</button>
             <button id="release" className="secondary" type="button" disabled={!canRelease} onClick={() => request({op: 'release', epoch: snapshot.epoch!})}>返回观察</button>

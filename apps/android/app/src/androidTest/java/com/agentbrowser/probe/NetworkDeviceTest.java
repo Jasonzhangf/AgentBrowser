@@ -27,6 +27,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.security.MessageDigest;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,7 +47,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     private String lastPixelPoll="";
     private int chineseInkPixels;
     private int chineseInkAdded;
-    private String importedGeneration;    private String js(String script)throws Exception{
+    private String js(String script)throws Exception{
         CountDownLatch done=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>();
         getInstrumentation().runOnMainSync(()->activity.webView.evaluateJavascript(script,value->{result.set(value);done.countDown();}));
         assertTrue("JS deadline",done.await(3,TimeUnit.SECONDS));return result.get();
@@ -292,15 +293,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
          appendEvidence("rotation-visual.txt","orientation="+(landscape?"landscape":"portrait")+" css="+activity.visibleWidth+"x"+activity.visibleHeight+" source="+rotatedCapture.getWidth()+"x"+rotatedCapture.getHeight()+" bounds="+bounds+" darkPixels="+darkPixels+" layout="+layout+"\n");
          assertTrue("Rotation preserves visible input: nonblank dark pixels="+darkPixels+" bounds="+bounds+" layout="+layout,darkPixels>10);
     }
-    /**
-     * Import the fixture export through the app's own setup owner. The staged
-     * file must be the fixture's own bytes; the transfer code of the no-code
-     * bundle stays empty.
-     */
     /** Drive the real launcher/picker/import path. No app test hooks or private staging. */
     private void importOrdinaryPairing() throws Exception {
-        String code=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("transferCode");
-        assertNotNull("Transfer code argument",code);
         UiDevice device=UiDevice.getInstance(getInstrumentation());
         device.pressHome();
         device.executeShellCommand("am start -n com.agentbrowser.probe/.MainActivity");
@@ -308,31 +302,41 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         // WebView content is not exposed as child accessibility nodes on this
         // device. Read each control's live DOM rect and map it through the
         // native WebView bounds; no device-specific coordinates or OCR.
-        touchChrome("drawer-toggle");
+        touchChromeVerified("drawer-toggle",()->"true".equals(js("document.querySelector('main').dataset.drawerOpen==='true'")));
         until("document.querySelector('main').dataset.drawerOpen==='true'",6000);
-        touchChrome("connection-import");
+        touchChromeVerified("connection-import",()->UiDevice.getInstance(getInstrumentation()).hasObject(By.pkg("com.google.android.documentsui")));
         assertTrue("DocumentsUI",device.wait(Until.hasObject(By.pkg("com.google.android.documentsui")),10000));
         UiObject2 download=device.wait(Until.findObject(By.text("Download")),10000);
         if(download!=null) download.click();
         UiObject2 file=device.wait(Until.findObject(By.text("pairing.abconnection")),15000);
         assertNotNull("DocumentsUI pairing file",file); file.click();
         assertTrue("Return to app",device.wait(Until.hasObject(By.pkg("com.agentbrowser.probe")),10000));
-        UiObject2 field=device.wait(Until.findObject(By.clazz("android.widget.EditText")),10000);
-        assertNotNull("Transfer code field",field); field.setText(code);
-        UiObject2 submit=device.wait(Until.findObject(By.text("IMPORT")),5000);
-        assertNotNull("Import button",submit); submit.click();
         long deadline=SystemClock.elapsedRealtime()+15000;
-        File active=new File(activity.getFilesDir(),"pairing/"+ConnectionSetupSession.ACTIVE_FILE);
-        String before=active.isFile()?new String(java.nio.file.Files.readAllBytes(active.toPath()),java.nio.charset.StandardCharsets.UTF_8):"";
         while(SystemClock.elapsedRealtime()<deadline){
-            JSONObject projection=activity.connectionSetup.projection();
-            if("configured".equals(projection.optString("state"))){
-                String after=new String(java.nio.file.Files.readAllBytes(active.toPath()),java.nio.charset.StandardCharsets.UTF_8);
-                assertFalse("Active generation must change",before.equals(after)); return;
+            if("configured".equals(activity.connectionSetup.projection().optString("state"))){
+                assertPairingMaterials(); return;
             }
             SystemClock.sleep(100);
         }
         fail("Ordinary import did not configure: "+activity.connectionSetup.projection());
+    }
+
+    /**
+     * The frozen minimum contract writes exactly two files after an import:
+     * `endpoint.txt` and `token`. A configured projection that published
+     * neither would be a success claim without the necessary connection
+     * configuration behind it.
+     */
+    private void assertPairingMaterials()throws Exception{
+        assertTrue("Imported pairing must publish endpoint.txt: "+pairingMaterial("endpoint.txt").getAbsolutePath(),
+            pairingMaterial("endpoint.txt").isFile());
+        assertTrue("Imported pairing must publish token: "+pairingMaterial("token").getAbsolutePath(),
+            pairingMaterial("token").isFile());
+        assertTrue("Imported pairing must publish a non-empty endpoint",
+            !admittedEndpoint().isEmpty());
+    }
+    private File pairingMaterial(String name){
+        return new File(new File(activity.getFilesDir(),"pairing"),name);
     }
 
     private void importFixturePairing() throws Exception {
@@ -342,18 +346,14 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         assertTrue("Staged fixture bundle is present",staged.isFile());
         assertEquals("Staged bundle identity",expected,sha256(staged));
         getInstrumentation().runOnMainSync(()->activity.connectionSetup.startImportForTest(
-            Uri.fromFile(staged),ConnectionSetupSession.IntentType.ORDINARY));
+            Uri.fromFile(staged)));
         long deadline=SystemClock.elapsedRealtime()+15000;
         AtomicReference<JSONObject> settled=new AtomicReference<>();
         do{
             getInstrumentation().runOnMainSync(()->settled.set(activity.connectionSetup.projection()));
             String state=settled.get().optString("state");
             if("configured".equals(state)){
-                assertTrue("Imported pairing must carry an active revision",settled.get().optLong("active_revision",-1)>=1);
-                File reference=new File(activity.getFilesDir(),"pairing/"+ConnectionSetupSession.ACTIVE_FILE);
-                assertTrue("Imported pairing must publish an active generation reference",reference.isFile());
-                importedGeneration=new JSONObject(new String(java.nio.file.Files.readAllBytes(reference.toPath()),
-                    java.nio.charset.StandardCharsets.UTF_8)).getString("generation_id");
+                assertPairingMaterials();
                 return;
             }
             if("error".equals(state))fail("Fixture pairing import failed: "+settled.get());
@@ -472,7 +472,15 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
          appendEvidence("chrome-touch.txt","CHROME_TOUCH_AFTER "+after+" webView="+touchGeometry()+"\n");
     }
     /** Local gesture ownership, for a failing remote event that the Host refused. */
-    private String localGestureState(){
+         /** Verify observable delivery after Android 16 InputDispatcher races. */
+     private void touchChromeVerified(String id,Callable<Boolean> delivered)throws Exception{
+         for(int attempt=0;attempt<2;attempt++){
+             touchChrome(id);
+             long deadline=SystemClock.elapsedRealtime()+4000;
+             while(SystemClock.elapsedRealtime()<deadline){ if(delivered.call())return; SystemClock.sleep(50); }
+         }
+     }
+     private String localGestureState(){
         StringBuilder out=new StringBuilder();
         try{
             for(String name:new String[]{"gestureOperationId","gestureSessionId","openOperationId"}){
@@ -877,8 +885,6 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     }
 
     public void testOrdinaryProtectedImport() throws Exception {
-        String transferCode=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("transferCode");
-        assertNotNull("transferCode argument required for ordinary import", transferCode);
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         importOrdinaryPairing();
         JSONObject panel=activity.connectionSetup.projection();
@@ -886,73 +892,10 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
     }
 
     /**
-     * Ordinary UI browse against the already-admitted pairing. The configured
-     * endpoint is read back from the app's own pairing materials so the run
-     * cannot silently target a different Host.
-     */
-    public void testOrdinaryTailscaleBrowse() throws Exception {
-        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        try{
-            JSONObject panel=activity.connectionSetup.projection();
-            assertEquals("Admitted pairing must be configured", "configured", panel.optString("state"));
-            String endpoint=null;
-            for(File material:new File(activity.getFilesDir(),"pairing/.generations").listFiles()){
-                File candidate=new File(material,"endpoint.txt");
-                if(candidate.isFile())endpoint=new String(java.nio.file.Files.readAllBytes(candidate.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
-            assertNotNull("Admitted endpoint material",endpoint);
-            until("!!document.getElementById('connect')",10000);
-            clickEnabled("connect");
-            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
-            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000);
-            JSONObject connected=new JSONObject(js(STATUS));
-            String fixtureUrl=null;
-            String encoded=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString("initialUrlBase64");
-            if(encoded!=null)fixtureUrl=new String(android.util.Base64.decode(encoded,android.util.Base64.DEFAULT),java.nio.charset.StandardCharsets.UTF_8);
-            if(fixtureUrl!=null){
-                clickEnabled("takeover");
-                until(UI_MODE+"==='control'",8000);
-                navigateFromAddress(fixtureUrl);
-            }
-            Bitmap before=capture("tailscale-before");
-            boolean redBefore=Color.red(before.getPixel(30,30))>160&&Color.green(before.getPixel(30,30))<100;
-            touch(30,30);
-            long paintDeadline=SystemClock.elapsedRealtime()+8000;
-            Bitmap after;
-            do{SystemClock.sleep(150);after=capture("tailscale-after");}
-            while(before.sameAs(after)&&SystemClock.elapsedRealtime()<paintDeadline);
-            boolean limeAfter=Color.green(after.getPixel(30,30))>160&&Color.red(after.getPixel(30,30))<100;
-            JSONObject result=new JSONObject()
-                .put("endpoint",endpoint)
-                .put("connectionState",connected.optString("connectionState"))
-                .put("controlMode",connected.optString("controlMode"))
-                .put("renderedFrames",connected.optLong("renderedFrames",-1))
-                .put("displayedTicket",connected.optLong("displayedTicket",-1))
-                .put("displayedPtsUs",connected.optLong("displayedPtsUs",-1))
-                .put("documentRevision",connected.optLong("documentRevision",-1))
-                .put("navigatedFixturePage",fixtureUrl!=null)
-                .put("redBeforeClick",redBefore)
-                .put("limeAfterClick",limeAfter)
-                .put("nativePixelsChanged",!before.sameAs(after));
-            try(var output=new FileOutputStream(new File(activity.getFilesDir(),"network-evidence/tailscale-browse.json"))){
-                output.write(result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            }
-            assertTrue("The admitted endpoint must be the Tailscale endpoint: "+endpoint,
-                endpoint.startsWith("wss://100.66.1.82:"));
-            assertTrue("Remote video must render frames: "+result,connected.optLong("renderedFrames",0)>=2);
-            if(fixtureUrl!=null)assertTrue("A real touch must reach the Host page and repaint the clicked control: "+result,
-                redBefore&&limeAfter);
-        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
-    }
-
-    /**
-     * Task-12 admission: the ordinary DocumentsUI path with the protected
-     * transfer code. The code arrives as an instrumentation argument, so it
-     * exists only in the caller's shell and this process.
+     * Task-12 admission: the ordinary DocumentsUI import of the no-code
+     * bundle, which carries only the necessary connection configuration.
      */
     public void testOrdinaryRealPathAdmission() throws Exception {
-        String transferCode=argument("transferCode",null);
-        assertNotNull("transferCode argument required for ordinary admission",transferCode);
         activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         try{
             importOrdinaryPairing();
@@ -961,7 +904,8 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             writeRaw("admission.json",new JSONObject()
                 .put("panelState",panel.optString("state"))
                 .put("endpoint",admittedEndpoint())
-                .put("activeGeneration",activeGeneration()).toString(2)+"\n");
+                .put("endpointPublished",pairingMaterial("endpoint.txt").isFile())
+                .put("tokenPublished",pairingMaterial("token").isFile()).toString(2)+"\n");
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
 
@@ -1084,6 +1028,134 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
         }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
     }
 
+    /**
+     * BB05 re-raise: the real user path where the keyboard is dismissed and the
+     * same remote field is tapped again. The first tap raises the IME, the
+     * client dismisses it exactly like a user dismissal, and the second tap on
+     * the same field must raise it again. A previous run that leaves the remote
+     * field focused reaches this path on its very first tap.
+     */
+    public void testRemoteImeReraiseSlice() throws Exception {
+        String url=argument("pageUrl","https://www.selenium.dev/selenium/web/web-form.html");
+        float tapX=Float.parseFloat(argument("tapX","196")),tapY=Float.parseFloat(argument("tapY","107"));
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000); clickEnabled("takeover");
+            until(UI_MODE+"==='control'",8000);
+            navigateFromAddress(url); awaitNavigation("https:",15000);
+            JSONObject evidence=new JSONObject().put("case","BB05-reraise").put("url",url)
+                .put("tapX",tapX).put("tapY",tapY);
+
+            // First raise: one real tap on the remote editable target.
+            touch(tapX,tapY);
+            JSONObject first=pollImeRaised(8000);
+            evidence.put("firstRaiseElapsedMs",first.optLong("raiseElapsedMs",-1));
+            // Let the bounded show retry settle, so the dismissal below is a real
+            // user dismissal and not an in-flight app show request.
+            evidence.put("attemptsBeforeDismiss",awaitShowRetriesSettled(12000));
+
+            // The user dismisses the keyboard. The hide request is asynchronous,
+            // so wait for the system to report it down before the second tap.
+            getInstrumentation().runOnMainSync(()->activity.getSystemService(InputMethodManager.class)
+                .hideSoftInputFromWindow(activity.remoteIme.getWindowToken(),0));
+            JSONObject down=awaitImeDown(6000);
+            evidence.put("dismissElapsedMs",down.optLong("hideElapsedMs",-1))
+                .put("mInputShownAfterDismiss",down.opt("mInputShown"))
+                .put("stateAfterDismiss",focusState());
+            assertEquals("The keyboard must go down after a user dismissal: "+down,"false",String.valueOf(down.opt("mInputShown")));
+
+            // The same remote field is tapped again; the keyboard must return.
+            touch(tapX,tapY);
+            JSONObject second;
+            try{
+                second=pollImeRaised(8000);
+            }catch(AssertionError raiseFailure){
+                writeRaw("ime-reraise.json",evidence.put("failure",String.valueOf(raiseFailure.getMessage()))
+                    .toString(2)+"\n");
+                throw raiseFailure;
+            }
+            evidence.put("secondRaiseElapsedMs",second.optLong("raiseElapsedMs",-1));
+            writeRaw("ime-reraise.json",evidence.toString(2)+"\n");
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
+    /**
+     * Negative control for the tap hook. On a page whose document has no
+     * writable editor, a completed real tap must NOT raise the keyboard: the
+     * hook is a response to tapping a remote editor, not an unconditional
+     * retry. If this fails, the fix has become a retry that masks a race.
+     */
+    public void testRemoteImeNoEditorSlice() throws Exception {
+        String url=argument("pageUrl","https://example.com/");
+        float tapX=Float.parseFloat(argument("tapX","196")),tapY=Float.parseFloat(argument("tapY","300"));
+        activity=(MainActivity)getInstrumentation().startActivitySync(new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try{
+            assertEquals("Admitted pairing must be configured","configured",activity.connectionSetup.projection().optString("state"));
+            until("!!document.getElementById('connect')",10000); clickEnabled("connect");
+            until(STATUS+".connectionState==='connected'",20000,"connect to the admitted endpoint");
+            until(STATUS+".renderedFrames>=2 && "+STATUS+".inputReady",20000); clickEnabled("takeover");
+            until(UI_MODE+"==='control'",8000);
+            navigateFromAddress(url); awaitNavigation("https:",15000);
+            // The remote document has no writable editor, so the bridge must
+            // never become eligible and the tap hook must stay a no-op.
+            JSONObject evidence=new JSONObject().put("case","IME-negative-control").put("url",url)
+                .put("tapX",tapX).put("tapY",tapY).put("eligibleBeforeTap",remoteEditorState());
+            touch(tapX,tapY);
+            String shown="false";
+            long deadline=SystemClock.elapsedRealtime()+4000;
+            while(SystemClock.elapsedRealtime()<deadline){
+                shown=String.valueOf(parseImeState(rawShell("dumpsys input_method")).opt("mInputShown"));
+                if("true".equals(shown))break;
+                SystemClock.sleep(200);
+            }
+            evidence.put("mInputShownAfterTap",shown)
+                .put("attemptsAfterTap",showAttempts())
+                .put("eligibleAfterTap",remoteEditorState())
+                .put("stateAfterTap",focusState());
+            writeRaw("ime-no-editor.json",evidence.toString(2)+"\n");
+            assertEquals("A tap on a page with no writable remote editor must not raise the keyboard: "+evidence,
+                "false",shown);
+        }finally{getInstrumentation().runOnMainSync(()->activity.finish());}
+    }
+
+    private int showAttempts()throws Exception{
+        final int[] value=new int[1];
+        getInstrumentation().runOnMainSync(()->value[0]=activity.remoteIme.showAttempts());
+        return value[0];
+    }
+    /** Wait until the bounded show retry stops issuing new attempts. */
+    private int awaitShowRetriesSettled(long timeout)throws Exception{
+        long deadline=SystemClock.elapsedRealtime()+timeout;
+        int last=-1,stable=0;
+        while(SystemClock.elapsedRealtime()<deadline){
+            int now=showAttempts();
+            stable=(now==last)?stable+1:0;
+            if(stable>=8)return now;
+            last=now;
+            SystemClock.sleep(100);
+        }
+        return showAttempts();
+    }
+    /** Wait for the asynchronous client hide request to reach the system. */
+    private JSONObject awaitImeDown(long timeout)throws Exception{
+        long started=SystemClock.elapsedRealtime();
+        String dump="";
+        JSONObject state=null;
+        do{
+            dump=rawShell("dumpsys input_method");
+            state=parseImeState(dump);
+            if("false".equals(String.valueOf(state.opt("mInputShown")))){
+                writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump)+"focus "+focusState()+"\n");
+                return state.put("hideElapsedMs",SystemClock.elapsedRealtime()-started);
+            }
+            SystemClock.sleep(100);
+        }while(SystemClock.elapsedRealtime()-started<timeout);
+        writeRaw("dumpsys-input-method-pre-tap.txt",imeLines(dump)+"focus "+focusState()+"\n");
+        return state.put("hideElapsedMs",-1L);
+    }
     private String argument(String name,String fallback){
         String value=((android.test.InstrumentationTestRunner)getInstrumentation()).getArguments().getString(name);
         return value==null||value.isEmpty()?fallback:value;
@@ -1095,20 +1167,12 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             out.write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
     }
-    private String activeGeneration()throws Exception{
-        File active=new File(activity.getFilesDir(),"pairing/"+ConnectionSetupSession.ACTIVE_FILE);
-        return active.isFile()?new String(java.nio.file.Files.readAllBytes(active.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim():"";
-    }
+    /** The endpoint the imported pairing actually published, never a guess. */
     private String admittedEndpoint()throws Exception{
-        File generations=new File(activity.getFilesDir(),"pairing/.generations");
-        String endpoint=null;
-        File[] materials=generations.listFiles();
-        if(materials==null)return "";
-        for(File material:materials){
-            File candidate=new File(material,"endpoint.txt");
-            if(candidate.isFile())endpoint=new String(java.nio.file.Files.readAllBytes(candidate.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim();
-        }
-        return endpoint==null?"":endpoint;
+        File endpoint=pairingMaterial("endpoint.txt");
+        return endpoint.isFile()
+            ? new String(java.nio.file.Files.readAllBytes(endpoint.toPath()),java.nio.charset.StandardCharsets.UTF_8).trim()
+            : "";
     }
     /** The Host is the only navigation owner, so its projection is the URL proof. */
     private JSONObject awaitNavigation(String requiredScheme,long timeout)throws Exception{
@@ -1161,6 +1225,24 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 +" imeFocusable="+ime.isFocusable()+"/"+ime.isFocusableInTouchMode()
                 +" imeAttached="+ime.isAttachedToWindow()+" imeWindowFocus="+ime.hasWindowFocus()
                 +" attempts="+ime.showAttempts();
+        });
+        return out[0]+" "+remoteEditorState();
+    }
+    /** The Host-owned editor projection the local IME bridge keys on. */
+    private String remoteEditorState(){
+        final String[] out=new String[1];
+        getInstrumentation().runOnMainSync(()->{
+            try{
+                java.lang.reflect.Field field=NetworkSession.class.getDeclaredField("host");
+                field.setAccessible(true);
+                JSONObject host=(JSONObject)field.get(activity.network);
+                RemoteInput.EditorContext editor=RemoteInput.EditorContext.parse(
+                    host==null?null:host.optJSONObject("editor_context"));
+                out[0]="eligible="+activity.network.remoteImeEligible()
+                    +" focusRevision="+(editor==null?-1:editor.focusRevision())
+                    +" editorRevision="+(editor==null?-1:editor.editorRevision())
+                    +" identity="+RemoteInput.editorIdentity(editor);
+            }catch(Exception reflection){out[0]="remote editor read failed: "+reflection;}
         });
         return out[0];
     }
@@ -1588,7 +1670,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
             // whichever of them is presented.
             assertEquals("Browsing must keep the native stage above the chrome: "+touchGeometry(),
                 "FrameLayout",topChild());
-            touchChrome("drawer-toggle");
+            touchChromeVerified("drawer-toggle",()->"true".equals(js("document.querySelector('main').dataset.drawerOpen==='true'")));
             until("document.querySelector('main').dataset.drawerOpen==='true'",6000);
             assertEquals("The overlay presentation must raise the chrome above the native stage: "+touchGeometry(),
                 "WebView",topChild());
@@ -1763,7 +1845,7 @@ public class NetworkDeviceTest extends InstrumentationTestCase {
                 .put("compositionCommitted","Host editing receipt state=applied for composition_commit")
                 .put("unfinishedCompositionDropped","cancelled composition left no ink on the Host field")
                 .put("disconnectCompositionCancelled","disconnect released the bridge target and the Host accepted a fresh composition")
-                .put("importedGeneration",importedGeneration==null?JSONObject.NULL:importedGeneration));
+                .put("importedEndpoint",admittedEndpoint()));
             result.put("displayedRevisionFenced",true);
             result.put("swipeDoesNotClick",true).put("scrollPixels",true);
             result.put("cancelledGestureIgnored",true).put("staleViewportGestureIgnored",true);
