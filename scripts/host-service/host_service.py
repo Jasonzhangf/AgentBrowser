@@ -77,9 +77,7 @@ SERVER_KEY_SIZE = 2048
 DEFAULT_CERT_VALIDITY_DAYS = 397
 MAX_CERT_VALIDITY_DAYS = 398
 
-# The frozen bundle identity.
-BUNDLE_FORMAT = "agentbrowser.connection"
-BUNDLE_VERSION = 1
+# The bundle carries the endpoint and the token. Nothing else.
 TOKEN_BYTES = 32
 
 PARTIAL_EXIT_CODE = 4
@@ -2629,8 +2627,6 @@ def export_bundle(
     port = int(locator["endpoint_port"])
     token = load_token(root)
     document = {
-        "format": BUNDLE_FORMAT,
-        "version": BUNDLE_VERSION,
         "endpoint": endpoint_text(host, host_kind, port),
         "token": token,
     }

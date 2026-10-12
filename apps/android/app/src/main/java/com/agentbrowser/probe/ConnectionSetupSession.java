@@ -116,14 +116,18 @@ final class ConnectionSetupSession {
     }
 
     /**
-     * The binding handed to a NEW connection. A connection is refused only when
-     * no configuration is present; there is no admission step.
+     * The binding handed to a NEW connection. There is no admission step.
+     *
+     * The one guard kept on this path: {@code endpoint} and {@code token} cross
+     * JNI into Rust, where a null reaches {@code get_string} on a null pointer
+     * and crashes instead of reporting. {@link ActiveConfiguration} already
+     * refuses a null member, so only the binding itself can be absent here. This
+     * guard exists to avoid that crash, not to validate the connection.
      */
     ActiveConfiguration admitNewBinding() {
         synchronized (lock) {
             if (closed) throw new IllegalStateException("CONNECTION_SETUP_CLOSED");
-            if (!"configured".equals(state) || active == null)
-                throw new IllegalStateException("CONNECTION_NOT_CONFIGURED");
+            if (active == null) throw new IllegalStateException("CONNECTION_NOT_CONFIGURED");
             return active;
         }
     }
@@ -190,13 +194,7 @@ final class ConnectionSetupSession {
             if (stream == null) throw new IOException("CONFIG_PICKER_UNAVAILABLE");
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
-            int total = 0;
-            for (int count; (count = stream.read(buffer)) != -1; ) {
-                total += count;
-                if (total > ConnectionBundle.MAX_BUNDLE_BYTES)
-                    throw new IOException("BUNDLE_TOO_LARGE");
-                out.write(buffer, 0, count);
-            }
+            for (int count; (count = stream.read(buffer)) != -1; ) out.write(buffer, 0, count);
             return out.toByteArray();
         }
     }
@@ -220,6 +218,11 @@ final class ConnectionSetupSession {
 
     // --- Active reference ---
 
+    /**
+     * The projection reads the two files back. Their presence decides
+     * {@code configured} against {@code unconfigured}; the values are taken as
+     * written and are not re-validated here.
+     */
     private void loadActiveLocked() {
         File endpointFile = new File(pairingRoot, ActiveConfiguration.ENDPOINT_FILE);
         File tokenFile = new File(pairingRoot, ActiveConfiguration.TOKEN_FILE);
@@ -230,22 +233,19 @@ final class ConnectionSetupSession {
             active = null;
             return;
         }
+        String endpoint = readPairingFile(endpointFile);
+        active = new ActiveConfiguration(endpoint, readPairingFile(tokenFile));
+        state = "configured";
+        error = null;
+        label = endpoint;
+    }
+
+    private static String readPairingFile(File file) {
         try {
-            String endpoint = new String(java.nio.file.Files.readAllBytes(endpointFile.toPath()),
+            return new String(java.nio.file.Files.readAllBytes(file.toPath()),
                 StandardCharsets.UTF_8).trim();
-            ConnectionBundle.validateEndpoint(endpoint);
-            String token = new String(java.nio.file.Files.readAllBytes(tokenFile.toPath()),
-                StandardCharsets.UTF_8).trim();
-            if (token.isEmpty()) throw new IllegalArgumentException("BUNDLE_TOKEN_INVALID");
-            active = new ActiveConfiguration(endpoint, token);
-            state = "configured";
-            error = null;
-            label = endpoint;
-        } catch (Exception failure) {
-            state = "unconfigured";
-            error = "CONFIG_PAIRING_INVALID";
-            label = null;
-            active = null;
+        } catch (IOException failure) {
+            throw new java.io.UncheckedIOException(failure);
         }
     }
 

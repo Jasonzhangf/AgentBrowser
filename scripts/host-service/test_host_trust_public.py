@@ -34,7 +34,7 @@ import host_service  # noqa: E402  (public module under test)
 
 
 MANAGER = SCRIPT_DIR / "host-service"
-BUNDLE_FIELDS = {"format", "version", "endpoint", "token"}
+BUNDLE_FIELDS = {"endpoint", "token"}
 
 
 def check(condition: bool, message: str) -> None:
@@ -454,7 +454,7 @@ def test_trust_init_public(root: Path) -> None:
 
 
 def test_export_bundle_public(root: Path) -> None:
-    """The exported bundle is the frozen four-field connection file."""
+    """The exported bundle carries the endpoint and the token, and nothing else."""
     base = root / "export-bundle"
     base.mkdir(mode=0o700)
     service_root, _runtime = build_service_fixture(base)
@@ -482,8 +482,6 @@ def test_export_bundle_public(root: Path) -> None:
     check(private_mode(output) == 0o600, "exported bundle is not 0600")
     document = json.loads(output.read_bytes())
     check(set(document) == BUNDLE_FIELDS, f"bundle carries undeclared fields: {sorted(document)}")
-    check(document["format"] == "agentbrowser.connection", f"bundle format: {document}")
-    check(document["version"] == 1, f"bundle version: {document}")
     check(document["endpoint"] == "100.64.0.1:8443", f"bundle endpoint: {document}")
     check(
         document["token"] == (service_root / "trust" / "token").read_text(),

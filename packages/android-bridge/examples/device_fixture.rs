@@ -69,11 +69,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // admission, so readiness is the socket directory it creates after the TCP
     // listener is bound.
     wait(root.join("endpoint")).await;
-    // The frozen agentbrowser.connection@1 bundle. Four fields are the whole
-    // contract: the format, its version, the endpoint and the access token.
+    // The connection bundle. Two fields are the whole contract: the endpoint
+    // and the access token.
     let bundle = serde_json::json!({
-        "format": "agentbrowser.connection",
-        "version": 1,
         "endpoint": address.to_string(),
         "token": token,
     });
