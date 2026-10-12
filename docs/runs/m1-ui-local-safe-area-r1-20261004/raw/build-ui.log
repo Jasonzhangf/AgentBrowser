@@ -1,0 +1,4 @@
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+

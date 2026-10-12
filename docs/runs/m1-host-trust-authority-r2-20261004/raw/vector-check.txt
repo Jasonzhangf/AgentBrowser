@@ -1,0 +1,4 @@
+empty:
+543c99d61e58f6051e5024a233b1fe084afecad4829f515f279908d0fccdc73a  (146 bytes)
+nonempty (from public consumer vector check) reproduced by module:
+445 ab48af7fd6b7360bb8424643981b54033fee67c8cd4bf591bd2252069b7e98c5

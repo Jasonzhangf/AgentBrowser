@@ -1,0 +1,120 @@
+elapsedMs=196
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=567
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=932
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=1294
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=1650
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=2131
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=2780
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=3426
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=4116
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=4815
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=5465
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=6131
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=6774
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=7461
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+
+elapsedMs=8142
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@be965ce mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@13a10da mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{f626a85 VFED..... ........ 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+

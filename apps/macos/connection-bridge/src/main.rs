@@ -6,6 +6,7 @@
 
 use std::{
     io::{self, BufRead, BufReader, BufWriter, Write},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     sync::{mpsc as std_mpsc, Arc},
     thread,
@@ -13,9 +14,11 @@ use std::{
 
 use agentbrowser_connection::{
     protocol::{
-        ControlPhase, Device, Orientation, SessionStatus, VideoPacket, ViewportDeclaration,
+        ControlPhase, Device, EditorContext, InputBinding, InputEvent, InputLease, Orientation,
+        SelectionDirection, SessionStatus, VideoPacket, ViewportDeclaration,
     },
-    Connection, Connector, DisplayedFrame, Failure, Input, Pairing, Video,
+    Connection, Connector, DisplayedFrame, EditingInput, EditingOutcome, Failure, Input, Pairing,
+    PresentedFrame, Video,
 };
 use tokio::{
     sync::{mpsc, watch},
@@ -95,6 +98,7 @@ struct DisplayedRecord {
     ticket: u64,
     pts_us: u64,
     frame: DisplayedFrame,
+    frame_sequence: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +117,7 @@ struct AppState {
     lifecycle: Lifecycle,
     error: Option<String>,
     pairing_available: bool,
+    provisioning_available: bool,
 }
 
 impl AppState {
@@ -124,6 +129,7 @@ impl AppState {
             lifecycle: Lifecycle::Idle,
             error: None,
             pairing_available: pairing_dir().is_some_and(|path| path.is_dir()),
+            provisioning_available: admin_socket_available(),
         }
     }
 }
@@ -306,8 +312,8 @@ fn handle_event(
                 connection.media.clone(),
                 connection.failure.clone(),
                 generation,
-                event_sender.clone(),
-            );
+            event_sender.clone(),
+        );
             app.session = Some(Session {
                 _connector: connector,
                 connection,
@@ -498,12 +504,18 @@ async fn dispatch(
         | "account_logout" => account_command(object),
         "status" => {
             fields(object, &["op"], &["op"])?;
+            app.provisioning_available = admin_socket_available();
             refresh_status(app).await;
             Ok(snapshot(app))
         }
         "connect" => {
             fields(object, &["op"], &["op"])?;
             start_connect(app, event_sender).await?;
+            Ok(snapshot(app))
+        }
+        "pageerror" => {
+            let message = object.get("message").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            eprintln!("MAC_PAGE_ERROR {message}");
             Ok(snapshot(app))
         }
         "disconnect" => {
@@ -613,6 +625,138 @@ async fn dispatch(
             };
             submit_input(app, input, epoch).await?;
             Ok(snapshot(app))
+        }
+        "editing" => {
+            fields(
+                object,
+                &[
+                    "op",
+                    "epoch",
+                    "operation_id",
+                    "event_sequence",
+                    "binding",
+                    "event",
+                ],
+                &[
+                    "op",
+                    "epoch",
+                    "operation_id",
+                    "event_sequence",
+                    "binding",
+                    "event",
+                ],
+            )?;
+            let epoch = u64_value(object, "epoch")?;
+            let operation_id = object
+                .get("operation_id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 256)
+                .ok_or("INVALID_OPERATION_ID")?;
+            let event_sequence = u64_value(object, "event_sequence")?;
+            let binding = serde_json::from_value::<InputBinding>(
+                object
+                    .get("binding")
+                    .cloned()
+                    .ok_or("MISSING_COMMAND_FIELD")?,
+            )
+            .map_err(|_| "INVALID_EDITING_BINDING".to_string())?;
+            let event = serde_json::from_value::<InputEvent>(
+                object
+                    .get("event")
+                    .cloned()
+                    .ok_or("MISSING_COMMAND_FIELD")?,
+            )
+            .map_err(|_| "INVALID_EDITING_EVENT".to_string())?;
+            if app.session.is_none() {
+                return Err("NETWORK_NOT_CONNECTED".into());
+            }
+            let frame = presented_frame(app).ok_or("DISPLAY_NOT_READY")?;
+            submit_editing(
+                app,
+                EditingInput {
+                    operation_id: operation_id.to_owned(),
+                    event_sequence,
+                    binding,
+                    event,
+                    frame,
+                    epoch,
+                },
+            )
+            .await
+        }
+        "select" => {
+            fields(
+                object,
+                &[
+                    "op",
+                    "epoch",
+                    "operation_id",
+                    "event_sequence",
+                    "edit_session_id",
+                    "target_id",
+                    "focus_revision",
+                    "editor_revision",
+                    "start",
+                    "end",
+                    "direction",
+                ],
+                &[
+                    "op",
+                    "epoch",
+                    "operation_id",
+                    "event_sequence",
+                    "edit_session_id",
+                    "target_id",
+                    "focus_revision",
+                    "editor_revision",
+                    "start",
+                    "end",
+                    "direction",
+                ],
+            )?;
+            let epoch = u64_value(object, "epoch")?;
+            let operation_id = object
+                .get("operation_id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 256)
+                .ok_or("INVALID_OPERATION_ID")?;
+            let event_sequence = u64_value(object, "event_sequence")?;
+            let edit_session_id = required_string(object, "edit_session_id", 256)?;
+            let target_id = required_string(object, "target_id", 256)?;
+            let direction = match object
+                .get("direction")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("forward") => SelectionDirection::Forward,
+                Some("backward") => SelectionDirection::Backward,
+                Some("none") => SelectionDirection::None,
+                _ => return Err("INVALID_SELECTION_DIRECTION".into()),
+            };
+            if app.session.is_none() {
+                return Err("NETWORK_NOT_CONNECTED".into());
+            }
+            let frame = presented_frame(app).ok_or("DISPLAY_NOT_READY")?;
+            submit_editing(
+                app,
+                EditingInput {
+                    operation_id: operation_id.to_owned(),
+                    event_sequence,
+                    binding: InputBinding::Editor {
+                        edit_session_id: edit_session_id.to_owned(),
+                        target_id: target_id.to_owned(),
+                        focus_revision: u64_value(object, "focus_revision")?,
+                        editor_revision: u64_value(object, "editor_revision")?,
+                    },
+                    event: InputEvent::SetSelection {
+                        start: u64_value(object, "start")?,
+                        end: u64_value(object, "end")?,
+                        direction,
+                    },
+                    frame,
+                    epoch,
+                },
+            )
+            .await
         }
         "viewport" => {
             fields(
@@ -784,6 +928,66 @@ async fn submit_input(app: &mut AppState, input: Input, epoch: u64) -> Result<()
     Ok(())
 }
 
+fn presented_frame(app: &AppState) -> Option<PresentedFrame> {
+    let session = app.session.as_ref()?;
+    let displayed = session.displayed.as_ref()?;
+    Some(PresentedFrame {
+        generation: displayed.frame.generation,
+        session_id: displayed.frame.session_id.clone(),
+        tab_id: displayed.frame.tab_id.clone(),
+        presentation_revision: displayed.frame.presentation_revision,
+        frame_sequence: displayed.frame_sequence,
+        document_revision: displayed.frame.document_revision,
+        viewport_revision: displayed.frame.viewport_revision,
+    })
+}
+
+async fn submit_editing(app: &mut AppState, input: EditingInput) -> Result<String, String> {
+    {
+        let session = app.session.as_mut().ok_or("NETWORK_NOT_CONNECTED")?;
+        if !input_ready(session) {
+            return Err("DISPLAY_NOT_READY_OR_CONTROL_NOT_GRANTED".into());
+        }
+        clear_session_error(session);
+    }
+    let result = app
+        .session
+        .as_ref()
+        .ok_or("NETWORK_NOT_CONNECTED")?
+        .connection
+        .editing(input)
+        .await;
+    match result {
+        Ok(outcome) => {
+            let value = editing_outcome_json(&outcome)?;
+            if let Some(session) = app.session.as_mut() {
+                if let Ok(status) = session.connection.status().await {
+                    session.status = status;
+                }
+            }
+            Ok(snapshot_with_editing(app, &value))
+        }
+        Err(error) => Err(command_failure(app, error)),
+    }
+}
+
+fn editing_outcome_json(outcome: &EditingOutcome) -> Result<serde_json::Value, String> {
+    match outcome {
+        EditingOutcome::Gesture(receipt) => serde_json::to_value(receipt)
+            .map(|value| serde_json::json!({"type": "gesture", "receipt": value}))
+            .map_err(|_| "EDITING_OUTCOME_ENCODING".into()),
+        EditingOutcome::Editor(receipt) => serde_json::to_value(receipt)
+            .map(|value| serde_json::json!({"type": "editor", "receipt": value}))
+            .map_err(|_| "EDITING_OUTCOME_ENCODING".into()),
+    }
+}
+
+fn snapshot_with_editing(app: &AppState, editing: &serde_json::Value) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&snapshot(app)).expect("snapshot JSON");
+    value["editingOutcome"] = editing.clone();
+    value.to_string()
+}
+
 fn acknowledge_frame(
     app: &mut AppState,
     ticket: u64,
@@ -807,9 +1011,12 @@ fn acknowledge_frame(
         frame: DisplayedFrame {
             generation: session.connection.generation,
             session_id: source.session_id.clone(),
+            tab_id: source.tab_id.clone(),
+            presentation_revision: source.presentation_revision,
             document_revision: source.document_revision,
             viewport_revision: source.viewport_revision,
         },
+        frame_sequence: source.sequence,
     });
     session.rendered_frames = session
         .rendered_frames
@@ -890,6 +1097,13 @@ fn snapshot(app: &AppState) -> String {
         displayed_ticket,
         displayed_document_revision,
         displayed_viewport_revision,
+        active_tab_id,
+        viewport_pending,
+        displayed_generation,
+        displayed_session_id,
+        displayed_tab_id,
+        editor_context,
+        input_lease,
         session_error,
     ) = match app.session.as_ref() {
         Some(session) => {
@@ -926,6 +1140,27 @@ fn snapshot(app: &AppState) -> String {
                     .displayed
                     .as_ref()
                     .map(|frame| frame.frame.viewport_revision),
+                Some(session.status.active_tab_id.as_str()),
+                session.status.viewport_pending,
+                session
+                    .displayed
+                    .as_ref()
+                    // The native view fences decoded frames by the app-level
+                    // (client) generation carried on the frame header, which is
+                    // the same value as the snapshot's `generation`; the stored
+                    // `frame.generation` is the transport generation used only
+                    // for input fencing.
+                    .map(|_| session.client_generation),
+                session
+                    .displayed
+                    .as_ref()
+                    .map(|frame| frame.frame.session_id.as_str()),
+                session
+                    .displayed
+                    .as_ref()
+                    .map(|frame| frame.frame.tab_id.as_str()),
+                editor_context_json(session.status.editor_context.as_ref()),
+                input_lease_json(session.status.input_lease.as_ref()),
                 session.error.as_deref(),
             )
         }
@@ -947,6 +1182,13 @@ fn snapshot(app: &AppState) -> String {
             None,
             None,
             None,
+            false,
+            None,
+            None,
+            None,
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+            None,
         ),
     };
     let mut value = serde_json::json!({
@@ -960,7 +1202,26 @@ fn snapshot(app: &AppState) -> String {
         "connectionState": connection_state,
         "controlMode": control_mode,
         "pending": pending,
+        "transport": if app.pairing_available { "wss" } else { "unknown" },
+        "path": if app.pairing_available { "direct" } else { "unknown" },
+        "connectionSetup": {
+            // Frozen projection, `docs/m1/connection-minimum.md` §7.6: exactly
+            // `state`, `error`, `label`, with `state` in {configured, unconfigured}.
+            // The client-domain consumer rejects any other key or state, so this
+            // snapshot must not grow fields.
+            "state": if app.pairing_available { "configured" } else { "unconfigured" },
+            "error": null,
+            "label": if app.pairing_available { Some("Local pairing") } else { None }
+        },
+        "capabilities": {
+            "navigation": app.pairing_available,
+            "tabs": app.pairing_available,
+            "profiles": app.pairing_available,
+            "connectionSetup": true,
+            "quality": app.pairing_available
+        },
         "networkConfigured": app.pairing_available,
+        "provisioningAvailable": app.provisioning_available,
         "inputReady": input_ready,
         "epoch": epoch,
         "sessionId": session_id,
@@ -970,9 +1231,30 @@ fn snapshot(app: &AppState) -> String {
         "displayedTicket": displayed_ticket,
         "displayedDocumentRevision": displayed_document_revision,
         "displayedViewportRevision": displayed_viewport_revision,
+        "activeTabId": active_tab_id,
+        "viewportPending": viewport_pending,
+        "displayedGeneration": displayed_generation,
+        "displayedSessionId": displayed_session_id,
+        "displayedTabId": displayed_tab_id,
+        "editorContext": editor_context,
+        "inputLease": input_lease,
     });
     omit_optional_nulls(&mut value);
     value.to_string()
+}
+
+fn editor_context_json(context: Option<&EditorContext>) -> serde_json::Value {
+    match context {
+        Some(context) => serde_json::to_value(context).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn input_lease_json(lease: Option<&InputLease>) -> serde_json::Value {
+    match lease {
+        Some(lease) => serde_json::to_value(lease).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    }
 }
 
 fn omit_optional_nulls(value: &mut serde_json::Value) {
@@ -985,6 +1267,12 @@ fn omit_optional_nulls(value: &mut serde_json::Value) {
             "displayedTicket",
             "displayedDocumentRevision",
             "displayedViewportRevision",
+            "activeTabId",
+            "displayedGeneration",
+            "displayedSessionId",
+            "displayedTabId",
+            "editorContext",
+            "inputLease",
         ] {
             if object
                 .get(field)
@@ -1052,11 +1340,7 @@ fn input_ready(session: &Session) -> bool {
     let Some(displayed) = session.displayed.as_ref() else {
         return false;
     };
-    if session.pending.is_some()
-        || session.queued.is_some()
-        || session.viewport.is_none()
-        || session.status.viewport_pending
-    {
+    if session.viewport.is_none() || session.status.viewport_pending {
         return false;
     }
     if control_mode(session) != "control" || displayed.frame.session_id != session.status.session_id
@@ -1114,6 +1398,18 @@ fn finite_value(
         return Err(format!("INVALID_{key}"));
     }
     Ok(value)
+}
+
+fn required_string<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    max: usize,
+) -> Result<&'a str, String> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= max)
+        .ok_or_else(|| format!("INVALID_{key}"))
 }
 
 fn next_generation(value: u64) -> Result<u64, String> {
@@ -1192,6 +1488,23 @@ fn pairing_dir() -> Option<PathBuf> {
     std::env::var_os("AGENTBROWSER_MAC_PAIRING").map(PathBuf::from)
 }
 
+/// Real declared local-authority probe for the new local-provisioning
+/// capability. The path is the service-owned `<socket_dir>/host-admin.sock`,
+/// supplied by the native host after it reads the service's typed `status`.
+/// A connectable local control socket is required; file or directory
+/// existence alone never reports available, so a stale socket file, a plain
+/// path, or an absent path stays explicitly unavailable. Existing remote
+/// pairing truth (`pairing_available`) is a separate concern.
+fn admin_socket_available() -> bool {
+    let Some(path) = std::env::var_os("AGENTBROWSER_MAC_ADMIN_SOCKET") else {
+        return false;
+    };
+    if path.is_empty() {
+        return false;
+    }
+    UnixStream::connect(Path::new(&path)).is_ok()
+}
+
 fn load_pairing() -> Result<Pairing, String> {
     let root = pairing_dir().ok_or_else(|| "PAIRING_NOT_CONFIGURED".to_string())?;
     if !root.is_dir() {
@@ -1199,11 +1512,11 @@ fn load_pairing() -> Result<Pairing, String> {
     }
     let endpoint = String::from_utf8(read_pairing_file(&root, "endpoint.txt", 4096)?)
         .map_err(|_| "PAIRING_ENDPOINT_ENCODING".to_string())?;
+    let token = String::from_utf8(read_pairing_file(&root, "token", 4096)?)
+        .map_err(|_| "PAIRING_TOKEN_ENCODING".to_string())?;
     Ok(Pairing {
         endpoint: endpoint.trim().to_owned(),
-        server_ca_der: read_pairing_file(&root, "ca.der", 65536)?,
-        client_cert_der: read_pairing_file(&root, "client.der", 65536)?,
-        client_key_pkcs8_der: read_pairing_file(&root, "key.der", 65536)?,
+        token: token.trim().to_owned(),
     })
 }
 
@@ -1212,12 +1525,6 @@ fn read_pairing_file(root: &Path, name: &str, max: u64) -> Result<Vec<u8>, Strin
     let metadata = std::fs::metadata(&path).map_err(|_| format!("PAIRING_FILE_MISSING:{name}"))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max {
         return Err(format!("PAIRING_FILE_INVALID:{name}"));
-    }
-    #[cfg(unix)]
-    if name == "key.der"
-        && std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o077 != 0
-    {
-        return Err("PAIRING_KEY_PERMISSIONS".into());
     }
     std::fs::read(path).map_err(|_| format!("PAIRING_FILE_READ_FAILED:{name}"))
 }
@@ -1344,6 +1651,42 @@ mod tests {
         assert_eq!(
             finite_value(value.as_object().unwrap(), "x"),
             Err("INVALID_x".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_editing_command_reaches_connection_owner() {
+        let mut app = AppState::new();
+        let (event_sender, _event_receiver) = mpsc::channel(1);
+        let (output, _output_receiver) = std_mpsc::channel();
+        let command = serde_json::json!({
+            "op": "editing",
+            "epoch": 7,
+            "operation_id": "pointer-1",
+            "event_sequence": 0,
+            "binding": {
+                "type": "gesture",
+                "gesture_session_id": "pointer-1-gesture"
+            },
+            "event": {
+                "type": "pointer_down",
+                "pointer_id": 1,
+                "x": 10.0,
+                "y": 20.0,
+                "button": "left",
+                "buttons": 1,
+                "modifiers": 0
+            }
+        });
+        assert_eq!(
+            dispatch(
+                &mut app,
+                &command.to_string(),
+                &event_sender,
+                &output
+            )
+            .await,
+            Err("NETWORK_NOT_CONNECTED".into())
         );
     }
 

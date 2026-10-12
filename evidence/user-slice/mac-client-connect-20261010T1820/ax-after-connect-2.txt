@@ -1,0 +1,164 @@
+AXApplication title=AgentBrowser desc= value=
+  AXWindow title=AgentBrowser desc= value=
+          AXWebArea title= desc=AgentBrowser value=
+              AXGroup title=浏览器工具栏 desc=浏览器工具栏 value=
+                AXGroup title=页面导航 desc=页面导航 value=
+                  AXButton title=后退 desc=后退 value=
+                  AXButton title=前进 desc=前进 value=
+                  AXButton title=刷新 desc=刷新 value=
+                  AXStaticText title= desc= value=页面地址
+                    AXStaticText title= desc= value=页面地址
+                  AXTextField title=页面地址 desc= value=
+                    AXStaticText title= desc= value=连接失败
+                AXButton title=标签页 desc=标签页 value=
+                AXButton title=关闭菜单 desc=关闭菜单 value=
+                AXStaticText title= desc= value=Protocol: Expected Host protocol version 11
+              AXGroup title=原生视频区域 desc=原生视频区域 value=
+                  AXStaticText title= desc= value=未连接 Host
+                AXStaticText title= desc= value=打开菜单配置连接
+              AXButton title=关闭菜单 desc=关闭菜单 value=
+              AXGroup title=浏览器菜单 desc=浏览器菜单 value=
+                AXStaticText title= desc= value=AgentBrowser
+                AXHeading title=浏览器菜单 desc= value=
+                  AXStaticText title= desc= value=浏览器菜单
+                AXButton title=关闭菜单 desc=关闭菜单 value=
+                AXGroup title=连接 desc=连接 value=
+                  AXHeading title=连接 desc= value=
+                    AXStaticText title= desc= value=连接
+                  AXStaticText title= desc= value=连接失败
+                      AXStaticText title= desc= value=连接失败
+                    AXStaticText title= desc= value=可修正连接后重试
+                    AXStaticText title= desc= value=连接：
+                    AXStaticText title= desc= value=Local pairing
+                    AXStaticText title= desc= value=配置版本：
+                    AXStaticText title= desc= value=1
+                  AXGroup title=连接配置 desc=连接配置 value=
+                    AXButton title=配置连接 desc= value=
+                    AXButton title=导入 desc= value=
+                  AXGroup title=连接操作 desc=连接操作 value=
+                    AXButton title=连接 desc= value=
+                    AXButton title=断开 desc= value=
+                    AXButton title=接管 desc= value=
+                    AXButton title=返回观察 desc= value=
+                AXGroup title=标签页 desc=标签页 value=
+                  AXHeading title=标签页 desc= value=
+                    AXStaticText title= desc= value=标签页
+                  AXButton title=新建 desc= value=
+                    AXStaticText title= desc= value=暂无标签页
+                AXGroup title=Profile desc=Profile value=
+                  AXHeading title=Profile desc= value=
+                    AXStaticText title= desc= value=Profile
+                  AXStaticText title= desc= value=未选择
+                  AXStaticText title= desc= value=当前 Profile
+                    AXStaticText title= desc= value=当前 Profile
+                  AXPopUpButton title=当前 Profile desc= value=暂无 Profile
+                AXGroup title=视频质量 desc=视频质量 value=
+                  AXHeading title=视频质量 desc= value=
+                    AXStaticText title= desc= value=视频质量
+                    AXStaticText title= desc= value=只调整远端视频传输。
+                  AXStaticText title= desc= value=未协商
+                    AXStaticText title= desc= value=当前连接未提供画质能力
+                AXGroup title=诊断 desc=诊断 value=
+                  AXHeading title=诊断 desc= value=
+                    AXStaticText title= desc= value=诊断
+                      AXStaticText title= desc= value=状态
+                      AXStaticText title= desc= value=error
+                      AXStaticText title= desc= value=控制
+                      AXStaticText title= desc= value=observe
+                      AXStaticText title= desc= value=Session
+                      AXStaticText title= desc= value=unknown
+                      AXStaticText title= desc= value=Transport
+                      AXStaticText title= desc= value=wss
+                      AXStaticText title= desc= value=Path
+                      AXStaticText title= desc= value=direct
+                      AXStaticText title= desc= value=Epoch
+                      AXStaticText title= desc= value=0
+                      AXStaticText title= desc= value=Document
+                      AXStaticText title= desc= value=unknown
+                      AXStaticText title= desc= value=Viewport
+                      AXStaticText title= desc= value=unknown
+                      AXStaticText title= desc= value=Displayed
+                      AXStaticText title= desc= value=unknown
+                      AXStaticText title= desc= value= / 
+                      AXStaticText title= desc= value=unknown
+                      AXStaticText title= desc= value=Codec
+                      AXStaticText title= desc= value=unknown
+                    AXButton title=卸载 UI 插件 desc= value=
+                      AXStaticText title= desc= value=卸载 UI 插件不会停止远端操作。
+    AXButton title= desc= value=
+    AXButton title= desc= value=
+    AXButton title= desc= value=
+    AXStaticText title= desc= value=AgentBrowser
+    AXMenuBarItem title=Apple desc= value=
+        AXMenuItem title=关于本机 desc= value=
+        AXMenuItem title=系统信息 desc= value=
+        AXMenuItem title=系统设置…，1项更新 desc= value=
+        AXMenuItem title=App Store…，7项更新 desc= value=
+        AXMenuItem title=最近使用的项目 desc= value=
+            AXMenuItem title=应用程序 desc= value=
+            AXMenuItem title=文本编辑 desc= value=
+            AXMenuItem title=在访达中显示“文本编辑” desc= value=
+            AXMenuItem title=系统设置 desc= value=
+            AXMenuItem title=在访达中显示“系统设置” desc= value=
+            AXMenuItem title=AgentBrowserMac desc= value=
+            AXMenuItem title=在访达中显示“AgentBrowserMac” desc= value=
+            AXMenuItem title=AgentBrowserMac desc= value=
+            AXMenuItem title=在访达中显示“AgentBrowserMac” desc= value=
+            AXMenuItem title=ChatGPT desc= value=
+            AXMenuItem title=在访达中显示“ChatGPT” desc= value=
+            AXMenuItem title=Devin desc= value=
+            AXMenuItem title=在访达中显示“Devin” desc= value=
+            AXMenuItem title=ego lite desc= value=
+            AXMenuItem title=在访达中显示“ego lite” desc= value=
+            AXMenuItem title=Google Chrome desc= value=
+            AXMenuItem title=在访达中显示“Google Chrome” desc= value=
+            AXMenuItem title=Hopper Disassembler desc= value=
+            AXMenuItem title=在访达中显示“Hopper Disassembler” desc= value=
+            AXMenuItem title=UU远程 desc= value=
+            AXMenuItem title=在访达中显示“UU远程” desc= value=
+            AXMenuItem title=文稿 desc= value=
+            AXMenuItem title=g4.8.html desc= value=
+            AXMenuItem title=在访达中显示“g4.8.html” desc= value=
+            AXMenuItem title=g4.35.html desc= value=
+            AXMenuItem title=在访达中显示“g4.35.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=result.html desc= value=
+            AXMenuItem title=在访达中显示“result.html” desc= value=
+            AXMenuItem title=服务器 desc= value=
+            AXMenuItem title=[C] Windows 11 desc= value=
+            AXMenuItem title=192.168.0.13 desc= value=
+            AXMenuItem title=192.168.99.186 desc= value=
+            AXMenuItem title=极空间-个人 desc= value=
+            AXMenuItem title=Macintosh HD desc= value=
+            AXMenuItem title=nvme11-186XXXX5367a desc= value=
+            AXMenuItem title=sata11-186XXXX5367 desc= value=
+            AXMenuItem title=清除菜单 desc= value=
+        AXMenuItem title=强制退出… desc= value=
+        AXMenuItem title=强制退出“AgentBrowser” desc= value=
+        AXMenuItem title=睡眠 desc= value=
+        AXMenuItem title=重新启动… desc= value=
+        AXMenuItem title=重新启动 desc= value=
+        AXMenuItem title=关机… desc= value=
+        AXMenuItem title=关机 desc= value=
+        AXMenuItem title=锁定屏幕 desc= value=
+        AXMenuItem title=退出登录“Fan Zhang”… desc= value=
+        AXMenuItem title=退出登录“Fan Zhang” desc= value=
+    AXMenuBarItem title=AgentBrowser desc= value=
+        AXMenuItem title=关于 AgentBrowser desc= value=
+        AXMenuItem title=退出 AgentBrowser desc= value=
+        AXMenuItem title=退出并保留窗口 desc= value=
+    AXMenuBarItem title=连接 desc= value=
+        AXMenuItem title=配置手机连接… desc= value=

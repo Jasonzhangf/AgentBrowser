@@ -1,0 +1,4 @@
+{
+  "controlModeAfterRelease": "disconnected",
+  "connectionStateAfterDisconnect": "stopped"
+}

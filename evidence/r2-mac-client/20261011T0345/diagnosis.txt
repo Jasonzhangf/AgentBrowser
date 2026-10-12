@@ -1,0 +1,6 @@
+DOM/error instrumentation run:
+- Expected DOM callback output: document.readyState, location.href, root child count, body text, body children, root dimensions.
+- Actual app stderr: only `MAC_NATIVE_SEND op=status raw={"op":"status"}` twice.
+- No `MAC_WEBVIEW_DOM` callback and no `MAC_PAGE_ERROR` line arrived.
+
+The page JavaScript does execute because only the WebView page can issue the two status commands, but the WKWebView did not produce the completion callback in this runtime. No connect command was issued. First gate remains UI mount/render observability; no BB10/BB11 claim.

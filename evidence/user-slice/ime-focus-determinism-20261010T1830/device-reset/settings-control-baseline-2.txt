@@ -1,0 +1,6 @@
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=true
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@e2f4c74 mDeactivateRequested=false mServedView=null}
+  mServedView=gsm{f3e65e3 VFED..CL. .F...... 0,0-954,189 #7f0b027b app:id/open_search_view_edit_text aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=gsn@12ebbe0 mDeactivateRequested=false mServedView=gsm{f3e65e3 VFED..CL. .F...... 0,0-954,189 #7f0b027b app:id/open_search_view_edit_text aid=1073741824}}
+  mIsInputViewShown=true mStatusIcon=0

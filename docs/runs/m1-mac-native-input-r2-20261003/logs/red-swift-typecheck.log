@@ -1,0 +1,24 @@
+apps/macos/Sources/main.swift:390:17: error: invalid redeclaration of 'activeGeneration'
+375 |     private var visibleHeight = 0
+376 |     private var activeSessionID: String?
+377 |     private(set) var activeGeneration: UInt64?
+    |                      `- note: 'activeGeneration' previously declared here
+378 |     private struct PendingScroll {
+379 |         let epoch: UInt64
+    :
+388 |     private var inputViewportRevision: UInt64?
+389 |     private var inputSessionId: String?
+390 |     private var activeGeneration: UInt64?
+    |                 `- error: invalid redeclaration of 'activeGeneration'
+391 | 
+392 |     var onDisplayed: ((UInt64) -> Void)?
+
+apps/macos/Sources/main.swift:784:35: warning: 'javaScriptEnabled' was deprecated in macOS 11.0: Use WKWebpagePreferences.allowsContentJavaScript to disable content JavaScript on a per-navigation basis [#DeprecatedDeclaration]
+782 | 
+783 |         let configuration = WKWebViewConfiguration()
+784 |         configuration.preferences.javaScriptEnabled = true
+    |                                   `- warning: 'javaScriptEnabled' was deprecated in macOS 11.0: Use WKWebpagePreferences.allowsContentJavaScript to disable content JavaScript on a per-navigation basis [#DeprecatedDeclaration]
+785 |         let userScriptSource = "window.ProbeNative={request:function(raw){var value=window.prompt('AgentBrowser.Native',raw);return value===null?JSON.stringify({rejection:'NATIVE_PROMPT_CANCELLED'}):value;}};"
+786 |         let userScript = WKUserScript(source: userScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>

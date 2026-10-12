@@ -1,0 +1,4 @@
+    Checking agentbrowser-relay-host v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-connection-host11-migration-r1-20261003/apps/relay-host)
+    Checking agentbrowser-android v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-connection-host11-migration-r1-20261003/packages/android-bridge)
+    Checking agentbrowser-macos-bridge v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-connection-host11-migration-r1-20261003/apps/macos/connection-bridge)
+    Finished `release` profile [optimized] target(s) in 1.40s

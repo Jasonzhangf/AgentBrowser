@@ -1,0 +1,5 @@
+apps/macos/build/AgentBrowserMac.app/Contents/Resources/ui/index.html
+apps/macos/build/AgentBrowserMac.app/Contents/Resources/ui/app.css
+apps/macos/build/AgentBrowserMac.app/Contents/Resources/ui/app.js
+apps/macos/build/AgentBrowserMac.app/Contents/Resources/host-service/host_service.py
+apps/macos/build/AgentBrowserMac.app/Contents/Resources/host-service/host-service

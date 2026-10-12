@@ -1,0 +1,8 @@
+verify_missing_rc=2
+install_missing_rc=2
+install_bad_rc=2
+mismatch_install_rc=0
+mismatch_start_rc=2
+mismatch_elapsed_seconds=0
+mismatch_state_exists=no
+mismatch_runtime_entries=0

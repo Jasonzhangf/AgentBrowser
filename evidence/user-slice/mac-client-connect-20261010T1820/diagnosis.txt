@@ -1,0 +1,14 @@
+Source diagnosis:
+- UI main.tsx:529-530 maps visible buttons to ProbeNative request({op:'open_connection_setup'}) / request({op:'import_connection'}); 542 maps visible 连接 to request({op:'connect'}).
+- main.swift:2320-2336 receives ProbeNative prompt and forwards defaultText to bridge.request.
+- main.swift:301-336 wraps the raw command as {id,command} and waits for bridge response.
+- bridge main.rs:500-515 dispatches `connect` and calls start_connect; 819-861 loads pairing and calls Connector.connect.
+
+Raw native bridge evidence: bridge-direct.log. With AGENTBROWSER_MAC_PAIRING=/tmp/abn-task16-pairing, status returned capabilities.connectionSetup=true, connectionSetup.state=configured, networkConfigured=true, transport=wss, path=direct. connect returned connectionState=connecting, generation=1. Thus UI mapping and bridge receipt are PASS; failure occurs inside Connector/Host handshake.
+
+User-visible retry after rebuilt app: ax-after-connect-2.txt reports `连接失败`; alert raw text: `Protocol: Expected Host protocol version 11`; drawer reports `连接失败`, Transport and Path remain unknown in rendered failure state.
+
+Independent Host status after retry: task6 remained running pid 29244, endpoint_pid 67508, generation 24; no newly observed session id from this client.
+
+Executable SHA-256 before fix: 053adf8ad875a384605181dac38217dc30c2bb4e371af6d7448cae57209cd00c (same as pre-fix delivered binary; initial projection-only build).
+Executable SHA-256 after fix build: 053adf8ad875a384605181dac38217dc30c2bb4e371af6d7448cae57209cd00c.

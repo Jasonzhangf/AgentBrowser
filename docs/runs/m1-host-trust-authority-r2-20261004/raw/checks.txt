@@ -1,0 +1,5 @@
+# py_compile
+py_compile exit=0
+
+# git diff --check
+diff --check exit=0

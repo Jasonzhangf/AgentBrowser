@@ -1,0 +1,8 @@
+portrait toolbar=0 0 1080 317 address=42 63 627 178 menu=947 63 1065 181 statusBars=0 0 1080 63 navigationBars=0 2337 1080 2400
+landscape toolbar=0 0 2400 199 address=420 63 1942 178 menu=2262 63 2380 181 statusBars=0 0 2400 63 navigationBars=0 1017 2400 1080
+restored toolbar=0 0 1080 317 address=42 63 627 178 menu=947 63 1065 181 statusBars=0 0 1080 63 navigationBars=0 2337 1080 2400
+PASS: portrait restore preserved address bounds: 42 63 627 178
+PASS: drawer open bounds=84 63 1080 2338 status_bottom=63 navigation_bottom=2400
+PASS: system Back closed the drawer and kept the probe activity resumed
+PASS: installed LayoutDeviceTest reported OK (2 tests)
+PASS: installed APK bytes match candidate: 941df5ccbc8680e0161034f938a6e3f10ab1ec642840d7ecc62241e3a290d597

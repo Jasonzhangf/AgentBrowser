@@ -1,0 +1,11 @@
+{
+ "id":"m1-chrome-request","version":"1","inputs":[{"id":"chrome-user-intent","schema":"Object"}],
+ "nodes":[
+  {"id":"接收浏览器栏用户意图","operator":"agentbrowser.ui.capture_chrome_request","operator_version":"1","inputs":["chrome-user-intent"],"output":{"id":"chrome-request","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"解析地址并检查当前能力","operator":"agentbrowser.ui.prepare_chrome_request","operator_version":"1","inputs":["chrome-request"],"output":{"id":"prepared-chrome-request","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"提交允许操作或确认未提交","operator":"agentbrowser.ui.dispatch_chrome_request","operator_version":"1","inputs":["prepared-chrome-request"],"output":{"id":"chrome-command-outcome","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"呈现真实结果并保留独立错误","operator":"agentbrowser.ui.consume_chrome_outcome","operator_version":"1","inputs":["chrome-command-outcome"],"output":{"id":"chrome-request-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"}
+ ],
+ "edges":[{"from":"接收浏览器栏用户意图","to":"解析地址并检查当前能力","arc_id":"chrome-request"},{"from":"解析地址并检查当前能力","to":"提交允许操作或确认未提交","arc_id":"prepared-chrome-request"},{"from":"提交允许操作或确认未提交","to":"呈现真实结果并保留独立错误","arc_id":"chrome-command-outcome"}],
+ "outputs":["chrome-request-result"]
+}

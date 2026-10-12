@@ -1,0 +1,666 @@
+{
+  "phase": "before",
+  "spaceId": 119,
+  "url": "http://127.0.0.1:60194/consumer.html",
+  "finishReceipt": {
+    "spaceId": 119,
+    "closedSpace": true,
+    "keptManagedLabels": [],
+    "closedManagedLabels": [
+      "p1"
+    ],
+    "preservedUnmanagedCount": 0
+  },
+  "screenshots": {
+    "before-desktop-connected-no-frame": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-connected-no-frame.png",
+    "before-desktop-connected-video": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-connected-video.png",
+    "before-desktop-presentation-rejected": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-presentation-rejected.png",
+    "before-desktop-open-status-error": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-open-status-error.png",
+    "before-desktop-open-status-error-recovered": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-open-status-error-recovered.png",
+    "before-desktop-close-status-error": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-close-status-error.png",
+    "before-desktop-close-status-error-recovered": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-close-status-error-recovered.png",
+    "before-phone-open-status-error": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-phone-open-status-error.png",
+    "before-phone-open-status-error-recovered": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-phone-open-status-error-recovered.png",
+    "before-phone-close-status-error": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-phone-close-status-error.png",
+    "before-phone-close-status-error-recovered": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-phone-close-status-error-recovered.png",
+    "before-desktop-dispose": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-dispose.png"
+  },
+  "cases": {
+    "desktop-open-status-error": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "false",
+        "presentation": "browsing",
+        "drawerTop": "0px",
+        "drawerRight": "0px",
+        "drawerBottom": "0px",
+        "safeTop": "0px",
+        "safeBottom": "0px",
+        "error": "Error: STATUS_FAILED",
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 92,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-4",
+            "state": "overlay",
+            "status": "applied",
+            "revision": 8
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-4",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ],
+      "screenshot": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-open-status-error.png"
+    },
+    "desktop-open-status-error-recovered": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "drawerTop": "24px",
+        "drawerRight": "0px",
+        "drawerBottom": "24px",
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "error": null,
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 97,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-4",
+            "state": "overlay",
+            "status": "applied",
+            "revision": 8
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      }
+    },
+    "desktop-close-status-error": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "drawerTop": "24px",
+        "drawerRight": "0px",
+        "drawerBottom": "24px",
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "error": "Error: STATUS_FAILED",
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 105,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-5",
+            "state": "browsing",
+            "status": "applied",
+            "revision": 9
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-5",
+          "op": "set_presentation",
+          "state": "browsing"
+        }
+      ],
+      "screenshot": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-desktop-close-status-error.png"
+    },
+    "desktop-close-status-error-recovered": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "false",
+        "presentation": "browsing",
+        "drawerTop": "0px",
+        "drawerRight": "0px",
+        "drawerBottom": "0px",
+        "safeTop": "0px",
+        "safeBottom": "0px",
+        "error": null,
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 111,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-5",
+            "state": "browsing",
+            "status": "applied",
+            "revision": 9
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      }
+    },
+    "phone-open-status-error": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "false",
+        "presentation": "browsing",
+        "drawerTop": "0px",
+        "drawerRight": "0px",
+        "drawerBottom": "0px",
+        "safeTop": "0px",
+        "safeBottom": "0px",
+        "error": "Error: STATUS_FAILED",
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 11,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-1",
+            "state": "overlay",
+            "status": "applied",
+            "revision": 8
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-1",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ],
+      "screenshot": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-phone-open-status-error.png"
+    },
+    "phone-open-status-error-recovered": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "drawerTop": "24px",
+        "drawerRight": "0px",
+        "drawerBottom": "24px",
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "error": null,
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 21,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-1",
+            "state": "overlay",
+            "status": "applied",
+            "revision": 8
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      }
+    },
+    "phone-close-status-error": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "drawerTop": "24px",
+        "drawerRight": "0px",
+        "drawerBottom": "24px",
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "error": "Error: STATUS_FAILED",
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 25,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-2",
+            "state": "browsing",
+            "status": "applied",
+            "revision": 9
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-2",
+          "op": "set_presentation",
+          "state": "browsing"
+        }
+      ],
+      "screenshot": "/Volumes/Intel/playground/agentbrowser/m1-ui-presentation-receipt-r2-20261004/docs/runs/m1-ui-presentation-receipt-r2-20261004/screenshots/before-phone-close-status-error.png"
+    },
+    "phone-close-status-error-recovered": {
+      "observed": {
+        "ready": "true",
+        "visibleContent": "native-video",
+        "surfaceVisibility": "hidden",
+        "surfaceOpacity": "0",
+        "emptyText": "原生画面已呈现输入由原生视频区域承载",
+        "drawerOpen": "false",
+        "presentation": "browsing",
+        "drawerTop": "0px",
+        "drawerRight": "0px",
+        "drawerBottom": "0px",
+        "safeTop": "0px",
+        "safeBottom": "0px",
+        "error": null,
+        "pluginText": "卸载 UI 插件",
+        "requestCount": 29,
+        "trace": [
+          {
+            "op": "set_presentation",
+            "id": "presentation-2",
+            "state": "browsing",
+            "status": "applied",
+            "revision": 9
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          },
+          {
+            "op": "status",
+            "status": "error",
+            "error": "STATUS_FAILED"
+          }
+        ]
+      }
+    }
+  },
+  "assertions": [
+    {
+      "ok": true,
+      "message": "connected-no-frame keeps ready=false"
+    },
+    {
+      "ok": true,
+      "message": "connected-no-frame is webview visible content"
+    },
+    {
+      "ok": true,
+      "message": "connected-no-frame keeps empty surface visible"
+    },
+    {
+      "ok": true,
+      "message": "connected-no-frame shows waiting copy"
+    },
+    {
+      "ok": true,
+      "message": "valid displayed frame sets native-video ready"
+    },
+    {
+      "ok": true,
+      "message": "valid frame projects native-video"
+    },
+    {
+      "ok": true,
+      "message": "native-video hides empty surface"
+    },
+    {
+      "ok": true,
+      "message": "scenario-waiting keeps video visible"
+    },
+    {
+      "ok": true,
+      "message": "scenario-operation-pending keeps video visible"
+    },
+    {
+      "ok": true,
+      "message": "scenario-control keeps video visible"
+    },
+    {
+      "ok": true,
+      "message": "rejected overlay does not fake open drawer"
+    },
+    {
+      "ok": true,
+      "message": "rejection reason is visible"
+    },
+    {
+      "ok": true,
+      "message": "retry opens drawer after applied receipt"
+    },
+    {
+      "ok": true,
+      "message": "retry records rejected then applied overlay commands"
+    },
+    {
+      "ok": false,
+      "message": "desktop: applied overlay remains open when status refresh fails"
+    },
+    {
+      "ok": true,
+      "message": "desktop: old browsing projection is retained until current"
+    },
+    {
+      "ok": true,
+      "message": "desktop: open status failure is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: open emits one presentation command"
+    },
+    {
+      "ok": true,
+      "message": "desktop: open command requests overlay"
+    },
+    {
+      "ok": true,
+      "message": "desktop: applied overlay receipt revision is observable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: failed status request is observable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: open/status failure emits no viewport command"
+    },
+    {
+      "ok": true,
+      "message": "desktop: recovered overlay keeps drawer open"
+    },
+    {
+      "ok": true,
+      "message": "desktop: recovered overlay projection is current"
+    },
+    {
+      "ok": false,
+      "message": "desktop: applied browsing remains closed when status refresh fails"
+    },
+    {
+      "ok": true,
+      "message": "desktop: old overlay projection is retained until current"
+    },
+    {
+      "ok": true,
+      "message": "desktop: close status failure is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: close emits one presentation command"
+    },
+    {
+      "ok": true,
+      "message": "desktop: close command requests browsing"
+    },
+    {
+      "ok": true,
+      "message": "desktop: applied browsing receipt revision is observable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: failed close status request is observable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: close/status failure emits no viewport command"
+    },
+    {
+      "ok": true,
+      "message": "desktop: recovered browsing keeps drawer closed"
+    },
+    {
+      "ok": true,
+      "message": "desktop: recovered browsing projection is current"
+    },
+    {
+      "ok": false,
+      "message": "phone: applied overlay remains open when status refresh fails"
+    },
+    {
+      "ok": true,
+      "message": "phone: old browsing projection is retained until current"
+    },
+    {
+      "ok": true,
+      "message": "phone: open status failure is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: open emits one presentation command"
+    },
+    {
+      "ok": true,
+      "message": "phone: open command requests overlay"
+    },
+    {
+      "ok": true,
+      "message": "phone: applied overlay receipt revision is observable"
+    },
+    {
+      "ok": true,
+      "message": "phone: failed status request is observable"
+    },
+    {
+      "ok": true,
+      "message": "phone: open/status failure emits no viewport command"
+    },
+    {
+      "ok": true,
+      "message": "phone: recovered overlay keeps drawer open"
+    },
+    {
+      "ok": true,
+      "message": "phone: recovered overlay projection is current"
+    },
+    {
+      "ok": false,
+      "message": "phone: applied browsing remains closed when status refresh fails"
+    },
+    {
+      "ok": true,
+      "message": "phone: old overlay projection is retained until current"
+    },
+    {
+      "ok": true,
+      "message": "phone: close status failure is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: close emits one presentation command"
+    },
+    {
+      "ok": true,
+      "message": "phone: close command requests browsing"
+    },
+    {
+      "ok": true,
+      "message": "phone: applied browsing receipt revision is observable"
+    },
+    {
+      "ok": true,
+      "message": "phone: failed close status request is observable"
+    },
+    {
+      "ok": true,
+      "message": "phone: close/status failure emits no viewport command"
+    },
+    {
+      "ok": true,
+      "message": "phone: recovered browsing keeps drawer closed"
+    },
+    {
+      "ok": true,
+      "message": "phone: recovered browsing projection is current"
+    },
+    {
+      "ok": true,
+      "message": "dispose emits no new public commands"
+    },
+    {
+      "ok": true,
+      "message": "dispose stops the status-poll resource"
+    },
+    {
+      "ok": true,
+      "message": "dispose unmounts the UI plugin"
+    },
+    {
+      "ok": true,
+      "message": "dispose releases once and returns to reload state"
+    }
+  ],
+  "failure": null
+}

@@ -1,0 +1,6 @@
+warning: authorized legacy governance reset receipt has no transaction_id (./.appsdk/records/reset-governance-record.json)
+warning: authorized legacy governance reset receipt has no transaction_id (./.appsdk/records/reset-governance-record.json)
+warning: SDK migration history ignored after authorized governance reset (./.appsdk/migrations/0.1.5-to-0.1.6)
+warning: SDK migration history ignored after authorized governance reset (./.appsdk/migrations/0.1.0009-to-0.1.0010)
+{"baseline_status":"required","command_ok":true,"delivery_assessed":false,"delivery_verified":false,"development_ready":true,"ok":false,"project_id":"agentbrowser","reason":"baseline_required","stage":"contract_bound","test_governance":{"mode":"off","objects":[],"status":"not_selected"}}
+EXIT=0

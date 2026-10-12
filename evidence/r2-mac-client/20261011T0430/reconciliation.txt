@@ -1,0 +1,10 @@
+Controlled single-instance run:
+- Prior owned PID 79462 stopped explicitly.
+- Fresh integration app PID 92925 launched from apps/macos/build/AgentBrowserMac.app.
+- osascript activation and 3-second wait performed.
+- Screenshot shell.png shows footer-only white UI; no browser chrome, drawer, or connect button.
+- AX buttons: only 卸载 UI 插件 plus three unnamed native buttons.
+- stderr: two page-originated status commands only; no op=connect.
+- No coordinate click was possible because the target control was absent in this instance.
+
+This conflicts with an independent screenshot showing browser chrome; the discrepancy is instance/artifact/window dependent. This run cannot prove an ordinary connect. BB10/BB11 not claimed.

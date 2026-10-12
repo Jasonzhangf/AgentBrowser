@@ -1,0 +1,9 @@
+{
+  "spaceId": 124,
+  "baseUrl": "http://127.0.0.1:63744/consumer.html",
+  "phase": "green",
+  "bundleDir": "/Volumes/Intel/playground/agentbrowser/m1-ui-receipt-geometry-r3-20261004/docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-after",
+  "sourceCommit": "86d1a7ffd2e7b1cd04c202234f0fddae49810a94",
+  "sourceTree": "8b9f9ad22784effd280fc0a4b3e57387f7b277bf",
+  "finishTask": true
+}

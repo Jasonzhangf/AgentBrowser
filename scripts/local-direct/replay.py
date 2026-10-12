@@ -760,6 +760,42 @@ def socket_info(path: pathlib.Path) -> dict[str, Any]:
     }
 
 
+def directory_info(path: pathlib.Path) -> dict[str, Any]:
+    try:
+        metadata = path.stat()
+    except OSError as error:
+        return {"path": str(path), "exists": False, "error": bounded_text(error)}
+    return {
+        "path": str(path),
+        "exists": True,
+        "directory": stat.S_ISDIR(metadata.st_mode),
+        "mode": oct(stat.S_IMODE(metadata.st_mode)),
+    }
+
+
+def admitted_endpoint_sockets(root: pathlib.Path) -> list[dict[str, Any]]:
+    """Exact-session encoded sockets the endpoint binds on first admission.
+
+    The endpoint binds ``<fixture-root>/endpoint/m-<session>/encoded.sock``
+    lazily when it admits a session, so this path only exists after admission.
+    Before admission the readiness signal is the endpoint directory that the
+    endpoint creates after its TCP bind.
+    """
+
+    try:
+        entries = sorted((root / "endpoint").iterdir())
+    except OSError:
+        return []
+    sockets: list[dict[str, Any]] = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        info = socket_info(entry / "encoded.sock")
+        if info.get("socket"):
+            sockets.append(info)
+    return sockets
+
+
 def safe_run_id(raw: str) -> bool:
     return bool(raw) and all(char.isalnum() or char in "._-" for char in raw)
 
@@ -1166,25 +1202,37 @@ class Runner:
             )
         assert self.fixture_root is not None
         host_socket = self.fixture_root / "host" / "host.sock"
-        endpoint_socket = self.fixture_root / "endpoint" / "encoded.sock"
+        endpoint_directory = self.fixture_root / "endpoint"
         host_info = socket_info(host_socket)
-        endpoint_socket_info = socket_info(endpoint_socket)
+        endpoint_directory_info = directory_info(endpoint_directory)
         self.evidence["paths"]["host_endpoint"].update(
             {
                 "host_socket": host_info,
-                "endpoint_socket": endpoint_socket_info,
+                "endpoint_directory": endpoint_directory_info,
+                "endpoint_socket": {
+                    "path": str(endpoint_directory / "encoded.sock"),
+                    "exists": False,
+                    "reason": "the endpoint binds exact-session encoded sockets lazily on first admission",
+                },
                 "root": str(self.fixture_root),
             }
         )
-        for label, info in (("host/host.sock", host_info), ("endpoint/encoded.sock", endpoint_socket_info)):
-            if not info.get("socket"):
-                self.abort(
-                    "LOCAL_IPC_SOCKET_MISSING",
-                    f"required Unix socket is unavailable or not a socket: {label}",
-                    owner="Obscura Host/endpoint owner",
-                    next_action="start the real Host and endpoint and retain their socket paths",
-                    stage="socket_validation",
-                )
+        if not host_info.get("socket"):
+            self.abort(
+                "LOCAL_IPC_SOCKET_MISSING",
+                "required Unix socket is unavailable or not a socket: host/host.sock",
+                owner="Obscura Host/endpoint owner",
+                next_action="start the real Host and retain its host.sock path",
+                stage="socket_validation",
+            )
+        if not endpoint_directory_info.get("directory"):
+            self.abort(
+                "LOCAL_IPC_SOCKET_MISSING",
+                "endpoint socket directory is unavailable: endpoint",
+                owner="Obscura Host/endpoint owner",
+                next_action="start the real endpoint and retain the socket directory it creates after TCP bind",
+                stage="socket_validation",
+            )
         pairing_files: dict[str, Any] = {}
         for name in ("endpoint.txt", "ca.der", "client.der", "key.der"):
             path = self.fixture_root / name
@@ -1243,19 +1291,59 @@ class Runner:
             "passed",
             {
                 "host_socket": host_info,
-                "endpoint_socket": endpoint_socket_info,
+                "endpoint_directory": endpoint_directory_info,
                 "daemon_process_count": len(self.daemon_rows),
             },
         )
         self.prove(
             "local_ipc_sockets",
-            "Host and endpoint Unix socket paths exist as sockets under the fixture root",
+            "the Host Unix socket exists and the endpoint socket directory is present after TCP bind; the exact-session encoded socket is asserted after first admission",
             stage="socket_validation",
         )
         if not self.daemon_rows:
             self.know_unknown("daemon_process_identity", "ps did not expose an Obscura child row; socket evidence remains structural")
         else:
             self.prove("daemon_process_identity", "Obscura child processes were observed under the fixture", stage="socket_validation")
+
+    def validate_admitted_endpoint_socket(self, stage: str) -> list[dict[str, Any]]:
+        """Prove the exact-session encoded socket the endpoint binds on admission.
+
+        The endpoint binds ``<fixture-root>/endpoint/m-<session>/encoded.sock``
+        lazily on first session admission, so this runs once the media path is
+        live instead of before the agent starts.  It is a readiness precondition
+        move, not a removed check: without this socket the endpoint has not
+        admitted a session.
+        """
+
+        if self.fixture_root is None:
+            self.abort(
+                "FIXTURE_ROOT_UNAVAILABLE",
+                "fixture did not provide a root",
+                owner="AgentBrowser fixture owner",
+                next_action="repair fixture ready output",
+                stage=stage,
+            )
+        assert self.fixture_root is not None
+        deadline = time.monotonic() + min(self.args.timeout, 10.0)
+        observed = admitted_endpoint_sockets(self.fixture_root)
+        while not observed and time.monotonic() < deadline:
+            time.sleep(min(self.args.poll, 0.2))
+            observed = admitted_endpoint_sockets(self.fixture_root)
+        self.evidence["paths"]["host_endpoint"]["admitted_endpoint_sockets"] = observed
+        if not observed:
+            self.abort(
+                "LOCAL_IPC_SOCKET_MISSING",
+                f"no exact-session encoded socket under {self.fixture_root / 'endpoint'} after first session admission",
+                owner="Obscura Host/endpoint owner",
+                next_action="confirm the endpoint bound its per-session encoded socket on admission",
+                stage=stage,
+            )
+        self.prove(
+            "admitted_endpoint_socket",
+            "the endpoint bound an exact-session encoded Unix socket on first admission",
+            stage=stage,
+        )
+        return observed
 
     def _observe_daemons(self) -> list[dict[str, Any]]:
         if self.fixture is None:
@@ -1470,6 +1558,7 @@ class Runner:
                 "video_transport",
                 "VIDEO_TRANSPORT_TIMEOUT",
             )
+            admitted_sockets = self.validate_admitted_endpoint_socket("video_transport")
             self.stage_finish(
                 "video_transport",
                 "passed",
@@ -1477,6 +1566,7 @@ class Runner:
                     "snapshot": transport,
                     "frames": len(bridge.frames),
                     "transport_acknowledgements": len(bridge.acked_tickets),
+                    "admitted_endpoint_sockets": admitted_sockets,
                 },
             )
             self.stage_finish(

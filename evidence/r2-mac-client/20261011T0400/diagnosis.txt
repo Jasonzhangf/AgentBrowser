@@ -1,0 +1,7 @@
+Activated screenshot experiment:
+- App was launched from the freshly built integration executable and activated with osascript.
+- Screenshot still shows a blank white browser area with only the native `Connection: idle | Transport: unknown | Path: unknown` label and `卸载 UI 插件` native control.
+- AX tree has no WebView address bar, drawer, or `连接` control. Native button dump shows only `卸载 UI 插件` and three unnamed buttons.
+- stderr contains only two page-originated `MAC_NATIVE_SEND op=status` lines.
+
+This confirms the running app loads some page JavaScript (status commands) but does not render the expected browser chrome. No genuine coordinate click on a visible `连接` control was possible. First gate remains rendered UI mismatch; no connect/BB10/BB11 claim.

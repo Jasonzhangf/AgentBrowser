@@ -25,6 +25,15 @@ sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
 
+def stage_record(**results: str) -> dict[str, dict[str, Any]]:
+    """The stage record shape the runner writes, for tests that build evidence directly."""
+
+    return {
+        name: {"result": result, "started_at": None, "finished_at": None, "details": {}, "first_failure": None}
+        for name, result in results.items()
+    }
+
+
 def check(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -193,7 +202,7 @@ def test_combined_side_evidence_does_not_promote_bridge_ack_to_display() -> None
         "cross_side": {},
         "required_claims": {},
         "unknown": [],
-        "stages": {"mac_reconnect": {"result": "passed"}},
+        "stages": stage_record(correlation="not_run", mac_reconnect="passed"),
     }
     combined._write_json = lambda name, value: None
     combined.build_side_evidence()
@@ -243,7 +252,7 @@ def test_reconnect_frame_correlation_survives_final_disconnect() -> None:
         "cross_side": {},
         "required_claims": {},
         "unknown": [],
-        "stages": {"mac_reconnect": {"result": "not_run"}},
+        "stages": stage_record(correlation="not_run", mac_reconnect="not_run"),
     }
     combined._write_json = lambda name, value: None
 
@@ -440,6 +449,125 @@ def test_result_classification() -> None:
     check(runner.classify_result(None, {"claim": {"status": "proved"}}) == "pass", "complete proved claims may pass")
 
 
+def test_control_epoch_observation_point() -> None:
+    # One observation point: the Host epoch recorded when the Android process
+    # finished and the epoch Android reported at its own completion.
+    matched = runner.same_point_claim(
+        "control_epoch",
+        runner.known(16, ["fixture status at Android completion"]),
+        runner.known(16, ["android-result.json:completionStatus.epoch"]),
+        "android_complete",
+    )
+    check(matched["status"] == "proved", "equal epochs at one observation point must be proved")
+    check(matched["values"] == {"host": 16, "android": 16}, "a proved claim must keep both observed values")
+
+    # The observed dual-run defect: a mid-run Android snapshot against a
+    # post-takeover Host epoch. It stays unproved, never a failed side, and the
+    # raw values survive for the reviewer.
+    stale = runner.same_point_claim(
+        "control_epoch",
+        runner.known(19, ["fixture status"]),
+        runner.known(13, ["android-result.json:statusEvidence.epoch"]),
+        "android_complete",
+    )
+    check(stale["status"] == "unknown", "a stale snapshot comparison must be unknown, not failed")
+    check(stale["raw"] == {"observation": "android_complete", "host": 19, "android": 13}, "raw skew must be preserved")
+    check(
+        runner.classify_result(None, {"host_android_control_epoch_at_android_completion": stale}) == "partial",
+        "unproved epoch evidence must classify as partial, never pass",
+    )
+
+    # A missing side stays unknown with its reason and never fabricates equality.
+    missing = runner.same_point_claim(
+        "control_epoch",
+        runner.known(16, ["fixture status at Android completion"]),
+        runner.unknown("Android result omitted completionStatus"),
+        "android_complete",
+    )
+    check(missing["status"] == "unknown" and "Android" in missing["reason"], "a missing side must stay unknown with its reason")
+    check(
+        runner.classify_result(None, {"host_android_control_epoch_at_android_completion": matched}) == "pass",
+        "a matched observation point may still pass on its own",
+    )
+
+
+def test_operation_receipts_claim_follows_exported_receipts() -> None:
+    receipts = {
+        name: runner.known(True, [f"android-result.json:operationReceipts[{name}]"])
+        for name in ("observe", "takeover", "release")
+    }
+    check(
+        runner.operation_receipts_claim(receipts, "Android instrumentation")["status"] == "proved",
+        "exported succeeded receipts must prove the owner's claim",
+    )
+    check(
+        runner.operation_receipts_claim({"observe": runner.known(True, ["receipt"])}, "Android instrumentation")["status"] == "unknown",
+        "missing receipts must stay unknown",
+    )
+    unproved = dict(receipts, release=runner.unknown("Android result omitted the release receipt"))
+    check(
+        runner.operation_receipts_claim(unproved, "Android instrumentation")["status"] == "unknown",
+        "an unproved receipt must never be upgraded to proved",
+    )
+
+
+def test_claim_set_decision_never_hides_failures() -> None:
+    claims = {name: {"status": "proved", "field": name, "values": {"host": 1, "android": 1}} for name in ("same_session", "three_side_viewport_revision")}
+    claims.update(
+        {name: runner.unknown(f"{name} is not emitted by every side") for name in runner.TRANSPORT_MILESTONE_EXCLUDED_CLAIMS}
+    )
+    decision = runner.claim_set_decision(claims)
+    check(decision["decision"] == "transport_milestone_bar_satisfied", "proved in-bar claims must satisfy the transport milestone bar")
+    check(
+        all(value.get("status") == "unknown" and value.get("reason") for value in decision["excluded_unknown_claims"].values()),
+        "excluded claims must keep their unknown status and raw reason",
+    )
+    check("never reported as pass" in decision["note"], "the decision must state that excluded claims are never reported as pass")
+
+    incomplete = dict(claims, same_session=runner.unknown("no shared session"))
+    check(
+        runner.claim_set_decision(incomplete)["decision"] == "transport_milestone_bar_incomplete",
+        "an unproved in-bar claim must keep the transport milestone bar incomplete",
+    )
+
+    hidden_failure = dict(claims, three_side_frame_ack=runner.failed("side values differ"))
+    check(
+        runner.claim_set_decision(hidden_failure)["decision"] == "failed",
+        "a failed claim must fail the decision even when the claim is excluded",
+    )
+
+
+def test_correlation_stage_is_recorded_as_run() -> None:
+    class Bridge:
+        active_generation = 0
+        acked_tickets: set[Any] = set()
+        frames: list[Any] = []
+
+    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
+    combined.host_statuses = [{"value": {}}]
+    combined.android_result = {}
+    combined.bridge = Bridge()
+    combined.mac_operations = []
+    combined.first_failure = None
+    combined.evidence = {
+        "sides": {},
+        "cross_side": {},
+        "required_claims": {},
+        "unknown": [],
+        "stages": stage_record(**{name: "not_run" for name in runner.STAGES}),
+    }
+    combined._write_json = lambda name, value: None
+    combined.build_side_evidence()
+    stage = combined.evidence["stages"]["correlation"]
+    check(stage["result"] != "not_run", "correlation must be recorded as a run stage, not left not_run")
+    check(stage["started_at"] is not None and stage["finished_at"] is not None, "correlation must record start and finish times")
+    check(stage["details"].get("decision") == combined.evidence["claim_set_decision"]["decision"], "the stage must carry the claim-set decision")
+    check(
+        set(combined.evidence["claim_set_decision"]["excluded_unknown_claims"]) == set(runner.TRANSPORT_MILESTONE_EXCLUDED_CLAIMS),
+        "only the declared claims may be excluded from the transport milestone bar",
+    )
+
+
 def test_write_exclusive() -> None:
     with tempfile.TemporaryDirectory(prefix="m1-dual-write-") as raw:
         root = pathlib.Path(raw)
@@ -558,6 +686,10 @@ def main() -> int:
         test_git_probe_failure_is_distinct,
         test_schema_and_comparison,
         test_result_classification,
+        test_control_epoch_observation_point,
+        test_operation_receipts_claim_follows_exported_receipts,
+        test_claim_set_decision_never_hides_failures,
+        test_correlation_stage_is_recorded_as_run,
         test_write_exclusive,
         test_schema_dry_run_switch,
         test_dry_run,

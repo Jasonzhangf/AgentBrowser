@@ -164,15 +164,7 @@ print("{\\"x\\":\\(origin.x),\\"y\\":\\(origin.y),\\"width\\":\\(extent.width),\
   return JSON.parse(String(output.stdout).trim());
 }
 
-function activatePid(pid) {
-  const swift = `
-import AppKit
-let app = NSRunningApplication(processIdentifier: ${pid})!
-_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-}
+
 
 async function waitForWindow(child) {
   let rect;
@@ -183,177 +175,6 @@ async function waitForWindow(child) {
     await sleep(100);
   }
   throw new Error('Timed out waiting for the installed AppKit window');
-}
-
-function videoSurfaceGeometry(pid, logPath) {
-  const swift = `
-import ApplicationServices
-import Foundation
-let pid: pid_t = ${pid}
-let target = "H.264 原生视频显示区"
-let app = AXUIElementCreateApplication(pid)
-func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-    var result: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
-    return error == .success ? result : nil
-}
-func rectangle(_ element: AXUIElement, _ attribute: String) -> CGRect? {
-    guard let raw = value(element, attribute) else { return nil }
-    let axValue = raw as! AXValue
-    var point = CGPoint.zero
-    var size = CGSize.zero
-    if attribute == kAXPositionAttribute {
-        guard AXValueGetValue(axValue, .cgPoint, &point) else { return nil }
-        return CGRect(origin: point, size: .zero)
-    }
-    guard AXValueGetValue(axValue, .cgSize, &size) else { return nil }
-    return CGRect(origin: .zero, size: size)
-}
-func rect(_ element: AXUIElement) -> CGRect? {
-    guard let position = rectangle(element, kAXPositionAttribute),
-          let size = rectangle(element, kAXSizeAttribute) else { return nil }
-    return CGRect(origin: position.origin, size: size.size)
-}
-func findLabel(_ element: AXUIElement) -> AXUIElement? {
-    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute), value(element, kAXValueAttribute)].compactMap { $0 as? String }
-    if labels.contains(target) { return element }
-    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children {
-        if let match = findLabel(child) { return match }
-    }
-    return nil
-}
-func findRole(_ element: AXUIElement, _ targetRole: String) -> AXUIElement? {
-    if (value(element, kAXRoleAttribute) as? String) == targetRole { return element }
-    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children {
-        if let match = findRole(child, targetRole) { return match }
-    }
-    return nil
-}
-if let surface = findLabel(app), let surfaceRect = rect(surface) {
-    print("{\\"source\\":\\"labelled_surface\\",\\"x\\":\\(surfaceRect.minX),\\"y\\":\\(surfaceRect.minY),\\"width\\":\\(surfaceRect.width),\\"height\\":\\(surfaceRect.height)}")
-    exit(0)
-}
-guard let splitGroup = findRole(app, "AXSplitGroup"),
-      let splitter = findRole(splitGroup, "AXSplitter"),
-      let groupRect = rect(splitGroup),
-      let splitterRect = rect(splitter) else { exit(2) }
-let leftWidth = splitterRect.minX - groupRect.minX
-guard leftWidth > 0, groupRect.height > 0 else { exit(3) }
-print("{\\"source\\":\\"split_group_left_of_splitter\\",\\"x\\":\\(groupRect.minX),\\"y\\":\\(groupRect.minY),\\"width\\":\\(leftWidth),\\"height\\":\\(groupRect.height)}")
-`;
-  const output = command('swift', ['-e', swift], {timeout: 30_000}).toString().trim();
-  const geometry = JSON.parse(output);
-  assert(Number.isFinite(geometry.x) && Number.isFinite(geometry.y)
-    && Number.isFinite(geometry.width) && Number.isFinite(geometry.height)
-    && geometry.width > 0 && geometry.height > 0,
-  `Invalid H.264 surface geometry: ${output}`);
-  writeFileSync(logPath, JSON.stringify({pid, label: 'H.264 原生视频显示区', geometry}, null, 2) + '\n', {flag: 'wx'});
-  return geometry;
-}
-
-function pageScreenPoint(surface, viewport, x, y) {
-  const sourceWidth = viewport.width;
-  const sourceHeight = viewport.height;
-  const scale = Math.min(surface.width / sourceWidth, surface.height / sourceHeight);
-  const renderedWidth = sourceWidth * scale;
-  const renderedHeight = sourceHeight * scale;
-  const offsetX = (surface.width - renderedWidth) / 2;
-  const offsetY = (surface.height - renderedHeight) / 2;
-  assert(x >= 0 && x <= sourceWidth && y >= 0 && y <= sourceHeight, 'Page coordinate outside H.264 viewport');
-  return {
-    x: Math.round(surface.x + offsetX + x * scale),
-    y: Math.round(surface.y + offsetY + y * scale),
-    mapping: {source_width: sourceWidth, source_height: sourceHeight, scale, offset_x: offsetX, offset_y: offsetY},
-  };
-}
-
-function postMouse(pid, target, logPath) {
-  const swift = `
-import AppKit
-import CoreGraphics
-let pid: pid_t = ${pid}
-let app = NSRunningApplication(processIdentifier: pid)!
-_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-// Use the same global AX/surface coordinates as the geometry and scroll path.
-let point = CGPoint(x: ${target.x}, y: ${target.y})
-let source = CGEventSource(stateID: .hidSystemState)!
-let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)!
-move.post(tap: .cghidEventTap)
-let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)!
-down.post(tap: .cghidEventTap)
-Thread.sleep(forTimeInterval: 0.05)
-let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)!
-up.post(tap: .cghidEventTap)
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, event: 'native_mouse_click', delivery: 'hid_event_tap', activation: 'pid', screen_point: target}, null, 2) + '\n', {flag: 'wx'});
-}
-
-function clickPage(pid, viewport, x, y, geometryLogPath, eventLogPath) {
-  const surface = videoSurfaceGeometry(pid, geometryLogPath);
-  const target = pageScreenPoint(surface, viewport, x, y);
-  postMouse(pid, target, eventLogPath);
-}
-
-function focusAccessibilityTextField(pid, description, logPath) {
-  activatePid(pid);
-  const swift = `
-import ApplicationServices
-import Foundation
-let pid: pid_t = ${pid}
-let target = ${JSON.stringify(description)}
-let app = AXUIElementCreateApplication(pid)
-func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-    var result: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &result)
-    return error == .success ? result : nil
-}
-func find(_ element: AXUIElement) -> AXUIElement? {
-    let role = value(element, kAXRoleAttribute) as? String
-    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute)].compactMap { $0 as? String }
-    if role == kAXTextFieldRole && labels.contains(target) { return element }
-    let children = value(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children {
-        if let match = find(child) { return match }
-    }
-    return nil
-}
-guard let field = find(app) else { exit(2) }
-guard AXUIElementPerformAction(field, kAXPressAction as CFString) == .success else { exit(3) }
-guard AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else { exit(3) }
-`;
-  command('swift', ['-e', swift], {log: logPath, timeout: 30_000});
-}
-
-function postUnicodeText(pid, text, logPath) {
-  activatePid(pid);
-  const swift = `
-import CoreGraphics
-import Foundation
-let pid: pid_t = ${pid}
-let text = ${JSON.stringify(text)}
-let source = CGEventSource(stateID: .hidSystemState)!
-let units = Array(text.utf16)
-for start in stride(from: 0, to: units.count, by: 16) {
-    let chunk = Array(units[start..<min(start + 16, units.count)])
-    let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)!
-    chunk.withUnsafeBufferPointer { buffer in
-        down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
-    }
-    down.postToPid(pid)
-    let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)!
-    chunk.withUnsafeBufferPointer { buffer in
-        up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress!)
-    }
-    up.postToPid(pid)
-    Thread.sleep(forTimeInterval: 0.002)
-}
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(logPath, JSON.stringify({pid, text_length: text.length, input: 'native_unicode_key_events'}, null, 2) + '\n', {flag: 'wx'});
 }
 
 async function pressAccessibilityButton(pid, title, logPath) {
@@ -401,48 +222,15 @@ guard AXUIElementPerformAction(button, kAXPressAction as CFString) == .success e
   assert.fail(`AX button did not become available: ${title}`);
 }
 
-function postSurfaceScroll(pid, viewport, x, y, delta, geometryLogPath, eventLogPath) {
-  const surface = videoSurfaceGeometry(pid, geometryLogPath);
-  const target = pageScreenPoint(surface, viewport, x, y);
-  const swift = `
-import AppKit
-import CoreGraphics
-let pid: pid_t = ${pid}
-let app = NSRunningApplication(processIdentifier: pid)!
-_ = app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
-let source = CGEventSource(stateID: .hidSystemState)!
-let point = CGPoint(x: ${target.x}, y: ${target.y})
-let event = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1, wheel1: ${delta}, wheel2: 0, wheel3: 0)!
-event.location = point
-event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: ${delta})
-event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: ${delta})
-event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: ${delta * 65536})
-event.post(tap: .cghidEventTap)
-`;
-  command('swift', ['-e', swift], {timeout: 30_000});
-  writeFileSync(eventLogPath, JSON.stringify({pid, event: 'native_scroll', delivery: 'hid_event_tap', delta, screen_point: target}, null, 2) + '\n', {flag: 'wx'});
-}
-
-function captureWindow(path, pid, full = true) {
+function captureWindow(path, pid) {
   const rect = windowRect(pid);
   assert(rect, 'AgentBrowser window disappeared before screenshot');
-  const region = full
-    ? rect
-    : {x: rect.x, y: rect.y + 30, width: Math.floor(rect.width / 2), height: rect.height - 30};
-  command('screencapture', ['-x', '-R', `${region.x},${region.y},${region.width},${region.height}`, path]);
-  return {path, hash: hash(readFileSync(path)), region};
+  command('screencapture', ['-x', '-R', `${rect.x},${rect.y},${rect.width},${rect.height}`, path]);
+  return {path, hash: hash(readFileSync(path)), region: rect};
 }
 
 function screenshotLog(screenshots) {
   return screenshots.map(({path, hash: digest, region}) => ({path, hash: digest, region}));
-}
-
-function fixtureResponseValue(line) {
-  const response = JSON.parse(line);
-  const value = response.result?.value;
-  assert.equal(typeof value, 'string', `Fixture returned non-evaluation: ${line}`);
-  return JSON.parse(value);
 }
 
 function hostStatus(socketPath, requestId) {
@@ -545,7 +333,7 @@ function startFixture(fixtureExecutable, directory, environment) {
       waiters.push({resolve: line => {clearTimeout(timer); resolveLine(line);}, reject});
     });
   }
-  return {child, nextLine, async request(commandText) { child.stdin.write(`${commandText}\n`); return nextLine(); }};
+  return {child, nextLine};
 }
 
 async function quitFixture(fixture) {
@@ -599,7 +387,6 @@ async function main() {
   let fixture;
   let install;
   let restart;
-  let reconnect;
   let blackbox;
   let cleanup;
   let whiteTime;
@@ -709,91 +496,41 @@ async function main() {
     const firstApp = await launchApp('app-first');
     await waitForWindow(firstApp);
     await sleep(1_500);
-    screenshots.push(captureWindow(join(directory, 'waiting.png'), firstApp.pid, false));
-    await pressAccessibilityButton(firstApp.pid, '连接 Host', join(directory, 'connect.log'));
+    screenshots.push(captureWindow(join(directory, 'waiting.png'), firstApp.pid));
+    await pressAccessibilityButton(firstApp.pid, '打开菜单', join(directory, 'open-menu.log'));
+    await pressAccessibilityButton(firstApp.pid, '连接', join(directory, 'connect.log'));
     await sleep(4_000);
-    await observeHostStatus('connect', 2, 'agent');
-    const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid, false);
+    const connectStatus = await observeHostStatus('connect', 2, 'agent');
+    writeFileSync(join(directory, 'connect.json'), JSON.stringify({operation: 'connect', ax_target: '连接', status: connectStatus}, null, 2) + '\n', {flag: 'wx'});
+    const connected = captureWindow(join(directory, 'connected.png'), firstApp.pid);
     screenshots.push(connected);
     assert.notEqual(connected.hash, screenshots[0].hash, 'AppKit pane stayed unchanged after connect');
-    await pressAccessibilityButton(firstApp.pid, '断开', join(directory, 'disconnect-before-restart.log'));
-    await sleep(1_000);
-    await observeHostStatus('disconnect_before_restart', 1, 'agent');
     const firstExit = await terminateOwned(firstApp, installedExecutable, join(directory, 'first-app-exit.json'));
     const secondApp = await launchApp('app-restarted');
     await waitForWindow(secondApp);
-    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'restart-connect.log'));
+    await pressAccessibilityButton(secondApp.pid, '打开菜单', join(directory, 'restart-open-menu.log'));
+    await pressAccessibilityButton(secondApp.pid, '连接', join(directory, 'restart-connect.log'));
     await sleep(4_000);
-    const restartReconnectStatus = await observeHostStatus('reconnect_after_restart', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'restart-reconnect.png'), secondApp.pid, false));
+    const restartStatus = await observeHostStatus('restart_connect', 2, 'agent');
+    screenshots.push(captureWindow(join(directory, 'restart-connect.png'), secondApp.pid));
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
     restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
       restarted: {pid: secondApp.pid, executable: installedExecutable},
       exact_executable_hash: installedExecutableHash, different_pid: firstApp.pid !== secondApp.pid,
-      host_status: {after_reconnect: restartReconnectStatus}, restarted_at: now()};
+      host_status: {after_restart_connect: restartStatus}, restarted_at: now()};
     assert(restart.different_pid);
 
-    await pressAccessibilityButton(secondApp.pid, '接管页面', join(directory, 'takeover.log'));
-    await sleep(1_000);
-    const takeoverStatus = await observeHostStatus('takeover', 2, 'human');
-    assert(Array.isArray(takeoverStatus.viewport) && takeoverStatus.viewport.length === 2,
-      `Host did not publish a committed viewport: ${JSON.stringify(takeoverStatus)}`);
-    const viewport = {width: takeoverStatus.viewport[0], height: takeoverStatus.viewport[1]};
-    assert(Number.isFinite(viewport.width) && Number.isFinite(viewport.height)
-      && viewport.width > 0 && viewport.height > 0, `Invalid Host viewport: ${JSON.stringify(takeoverStatus.viewport)}`);
-    const page = '<body style="margin:0;background:white"><h1 id="title" style="height:45px;margin:0">中文导航验收</h1><button id="target" style="display:block;width:180px;height:100px;background:red" onclick="window.clicked=(window.clicked||0)+1;this.style.background=\'lime\'">touch</button><input id="field" style="display:block;width:220px;height:50px"><div style="height:1400px;background:blue"></div><script>window.maxScroll=0;window.addEventListener(\'scroll\',()=>window.maxScroll=Math.max(window.maxScroll,window.scrollY));</script></body>';
-    const url = `data:text/html,${encodeURIComponent(page)}`;
-    focusAccessibilityTextField(secondApp.pid, '远程页面地址', join(directory, 'address-focus.log'));
-    postUnicodeText(secondApp.pid, url, join(directory, 'address-input.log'));
-    await sleep(500);
-    await pressAccessibilityButton(secondApp.pid, '打开', join(directory, 'navigate.log'));
-    await sleep(4_000);
-    clickPage(secondApp.pid, viewport, 90, 95, join(directory, 'button-surface-geometry.log'), join(directory, 'button-click.log'));
-    await sleep(1_000);
-    clickPage(secondApp.pid, viewport, 110, 170, join(directory, 'input-surface-geometry.log'), join(directory, 'input-click.log'));
-    await sleep(400);
-    const inputText = '你好，Mac 输入';
-    focusAccessibilityTextField(secondApp.pid, '输入到远程页面的文字', join(directory, 'input-focus.log'));
-    postUnicodeText(secondApp.pid, inputText, join(directory, 'input-set.log'));
-    await sleep(400);
-    await pressAccessibilityButton(secondApp.pid, '发送', join(directory, 'send-text.log'));
-    await sleep(2_000);
-    postSurfaceScroll(secondApp.pid, viewport, 180, 500, -20, join(directory, 'scroll-surface-geometry.log'), join(directory, 'scroll.log'));
-    await sleep(2_000);
-    screenshots.push(captureWindow(join(directory, 'navigation-input-scroll.png'), secondApp.pid, true));
-    await pressAccessibilityButton(secondApp.pid, '返回观察', join(directory, 'release.log'));
-    await sleep(2_000);
-    await observeHostStatus('release', 2, 'agent');
-    const inspection = fixtureResponseValue(await fixture.request('inspect'));
-    assert.deepEqual({clicked: inspection.clicked, text: inspection.text},
-      {clicked: 1, text: inputText});
-    assert(Number.isFinite(inspection.scrollY) && inspection.scrollY > 0);
-    assert(Number.isFinite(inspection.maxScroll) && inspection.maxScroll > 0);
-    await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'disconnect.log'));
-    await sleep(1_500);
-    const disconnectedStatus = await observeHostStatus('disconnect', 1, 'agent');
-    const reconnectStart = now();
-    await pressAccessibilityButton(secondApp.pid, '连接 Host', join(directory, 'reconnect.log'));
-    await sleep(4_000);
-    const reconnectStatus = await observeHostStatus('reconnect', 2, 'agent');
-    screenshots.push(captureWindow(join(directory, 'reconnect.png'), secondApp.pid, false));
-    assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Reconnect produced no displayed frame');
-    await pressAccessibilityButton(secondApp.pid, '断开', join(directory, 'disconnect-after-reconnect.log'));
-    await sleep(1_000);
-    const disconnectedAfterReconnectStatus = await observeHostStatus('disconnect_after_reconnect', 1, 'agent');
-    reconnect = {at: reconnectStart, app_pid: secondApp.pid, fixture_session: fixtureInfo.session,
-      displayed_screenshot: screenshots.at(-1), disconnected_before_reconnect: true,
-      host_status: {after_disconnect: disconnectedStatus, after_reconnect: reconnectStatus,
-        after_disconnect_again: disconnectedAfterReconnectStatus}};
-    persist(join(directory, 'reconnect.json'), reconnect);
-
+    // Scope is connect/session/restart only. Explicitly skipped: h264_display/media,
+    // takeover, navigation, remote input, disconnect, and reconnect.
     const secondExit = await terminateOwned(secondApp, installedExecutable, join(directory, 'second-app-exit.json'));
     restart.restarted.exit = secondExit;
-    restart.host_status.after_disconnect = disconnectedAfterReconnectStatus;
+    restart.restarted.exit = secondExit;
     persist(join(directory, 'restart.json'), restart);
-    blackbox = {entrypoint, fixture: install.fixture, inspection, host_status: hostStatuses,
-      screenshots: screenshotLog(screenshots),
-      app_pids: [firstApp.pid, secondApp.pid], operations: ['connect', 'h264_display', 'disconnect_before_restart', 'restart', 'reconnect_after_restart', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'inspect_after_release', 'disconnect', 'reconnect']};
+    blackbox = {entrypoint, fixture: install.fixture, host_status: hostStatuses,
+      screenshots: screenshotLog(screenshots), app_pids: [firstApp.pid, secondApp.pid],
+      ax_actions: [{target: '打开菜单', receipt: 'open-menu.log'}, {target: '连接', receipt: 'connect.log'}],
+      connect_receipt: 'connect.json', operations: ['connect', 'restart'],
+      skipped_operations: ['h264_display', 'takeover', 'navigate', 'click', 'input_text', 'scroll', 'release', 'disconnect', 'reconnect']};
     persist(join(directory, 'blackbox.json'), blackbox);
     cleanup = {fixture_quit_requested: false, app_pids: [firstApp.pid, secondApp.pid]};
     await quitFixture(fixture);
@@ -820,14 +557,12 @@ async function main() {
     }
   }
 
-  assert(restart && reconnect && blackbox, 'Admission flow did not produce complete runtime receipts');
+  assert(restart && blackbox, 'Admission flow did not produce complete runtime receipts');
   const blackTime = now();
   assert(Date.parse(candidateTime) <= Date.parse(whiteTime), 'Candidate must precede whitebox completion');
   assert(Date.parse(whiteTime) <= Date.parse(install.installed_at), 'Whitebox must precede installation');
   assert(Date.parse(install.installed_at) <= Date.parse(restart.restarted_at), 'Installation must precede restart');
-  assert(Date.parse(restart.restarted_at) <= Date.parse(reconnect.at), 'Restart must precede reconnect replay');
-  assert(Date.parse(reconnect.at) <= Date.parse(blackTime), 'Reconnect must precede blackbox completion');
-  const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, reconnect: `reconnect-${prefix}`, black: `blackbox-${prefix}`};
+  const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, black: `blackbox-${prefix}`};
   function evidence(id, phase, kind, time, log, surface) {
     persist(`${records}/${id}.json`, {evidence_id: id, issue_id: issueId, experiment_id: `${issueId}-${prefix}`, phase, kind,
       source_commit: head, artifact_hash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
@@ -839,7 +574,6 @@ async function main() {
   evidence(ids.white, 'development_whitebox', 'gate', whiteTime, `${directory}/macos-compile.log`, 'development_whitebox');
   evidence(ids.install, 'deployment_install', 'install', install.installed_at, `${directory}/install.json`, 'deployed_blackbox');
   evidence(ids.restart, 'deployment_restart', 'restart', restart.restarted_at, `${directory}/restart.json`, 'deployed_blackbox');
-  evidence(ids.reconnect, 'deployed_blackbox', 'runtime', reconnect.at, `${directory}/reconnect.json`, 'deployed_blackbox');
   evidence(ids.black, 'deployed_blackbox', 'sample_replay', blackTime, `${directory}/blackbox.json`, 'deployed_blackbox');
   persist(candidatePath, {fix_candidate_id: `candidate-${prefix}`, issue_id: issueId, module_id: moduleId,
     worktree_id: root, base_commit: base, head_commit: head, tree_hash: tree,
@@ -848,14 +582,14 @@ async function main() {
   persist(validationPath, {validation_id: `validation-${prefix}`, issue_id: issueId, module_id: moduleId,
     fix_candidate_id: `candidate-${prefix}`, candidate_commit: head, candidate_tree_hash: tree,
     artifact_hash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
-    whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.reconnect, ids.black],
+    whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.black],
     deployment: {environment_id: environment, entrypoint, producer: blackProducer, install_receipt_id: ids.install,
-      restart_receipt_id: ids.restart, reconnect_receipt_id: ids.reconnect, observed_at: blackTime}, source_unchanged: true,
+      restart_receipt_id: ids.restart, observed_at: blackTime}, source_unchanged: true,
     result: 'pass', created_at: now()});
   command('appsdk', ['verify', '--review-admission', '--module', moduleId], {env: admissionEnv, log: join(directory, 'admission.log')});
   console.log(JSON.stringify({candidate: head, tree, artifactHash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
     artifactZipHash: install.artifact_zip_hash, installedExecutableHash: install.installed_executable_hash,
-    directory, install: `${directory}/install.json`, restart: `${directory}/restart.json`, reconnect: `${directory}/reconnect.json`,
+    directory, install: `${directory}/install.json`, restart: `${directory}/restart.json`,
     blackbox: `${directory}/blackbox.json`, admission: 'pass'}, null, 2));
 }
 

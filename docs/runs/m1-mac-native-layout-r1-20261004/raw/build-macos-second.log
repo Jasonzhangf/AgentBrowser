@@ -1,0 +1,3 @@
+   Compiling agentbrowser-macos-bridge v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-mac-native-layout-r1-20261004/apps/macos/connection-bridge)
+    Finished `release` profile [optimized] target(s) in 13.66s
+cp: target/release/agentbrowser-macos-bridge: No such file or directory

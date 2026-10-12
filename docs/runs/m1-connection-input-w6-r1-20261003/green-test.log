@@ -1,0 +1,29 @@
+   Compiling agentbrowser-connection v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-connection-input-w6-r1-20261003/packages/client-connection)
+    Finished `release` profile [optimized] target(s) in 7.06s
+────────────
+ Nextest run ID 747961fe-30b3-45b7-8308-56d1d46ac89a with nextest profile: default
+    Starting 22 tests across 6 binaries (1 test skipped)
+        PASS [   0.041s] ( 1/22) agentbrowser-connection relay::tests::generation_reservation_is_unique_and_published_in_order
+        PASS [   0.038s] ( 2/22) agentbrowser-connection::framing rejects_session_encoder_and_revision_changes_without_poisoning_last_frame
+        PASS [   0.043s] ( 3/22) agentbrowser-connection::framing rejects_unbounded_and_mismatched_network_packets
+        PASS [   0.043s] ( 4/22) agentbrowser-connection relay::tests::config_rejects_plaintext_and_embedded_credentials
+        PASS [   0.043s] ( 5/22) agentbrowser-connection::framing encoder_unavailable_is_typed_terminal_error_while_unavailable_recovers
+        PASS [   0.042s] ( 6/22) agentbrowser-connection relay::tests::device_public_key_uses_ed25519_spki
+        PASS [   0.043s] ( 7/22) agentbrowser-connection relay::tests::media_and_control_limits_are_separate
+        PASS [   0.044s] ( 8/22) agentbrowser-connection relay::tests::relay_control_wire_is_v0_and_legacy_auth_is_rejected
+        PASS [   0.046s] ( 9/22) agentbrowser-connection transport::tests::action_is_serviced_while_video_receive_is_pending
+        PASS [   0.045s] (10/22) agentbrowser-connection transport::tests::encoder_unavailable_marker_ends_worker_with_typed_failure
+        PASS [   0.061s] (11/22) agentbrowser-connection transport::tests::lost_mutation_reply_is_unknown_without_retry
+        PASS [   0.061s] (12/22) agentbrowser-connection transport::tests::mismatched_read_reply_is_protocol_failure
+        PASS [   0.063s] (13/22) agentbrowser-connection::framing validates_raw_dimensions_padding_and_payload_bounds
+        PASS [   0.075s] (14/22) agentbrowser-connection webrtc::tests::peer_guard_releases_udp_driver_after_setup_cancellation
+        PASS [   0.149s] (15/22) agentbrowser-connection relay::tests::secure_frame_reader_preserves_partial_frames_after_cancellation
+        PASS [   0.705s] (16/22) agentbrowser-connection::endpoint real_host_typed_editing_lease_and_fencing
+        PASS [   0.808s] (17/22) agentbrowser-connection::endpoint real_host_observe_input_and_reconnect
+        PASS [   0.835s] (18/22) agentbrowser-connection::relay host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds
+        PASS [   0.854s] (19/22) agentbrowser-connection::relay host_role_registers_publishes_and_consumes_side_one_offer
+        PASS [   0.875s] (20/22) agentbrowser-connection::relay authenticated_relay_directory_tunnel_isolated_and_generation_fenced
+        PASS [   0.890s] (21/22) agentbrowser-connection::relay secure_relay_tunnel_binds_inner_mtls_and_tunnel_hello
+        PASS [   2.906s] (22/22) agentbrowser-connection::webrtc real_host_webrtc_observe_takeover_input_and_reconnect
+────────────
+     Summary [   2.911s] 22 tests run: 22 passed, 1 skipped

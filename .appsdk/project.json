@@ -56,6 +56,7 @@
       "contracts/records/merge-queue-state.schema.json",
       "contracts/records/integration-record.schema.json",
       "contracts/records/mainline-receipt-record.schema.json",
+      "contracts/records/collab-live-closure-record.schema.json",
       "contracts/records/merge-record.schema.json",
       "contracts/records/promotion-record.schema.json",
       "contracts/records/regression-report.schema.json",
@@ -421,16 +422,16 @@
         "scripts/build-macos.sh",
         "scripts/build-macos-ui.mjs",
         "scripts/macos-admission.mjs",
-        "docs/macos-client.md"
+        "docs/macos-client.md",
+        "scripts/macos-admission-scope.test.mjs"
       ],
       "regression": {
         "allow_skipped": false,
         "command": {
+          "program": "node",
           "args": [
-            "scripts/build-macos.sh",
-            "build"
+            "scripts/macos-admission-scope.test.mjs"
           ],
-          "program": "bash",
           "working_directory": "."
         },
         "input_paths": [
@@ -444,9 +445,11 @@
           "packages/client-domain/**",
           "Cargo.toml",
           "Cargo.lock",
-          "package-lock.json"
+          "package-lock.json",
+          "scripts/macos-admission-scope.test.mjs",
+          "scripts/macos-admission.mjs"
         ],
-        "minimum_test_count": 1,
+        "minimum_test_count": 2,
         "ordinary_mode_after_freeze": "disabled",
         "reenable_on": [
           "source_change",
@@ -468,6 +471,6 @@
     "bundle_manifest": ".appsdk/contracts/sdk-bundle.manifest.json",
     "name": "appsdk",
     "resource_record": ".appsdk/sdk-resources.json",
-    "version": "0.1.6"
+    "version": "0.1.0010"
   }
 }

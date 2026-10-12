@@ -1,0 +1,104 @@
+Activity Resolver Table:
+  Non-Data Actions:
+      android.intent.action.MAIN:
+        6609aef com.agentbrowser.probe/.MainActivity filter a30f9fc
+          Action: "android.intent.action.MAIN"
+          Category: "android.intent.category.LAUNCHER"
+
+Domain verification status:
+
+Key Set Manager:
+  [com.agentbrowser.probe]
+      Signing KeySets: 63
+
+Packages:
+  Package [com.agentbrowser.probe] (f5efd9a):
+    appId=10227
+    pkg=Package{d54356e com.agentbrowser.probe}
+    codePath=/data/app/~~hymMi0KLcFuCDxshftwoOg==/com.agentbrowser.probe-RNn80t3fMUXyfRPXYIi5fQ==
+    resourcePath=/data/app/~~hymMi0KLcFuCDxshftwoOg==/com.agentbrowser.probe-RNn80t3fMUXyfRPXYIi5fQ==
+    legacyNativeLibraryDir=/data/app/~~hymMi0KLcFuCDxshftwoOg==/com.agentbrowser.probe-RNn80t3fMUXyfRPXYIi5fQ==/lib
+    extractNativeLibs=false
+    primaryCpuAbi=arm64-v8a
+    secondaryCpuAbi=null
+    cpuAbiOverride=null
+    versionCode=1 minSdk=30 targetSdk=36
+    minExtensionVersions=[]
+    versionName=0.1.0-probe
+    hiddenApiEnforcementPolicy=2
+    usesNonSdkApi=false
+    splits=[base]
+    apkSigningVersion=2
+    flags=[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    privateFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ALLOW_AUDIO_PLAYBACK_CAPTURE PRIVATE_FLAG_ALLOW_NATIVE_HEAP_POINTER_TAGGING ]
+    forceQueryable=false
+    pageSizeCompat=0
+    scannedAsStoppedSystemApp=false
+    supportsScreens=[small, medium, large, xlarge, resizeable, anyDensity]
+    timeStamp=2026-10-04 04:27:12
+    lastUpdateTime=2026-10-04 04:27:12
+    installerPackageName=null
+    installerPackageUid=-1
+    initiatingPackageName=com.android.shell
+    originatingPackageName=null
+    packageSource=1
+    appMetadataFilePath=null
+    appMetadataSource=0
+    signatures=PackageSignatures{f48fbc6 version:2, signatures:[10bb648d], past signatures:[]}
+    installPermissionsFixed=false
+    pkgFlags=[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    privatePkgFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ALLOW_AUDIO_PLAYBACK_CAPTURE PRIVATE_FLAG_ALLOW_NATIVE_HEAP_POINTER_TAGGING ]
+    apexModuleName=null
+    requested permissions:
+      android.permission.INTERNET
+    install permissions:
+      android.permission.INTERNET: granted=true
+    User 0: ceDataInode=368662 deDataInode=65561 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false quarantined=false
+      installReason=0
+      dataDir=/data/user/0/com.agentbrowser.probe
+      firstInstallTime=2026-10-03 15:58:37
+      uninstallReason=0
+      overlay paths:
+        /product/overlay/NavigationBarModeGestural/NavigationBarModeGesturalOverlay.apk
+        /data/resource-cache/com.android.systemui-neutral-Sbx0.frro
+        /data/resource-cache/com.android.systemui-accent-8ZMe.frro
+        /data/resource-cache/com.android.systemui-dynamic-W2ho.frro
+      legacy overlay paths:
+        /product/overlay/NavigationBarModeGestural/NavigationBarModeGesturalOverlay.apk
+      gids=[3003]
+      runtime permissions:
+
+Queries:
+  system apps queryable: false
+  queries via forceQueryable:
+  queries via package name:
+    com.agentbrowser.probe:
+      com.agentbrowser.probe.test
+    com.agentbrowser.probe.test:
+      com.agentbrowser.probe
+  queries via component:
+    com.google.android.as:
+      com.agentbrowser.probe
+    com.google.android.settings.intelligence:
+      com.agentbrowser.probe
+    com.google.android.apps.accessibility.voiceaccess:
+      com.agentbrowser.probe
+  queryable via interaction:
+    User 0:
+      [android,com.android.settings,com.android.providers.settings,com.android.inputdevices,com.android.dynsystem,com.android.emulator.multidisplay,com.android.location.fused,com.android.DeviceAsWebcam,com.android.server.telecom,com.android.keychain,com.android.localtransport]:
+        com.agentbrowser.probe
+      com.google.android.gms:
+        com.agentbrowser.probe
+      com.google.android.webview:
+        com.agentbrowser.probe
+      com.osfans.trime:
+        com.agentbrowser.probe
+      com.agentbrowser.probe:
+        com.google.android.webview
+  queryable via uses-library:
+
+Dexopt state:
+  [com.agentbrowser.probe]
+    path: /data/app/~~hymMi0KLcFuCDxshftwoOg==/com.agentbrowser.probe-RNn80t3fMUXyfRPXYIi5fQ==/base.apk
+      arm64: [status=run-from-apk] [reason=unknown] [primary-abi]
+        [location is error]

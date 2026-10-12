@@ -1,0 +1,10 @@
+Source inspection:
+- packages/ui-plugins/main.tsx:613-644 boot creates root/slot/footer, then awaits createKernel(port,mount).
+- packages/ui-kernel/kernel.ts:10-32 createKernel requires port, provides `probe`, registers browser-chrome plugin, starts context, and calls mount in plugin apply.
+- main.tsx:667 boot catch writes only the footer/root failure text.
+
+Instrumented run:
+- stderr: `MAC_NATIVE_SEND op=status raw={"op":"status"}` twice.
+- No UI_KERNEL trace, no UI_BOOT trace, and no pageerror output reached native stderr.
+- Screenshot remains blank except footer plugin text.
+- Therefore generated app.js currently does not contain the new kernel logs or boot catch changes, despite source edits; build-macos-ui.mjs likely builds a different entry/does not include main.tsx changes. This is the packaging/build ownership break to resolve next.

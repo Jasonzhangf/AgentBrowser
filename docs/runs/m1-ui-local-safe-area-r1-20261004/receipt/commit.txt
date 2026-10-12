@@ -1,0 +1,7 @@
+commit=b038277ee538c8b62f19c980964952a2b67ba085
+tree=e13a14db07e8fa076b5bd3ce5eb9d8a91dc085f3
+parent=1260172a5aace4cfdb1b1ad1d1e2d4f76b12adbc
+branch=codex/m1-ui-local-safe-area-r1-20261004
+subject=fix(ui): consume typed safe area in local chrome
+product_css_blob=bcddc0f864a431fcd2fd017e42898b1d3afa9ced
+installed_apk_sha256=941df5ccbc8680e0161034f938a6e3f10ab1ec642840d7ecc62241e3a290d597

@@ -1,0 +1,51 @@
+== identity ==
+branch=codex/m1-ui-receipt-geometry-r3-20261004
+base=ba4472104f1b8e887b61e3a7d68bbb9b4540944a
+base_tree=981514f5ba1dd649f623cf49f2579f674be93ffd
+product_sha=86d1a7ffd2e7b1cd04c202234f0fddae49810a94
+product_tree=8b9f9ad22784effd280fc0a4b3e57387f7b277bf
+
+== npm run typecheck ==
+exit=0
+
+== npm test ==
+# tests 28
+# pass 28
+# fail 0
+exit=0
+
+== npm run build:ui ==
+exit=0
+
+== w4-build-ui-consumer ==
+{"output":"/tmp/r3-consumer-final"}
+exit=0
+
+== code-identical mapping (committed product 86d1a7f rebuild vs E2E bundle) ==
+all six files byte-identical:
+app.js b8b8ee4d22eb4c10160b6f0f7e2c073d17e12acd9d544e7d78b81f7adb8ce9d0
+app.css 4a6aae033b5af29b04cdec27f4cf9d10bb9798f78b2121c36b11f295f0d976f7
+consumer.js 68b664a867eec41a3eb1b16eb4d902b7fe20c63eb04667d9fc4e7105b862a049
+consumer-frame.js 8b11ce05550cf6392501dab8a876daea5ef144be774558e85e0af3003370dc6d
+consumer.html 760bb2654e621dc390e3dc62729271b23881c523662e23a076d0e557141781c5
+ui-frame.html 27efac6be2b7286afcd625fc88bed8e9f89191b0a642dacb5ca41d537d5059d2
+
+== source sha256 (product 86d1a7f) ==
+7786c9d413a2ad91a9a2732acdfbadfd4555ec8f3d0e942e93ee39cc4d56ade4  packages/ui-plugins/main.tsx
+80d3c72516e39c66e49722143df62bae47e78607f3d1736fcb39c9ec68171895  packages/ui-plugins/consumer-frame.ts
+950f8afeccccbdb12d52d453f036505bc45d8c788e257a431f416b8be411e838  packages/ui-plugins/browser-consumer.tsx
+25bfb5edd987eeff66c2837b94780251e24f91a29eeccea83a05618485f51216  packages/ui-plugins/ui-contract.test.ts
+
+== raw + tooling sha256 ==
+4f5cb58fa074ed887b514625015551a7d55726dfeac27590d18a52aea63c3856  raw/receipt-green.json
+6dd3b74883e01cb343f8e7dab74b4a87149230a56bc5b9ebf990a4f89abd0d17  raw/receipt-red.json (immutable r3 red)
+8d25becb93c3356d1050678684048c5d032bca54256bbef6ed5d17681cb501d6  blackbox/receipt-geometry-e2e.mjs
+ea0d0aecb3088eb8f6e395c26af1d0a5c57f02337591063465bbdaa5b370d961  blackbox/params.json
+
+== green public-UI E2E ==
+owned server 127.0.0.1:63744 pid 30303; stopped after capture, listener absent
+owned Ego TaskSpace 124; finish keep=[]; closedManagedLabels=[p1]; preservedUnmanagedCount=0
+viewports: desktop 1280x800, phone 390x844 (Emulation.setDeviceMetricsOverride)
+assertions: 80/80 pass; failure=null; script exit=0
+desktop applied-open + STATUS_FAILED: drawerOpen=true presentation=browsing safeTop=24px safeBottom=24px drawerRect.top=24 drawerRect.bottom=513.5 (viewport 537)
+phone   applied-open + STATUS_FAILED: drawerOpen=true presentation=browsing safeTop=24px safeBottom=24px drawerRect.top=24 drawerRect.bottom=293 (viewport 317)

@@ -1,8 +1,8 @@
 //! JNI owns native handle lifetime and displayed-frame acknowledgement only.
 //! TLS, browser ABI and control arbitration stay in their existing owners.
 use std::{collections::{HashMap,VecDeque}, net::IpAddr, sync::{Arc, Mutex, OnceLock}, time::Duration};
-use agentbrowser_connection::{Connection, Connector, DisplayedFrame, Failure, Input, Pairing, WebRtcConfig, protocol::{VideoPacket, ViewportDeclaration, Device, Orientation}};
-use jni::{JNIEnv, objects::{JByteArray, JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
+use agentbrowser_connection::{Connection, Connector, DisplayedFrame, EditingInput, EditingOutcome, Failure, Input, Pairing, PresentedFrame, WebRtcConfig, protocol::{InputBinding, InputEvent, ResultValue, VideoPacket, ViewportDeclaration, Device, Orientation}};
+use jni::{JNIEnv, objects::{JClass, JObject, JString, JThrowable, JValue}, sys::{jdouble, jint, jlong, jobject, jstring}};
 
 mod account;
 
@@ -79,12 +79,10 @@ fn encoder_unavailable_error(session_id: &str, message: &str) -> String {
     })
 }
 
-fn pairing(env: &mut JNIEnv, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray) -> Result<Pairing> {
+fn pairing(env: &mut JNIEnv, endpoint: JString, token: JString) -> Result<Pairing> {
     Ok(Pairing {
         endpoint: env.get_string(&endpoint).map_err(error)?.into(),
-        server_ca_der: env.convert_byte_array(ca).map_err(error)?,
-        client_cert_der: env.convert_byte_array(cert).map_err(error)?,
-        client_key_pkcs8_der: env.convert_byte_array(key).map_err(error)?,
+        token: env.get_string(&token).map_err(error)?.into(),
     })
 }
 
@@ -108,22 +106,22 @@ fn open_native(pairing: Pairing, transport: NativeTransport) -> Result<jlong> {
 
 #[no_mangle]
 pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_open(
-    mut env: JNIEnv, _: JClass, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray,
+    mut env: JNIEnv, _: JClass, endpoint: JString, token: JString,
 ) -> jlong {
     let result = (|| -> Result<jlong> {
-        open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::Wss)
+        open_native(pairing(&mut env, endpoint, token)?, NativeTransport::Wss)
     })();
     match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_openWebRtc(
-    mut env: JNIEnv, _: JClass, endpoint: JString, ca: JByteArray, cert: JByteArray, key: JByteArray, bind_ip: JString,
+    mut env: JNIEnv, _: JClass, endpoint: JString, token: JString, bind_ip: JString,
 ) -> jlong {
     let result = (|| -> Result<jlong> {
         let bind_ip: String = env.get_string(&bind_ip).map_err(error)?.into();
         let bind_ip = parse_webrtc_bind_ip(&bind_ip)?;
-        open_native(pairing(&mut env, endpoint, ca, cert, key)?, NativeTransport::WebRtc(bind_ip))
+        open_native(pairing(&mut env, endpoint, token)?, NativeTransport::WebRtc(bind_ip))
     })();
     match result { Ok(id) => id, Err(message) => { fail(&mut env, message); 0 } }
 }
@@ -170,15 +168,21 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_frame(mut en
             VideoPacket::Closed { .. } => Err("Host media closed".into()),
             VideoPacket::AccessUnit { source, pts_us, coded_width, coded_height, .. } => {
                 if video.bytes.len() > 1024 * 1024 { return Err("Access unit exceeds Android decoder 1MiB limit".into()); }
-                if [source.sequence, *pts_us, source.document_revision, source.viewport_revision].iter().any(|value| *value > i64::MAX as u64) { return Err("Native frame identity overflow".into()); }
+                if [source.sequence, *pts_us, source.presentation_revision, source.document_revision, source.viewport_revision].iter().any(|value| *value > i64::MAX as u64) { return Err("Native frame identity overflow".into()); }
                 let bytes = env.byte_array_from_slice(&video.bytes).map_err(error)?;
-                let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJJJ)V", &[
+                let session_id = env.new_string(&source.session_id).map_err(error)?;
+                let tab_id = env.new_string(&source.tab_id).map_err(error)?;
+                let object = env.new_object("com/agentbrowser/probe/NetworkFrame", "([BIIIIJJJJLjava/lang/String;Ljava/lang/String;J)V", &[
                     JValue::Object(&JObject::from(bytes)), JValue::Int(*coded_width as i32), JValue::Int(*coded_height as i32),
                     JValue::Int(source.width as i32), JValue::Int(source.height as i32), JValue::Long(*pts_us as i64), JValue::Long(source.sequence as i64),
                     JValue::Long(source.document_revision as i64), JValue::Long(source.viewport_revision as i64),
+                    JValue::Object(&JObject::from(session_id)), JValue::Object(&JObject::from(tab_id)),
+                    JValue::Long(source.presentation_revision as i64),
                 ]).map_err(error)?;
                 session.pending = Some((source.sequence, DisplayedFrame { generation: session.connection.generation,
-                    session_id: source.session_id.clone(), document_revision: source.document_revision, viewport_revision: source.viewport_revision }));
+                    session_id: source.session_id.clone(), tab_id: source.tab_id.clone(),
+                    presentation_revision: source.presentation_revision,
+                    document_revision: source.document_revision, viewport_revision: source.viewport_revision }));
                 Ok(object.into_raw())
             }
         }
@@ -249,6 +253,64 @@ pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_command(
         Ok(env.new_string(response?).map_err(error)?.into_raw())
     })();
     match result { Ok(value) => value, Err(failure) => { fail_command(&mut env, failure); std::ptr::null_mut() } }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_agentbrowser_probe_NativeConnection_editing(
+    mut env: JNIEnv, _: JClass, handle: jlong, epoch: jlong, ticket: jlong, operation_id: JString,
+    event_sequence: jlong, binding_json: JString, event_json: JString,
+) -> jstring {
+    let result = (|| -> std::result::Result<jstring, CommandFailure> {
+        if epoch < 0 || event_sequence < 0 || ticket <= 0 {
+            return Err("Invalid typed input identity".into());
+        }
+        let operation_id: String = env.get_string(&operation_id).map_err(error)?.into();
+        let binding_json: String = env.get_string(&binding_json).map_err(error)?.into();
+        let event_json: String = env.get_string(&event_json).map_err(error)?.into();
+        let binding: InputBinding = serde_json::from_str(&binding_json)
+            .map_err(|failure| format!("Invalid input binding: {failure}"))?;
+        let event: InputEvent = serde_json::from_str(&event_json)
+            .map_err(|failure| format!("Invalid input event: {failure}"))?;
+        if operation_id.is_empty() {
+            return Err("Invalid input operation id".into());
+        }
+
+        let session = session(handle)?;
+        let session = session.lock().map_err(error)?;
+        let frame = session.displayed.iter().find(|(id, _)| *id == ticket as u64)
+            .map(|(sequence, displayed)| PresentedFrame {
+                generation: displayed.generation,
+                session_id: displayed.session_id.clone(),
+                tab_id: displayed.tab_id.clone(),
+                presentation_revision: displayed.presentation_revision,
+                frame_sequence: *sequence,
+                document_revision: displayed.document_revision,
+                viewport_revision: displayed.viewport_revision,
+            })
+            .ok_or("No retained acknowledged displayed frame")?;
+        let outcome: EditingOutcome = runtime()?.block_on(session.connection.editing(EditingInput {
+            operation_id,
+            event_sequence: event_sequence as u64,
+            binding,
+            event,
+            frame,
+            epoch: epoch as u64,
+        })).map_err(CommandFailure::from)?;
+        let response = match outcome {
+            EditingOutcome::Gesture(input) => serde_json::to_string(&ResultValue::Input { input })
+                .map_err(error)?,
+            EditingOutcome::Editor(editing) => serde_json::to_string(&ResultValue::Editing { editing })
+                .map_err(error)?,
+        };
+        Ok(env.new_string(response).map_err(error)?.into_raw())
+    })();
+    match result {
+        Ok(value) => value,
+        Err(failure) => {
+            fail_command(&mut env, failure);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]

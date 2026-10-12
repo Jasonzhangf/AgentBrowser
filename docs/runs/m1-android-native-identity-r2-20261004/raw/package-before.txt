@@ -1,0 +1,6 @@
+    versionCode=1 minSdk=30 targetSdk=36
+    versionName=0.1.0-probe
+    lastUpdateTime=2026-10-03 15:58:37
+    installerPackageName=null
+    signatures=PackageSignatures{f48fbc6 version:2, signatures:[10bb648d], past signatures:[]}
+      firstInstallTime=2026-10-03 15:58:37

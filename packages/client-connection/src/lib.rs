@@ -6,7 +6,10 @@ mod media;
 pub use media::{decode_video, MediaSequence, Video};
 mod relay_backend;
 mod transport;
-pub use transport::{Connection, Connector, DisplayedFrame, Input, Pairing};
+pub use transport::{
+    Connection, Connector, DisplayedFrame, EditingInput, EditingOutcome, Input, Pairing,
+    ProfileState, PresentedFrame,
+};
 mod webrtc;
 pub use webrtc::WebRtcConfig;
 

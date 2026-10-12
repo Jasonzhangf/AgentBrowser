@@ -1,0 +1,2 @@
+source: apps/android/src/main/java/com/agentbrowser/probe/NetworkSession.java:233
+capability readback: profiles=false (no Android native profile owner)

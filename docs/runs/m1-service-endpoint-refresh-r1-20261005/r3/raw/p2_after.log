@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r3-p2-after", "case": "p2", "expect": "after"}
+{"case": "p2.temporary_runtime", "ok": true, "expected": "the public consumer slice leaves no new r2mb-* runtime under /private/tmp", "actual": {"rc": 0, "new_leaks": [], "stdout_tail": "CONSUMER_SLICE_OK\n", "stderr_tail": ""}}
+FINDINGS_HARNESS_PASS

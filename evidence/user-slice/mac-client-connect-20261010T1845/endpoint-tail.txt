@@ -1,0 +1,11 @@
+endpoint connection ended: tls handshake eof
+endpoint connection ended: tls handshake eof
+endpoint connection ended: tls handshake eof
+endpoint connection ended: tls handshake eof
+session media acquire: 3f593758-b77d-4ec8-9d3d-bcdf896f5c66 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+endpoint connection ended: IO error: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+session media acquire: 3f593758-b77d-4ec8-9d3d-bcdf896f5c66 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion
+session media acquire: 3f593758-b77d-4ec8-9d3d-bcdf896f5c66 child spawned, supervisor started
+Error: Media adapter received SIGTERM before completion

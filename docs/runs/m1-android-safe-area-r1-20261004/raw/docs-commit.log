@@ -1,0 +1,236 @@
+
+> agentbrowser-probe@0.1.0 verify:local
+> npm run typecheck && npm test && npm run build:ui
+
+
+> agentbrowser-probe@0.1.0 typecheck
+> tsc --noEmit
+
+
+> agentbrowser-probe@0.1.0 test
+> tsx --test packages/**/*.test.ts
+
+TAP version 13
+# Subtest: account port keeps command plane typed and projection secret-free
+ok 1 - account port keeps command plane typed and projection secret-free
+  ---
+  duration_ms: 1.091958
+  type: 'test'
+  ...
+# Subtest: account projection preserves online, offline, and expired host status
+ok 2 - account projection preserves online, offline, and expired host status
+  ---
+  duration_ms: 0.205292
+  type: 'test'
+  ...
+# Subtest: account projection rejects credential leakage and malformed states
+ok 3 - account projection rejects credential leakage and malformed states
+  ---
+  duration_ms: 0.193166
+  type: 'test'
+  ...
+# Subtest: missing native capability fails explicitly
+ok 4 - missing native capability fails explicitly
+  ---
+  duration_ms: 0.664208
+  type: 'test'
+  ...
+# Subtest: malformed native response cannot become ready
+ok 5 - malformed native response cannot become ready
+  ---
+  duration_ms: 0.141042
+  type: 'test'
+  ...
+# Subtest: only typed chrome commands cross the native port
+ok 6 - only typed chrome commands cross the native port
+  ---
+  duration_ms: 0.672916
+  type: 'test'
+  ...
+# Subtest: remote-owned chrome projections parse without inventing local state
+ok 7 - remote-owned chrome projections parse without inventing local state
+  ---
+  duration_ms: 0.179333
+  type: 'test'
+  ...
+# Subtest: native rejection is preserved and unknown capability remains unavailable
+ok 8 - native rejection is preserved and unknown capability remains unavailable
+  ---
+  duration_ms: 0.121042
+  type: 'test'
+  ...
+# Subtest: layout projection parses only the accepted native-owned shape
+ok 9 - layout projection parses only the accepted native-owned shape
+  ---
+  duration_ms: 0.203459
+  type: 'test'
+  ...
+# Subtest: set_presentation forwards the caller id and state and preserves applied/rejected receipts
+ok 10 - set_presentation forwards the caller id and state and preserves applied/rejected receipts
+  ---
+  duration_ms: 0.14825
+  type: 'test'
+  ...
+# Subtest: presentation receipts reject mismatched ids and unknown rejection reasons
+ok 11 - presentation receipts reject mismatched ids and unknown rejection reasons
+  ---
+  duration_ms: 0.15025
+  type: 'test'
+  ...
+# Subtest: Cordis browser-chrome plugin mounts once and disposes subscriptions once
+ok 12 - Cordis browser-chrome plugin mounts once and disposes subscriptions once
+  ---
+  duration_ms: 2.434625
+  type: 'test'
+  ...
+# Subtest: no duplicate in-UI page editing entry survives
+ok 13 - no duplicate in-UI page editing entry survives
+  ---
+  duration_ms: 0.677209
+  type: 'test'
+  ...
+# Subtest: address bar submits a normalized typed navigate intent on Enter
+ok 14 - address bar submits a normalized typed navigate intent on Enter
+  ---
+  duration_ms: 0.134584
+  type: 'test'
+  ...
+# Subtest: command rejection and status polling keep separate result owners
+ok 15 - command rejection and status polling keep separate result owners
+  ---
+  duration_ms: 0.057834
+  type: 'test'
+  ...
+# Subtest: tab mutations require a current epoch and re-read control context before sending
+ok 16 - tab mutations require a current epoch and re-read control context before sending
+  ---
+  duration_ms: 0.083833
+  type: 'test'
+  ...
+# Subtest: send-time epoch removal keeps control and capability context valid
+ok 17 - send-time epoch removal keeps control and capability context valid
+  ---
+  duration_ms: 0.074459
+  type: 'test'
+  ...
+# Subtest: address IME confirmation Enter does not submit and explicit Enter submits once
+ok 18 - address IME confirmation Enter does not submit and explicit Enter submits once
+  ---
+  duration_ms: 0.054458
+  type: 'test'
+  ...
+# Subtest: the viewer is declared as the native video/IME input surface
+ok 19 - the viewer is declared as the native video/IME input surface
+  ---
+  duration_ms: 0.102209
+  type: 'test'
+  ...
+# Subtest: viewer readiness is native presentation projection, never connection or control
+ok 20 - viewer readiness is native presentation projection, never connection or control
+  ---
+  duration_ms: 0.056167
+  type: 'test'
+  ...
+# Subtest: drawer transitions wait for typed presentation receipts and stay explicit on rejection
+ok 21 - drawer transitions wait for typed presentation receipts and stay explicit on rejection
+  ---
+  duration_ms: 0.405875
+  type: 'test'
+  ...
+# Subtest: applied presentation receipt geometry guards stale native projections
+ok 22 - applied presentation receipt geometry guards stale native projections
+  ---
+  duration_ms: 0.38675
+  type: 'test'
+  ...
+# Subtest: drawer content consumes native safe insets instead of root padding
+ok 23 - drawer content consumes native safe insets instead of root padding
+  ---
+  duration_ms: 0.067542
+  type: 'test'
+  ...
+# Subtest: drawer is layered over the page but not persistent when closed
+ok 24 - drawer is layered over the page but not persistent when closed
+  ---
+  duration_ms: 0.147583
+  type: 'test'
+  ...
+# Subtest: drawer close only clears local focus and never cancels remote operations
+ok 25 - drawer close only clears local focus and never cancels remote operations
+  ---
+  duration_ms: 0.059291
+  type: 'test'
+  ...
+# Subtest: missing capabilities render explicit unavailable states
+ok 26 - missing capabilities render explicit unavailable states
+  ---
+  duration_ms: 0.069417
+  type: 'test'
+  ...
+# Subtest: quality keeps requested and effective as separate algebra
+ok 27 - quality keeps requested and effective as separate algebra
+  ---
+  duration_ms: 0.058666
+  type: 'test'
+  ...
+# Subtest: only typed chrome commands cross the native port
+ok 28 - only typed chrome commands cross the native port
+  ---
+  duration_ms: 0.119084
+  type: 'test'
+  ...
+1..28
+# tests 28
+# suites 0
+# pass 28
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 208.283
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+[codex/m1-android-safe-area-r1-20261004 c167a4b] docs(android): record safe-area r1 native receipt
+ 40 files changed, 6977 insertions(+)
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/notes/run-notes.md
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/01-red-portrait-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/02-green-portrait-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/03-green-drawer-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/04-green-drawer-open-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/05-green-back-closed-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/06-green-landscape-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/07-green-portrait-restored-window.xml
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/adb-install-test.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/adb-install.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/am-start-green-2.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/am-start-green.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/cdp-green-layout.json
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/cdp-green-ui.json
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/cdp-post-rotation-layout.json
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/cdp-ui-elements.json
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/gradle-androidtest-rebuild.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/gradle-build.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/installed-base-sha256.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/instrument-layout.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/logcat-green-session.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/logcat-green-stable.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/npm-ci.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/package-after.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/package-before.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/package-path-after.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/package-path-before.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/source-commit.log
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/window-app-green.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/raw/window-display-green.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/receipt/candidate.md
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/receipt/evidence-sha256.txt
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/receipt/geometry-freeze.json
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/01-red-portrait.png
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/02-green-portrait.png
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/03-green-drawer-tap.png
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/04-green-drawer-open.png
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/05-green-back-closed.png
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/06-green-landscape.png
+ create mode 100644 docs/runs/m1-android-safe-area-r1-20261004/screenshots/07-green-portrait-restored.png

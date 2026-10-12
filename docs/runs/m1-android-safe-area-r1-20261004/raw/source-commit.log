@@ -1,0 +1,197 @@
+
+> agentbrowser-probe@0.1.0 verify:local
+> npm run typecheck && npm test && npm run build:ui
+
+
+> agentbrowser-probe@0.1.0 typecheck
+> tsc --noEmit
+
+
+> agentbrowser-probe@0.1.0 test
+> tsx --test packages/**/*.test.ts
+
+TAP version 13
+# Subtest: account port keeps command plane typed and projection secret-free
+ok 1 - account port keeps command plane typed and projection secret-free
+  ---
+  duration_ms: 3.505
+  type: 'test'
+  ...
+# Subtest: account projection preserves online, offline, and expired host status
+ok 2 - account projection preserves online, offline, and expired host status
+  ---
+  duration_ms: 0.533583
+  type: 'test'
+  ...
+# Subtest: account projection rejects credential leakage and malformed states
+ok 3 - account projection rejects credential leakage and malformed states
+  ---
+  duration_ms: 0.419291
+  type: 'test'
+  ...
+# Subtest: missing native capability fails explicitly
+ok 4 - missing native capability fails explicitly
+  ---
+  duration_ms: 1.316417
+  type: 'test'
+  ...
+# Subtest: malformed native response cannot become ready
+ok 5 - malformed native response cannot become ready
+  ---
+  duration_ms: 0.5205
+  type: 'test'
+  ...
+# Subtest: only typed chrome commands cross the native port
+ok 6 - only typed chrome commands cross the native port
+  ---
+  duration_ms: 1.511708
+  type: 'test'
+  ...
+# Subtest: remote-owned chrome projections parse without inventing local state
+ok 7 - remote-owned chrome projections parse without inventing local state
+  ---
+  duration_ms: 0.229875
+  type: 'test'
+  ...
+# Subtest: native rejection is preserved and unknown capability remains unavailable
+ok 8 - native rejection is preserved and unknown capability remains unavailable
+  ---
+  duration_ms: 0.394209
+  type: 'test'
+  ...
+# Subtest: layout projection parses only the accepted native-owned shape
+ok 9 - layout projection parses only the accepted native-owned shape
+  ---
+  duration_ms: 0.545
+  type: 'test'
+  ...
+# Subtest: set_presentation forwards the caller id and state and preserves applied/rejected receipts
+ok 10 - set_presentation forwards the caller id and state and preserves applied/rejected receipts
+  ---
+  duration_ms: 0.769916
+  type: 'test'
+  ...
+# Subtest: presentation receipts reject mismatched ids and unknown rejection reasons
+ok 11 - presentation receipts reject mismatched ids and unknown rejection reasons
+  ---
+  duration_ms: 0.33475
+  type: 'test'
+  ...
+# Subtest: Cordis browser-chrome plugin mounts once and disposes subscriptions once
+ok 12 - Cordis browser-chrome plugin mounts once and disposes subscriptions once
+  ---
+  duration_ms: 5.464875
+  type: 'test'
+  ...
+# Subtest: no duplicate in-UI page editing entry survives
+ok 13 - no duplicate in-UI page editing entry survives
+  ---
+  duration_ms: 1.8125
+  type: 'test'
+  ...
+# Subtest: address bar submits a normalized typed navigate intent on Enter
+ok 14 - address bar submits a normalized typed navigate intent on Enter
+  ---
+  duration_ms: 0.289542
+  type: 'test'
+  ...
+# Subtest: command rejection and status polling keep separate result owners
+ok 15 - command rejection and status polling keep separate result owners
+  ---
+  duration_ms: 0.193542
+  type: 'test'
+  ...
+# Subtest: tab mutations require a current epoch and re-read control context before sending
+ok 16 - tab mutations require a current epoch and re-read control context before sending
+  ---
+  duration_ms: 0.127958
+  type: 'test'
+  ...
+# Subtest: send-time epoch removal keeps control and capability context valid
+ok 17 - send-time epoch removal keeps control and capability context valid
+  ---
+  duration_ms: 0.131083
+  type: 'test'
+  ...
+# Subtest: address IME confirmation Enter does not submit and explicit Enter submits once
+ok 18 - address IME confirmation Enter does not submit and explicit Enter submits once
+  ---
+  duration_ms: 0.397209
+  type: 'test'
+  ...
+# Subtest: the viewer is declared as the native video/IME input surface
+ok 19 - the viewer is declared as the native video/IME input surface
+  ---
+  duration_ms: 0.200875
+  type: 'test'
+  ...
+# Subtest: viewer readiness is native presentation projection, never connection or control
+ok 20 - viewer readiness is native presentation projection, never connection or control
+  ---
+  duration_ms: 0.09
+  type: 'test'
+  ...
+# Subtest: drawer transitions wait for typed presentation receipts and stay explicit on rejection
+ok 21 - drawer transitions wait for typed presentation receipts and stay explicit on rejection
+  ---
+  duration_ms: 0.301333
+  type: 'test'
+  ...
+# Subtest: applied presentation receipt geometry guards stale native projections
+ok 22 - applied presentation receipt geometry guards stale native projections
+  ---
+  duration_ms: 1.037833
+  type: 'test'
+  ...
+# Subtest: drawer content consumes native safe insets instead of root padding
+ok 23 - drawer content consumes native safe insets instead of root padding
+  ---
+  duration_ms: 0.238083
+  type: 'test'
+  ...
+# Subtest: drawer is layered over the page but not persistent when closed
+ok 24 - drawer is layered over the page but not persistent when closed
+  ---
+  duration_ms: 0.392667
+  type: 'test'
+  ...
+# Subtest: drawer close only clears local focus and never cancels remote operations
+ok 25 - drawer close only clears local focus and never cancels remote operations
+  ---
+  duration_ms: 0.272084
+  type: 'test'
+  ...
+# Subtest: missing capabilities render explicit unavailable states
+ok 26 - missing capabilities render explicit unavailable states
+  ---
+  duration_ms: 0.077792
+  type: 'test'
+  ...
+# Subtest: quality keeps requested and effective as separate algebra
+ok 27 - quality keeps requested and effective as separate algebra
+  ---
+  duration_ms: 0.203125
+  type: 'test'
+  ...
+# Subtest: only typed chrome commands cross the native port
+ok 28 - only typed chrome commands cross the native port
+  ---
+  duration_ms: 0.172
+  type: 'test'
+  ...
+1..28
+# tests 28
+# suites 0
+# pass 28
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 421.3075
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+[codex/m1-android-safe-area-r1-20261004 71aa70c] fix(android): stop repeated native layout writes
+ 3 files changed, 129 insertions(+), 6 deletions(-)
+ create mode 100644 apps/android/app/src/androidTest/java/com/agentbrowser/probe/LayoutDeviceTest.java

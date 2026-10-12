@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/private/tmp/ab-r3-red/scripts/host-service/test_host_trust_public.py", line 834, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/private/tmp/ab-r3-red/scripts/host-service/test_host_trust_public.py", line 580, in main
+    run(root)
+    ~~~^^^^^^
+  File "/private/tmp/ab-r3-red/scripts/host-service/test_host_trust_public.py", line 823, in run
+    test_public_mixed_mutation_no_lost_success(root)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/private/tmp/ab-r3-red/scripts/host-service/test_host_trust_public.py", line 285, in test_public_mixed_mutation_no_lost_success
+    check(receipt["device_id"] in devices, "successful module enroll is not committed")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/ab-r3-red/scripts/host-service/test_host_trust_public.py", line 53, in check
+    raise AssertionError(message)
+AssertionError: successful module enroll is not committed

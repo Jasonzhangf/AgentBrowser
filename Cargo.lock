@@ -31,6 +31,7 @@ dependencies = [
  "jni",
  "rcgen 0.13.2",
  "serde_json",
+ "sha2",
  "tokio",
  "uuid",
  "zeroize",

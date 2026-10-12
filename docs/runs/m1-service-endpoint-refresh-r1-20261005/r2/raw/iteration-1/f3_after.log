@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r2f3-0H83h2", "finding": "f3", "expect": "after"}
+{"case": "f3.record_persistence_failure", "ok": true, "expected": "typed failure reclaims the child: no listening endpoint and no orphan process", "actual": {"code": "ENDPOINT_NOT_REFRESHED", "facts": {"authorization_state": "not_refreshed", "error": "ENDPOINT_NOT_REFRESHED", "cause": "endpoint_record_write_failed", "last_step": "persist_endpoint_record", "endpoint_generation": 1, "endpoint_pid": 72405, "bound_address": null}, "orphan_pids": [], "generation": 1}}
+FINDINGS_HARNESS_PASS

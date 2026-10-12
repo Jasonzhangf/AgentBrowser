@@ -52,11 +52,12 @@ collapsed into a successful startup or silently retried path.
 
 ## Pairing and build
 
-Pairing is a private directory containing `endpoint.txt`, `ca.der`,
-`client.der`, and mode-0600 `key.der`. The helper reads it only through the
-`AGENTBROWSER_MAC_PAIRING` environment variable. The app's `--pairing-dir`
-argument sets that variable for its child. Credentials are not sent to JS or
-written into snapshots.
+Pairing is a private directory containing `endpoint.txt` and a mode-0600
+`token`. Those two files are the whole pairing state; the bridge reads nothing
+else, and a missing `token` fails as `PAIRING_FILE_MISSING:token`. The helper
+reads the directory only through the `AGENTBROWSER_MAC_PAIRING` environment
+variable. The app's `--pairing-dir` argument sets that variable for its child.
+The token never enters JS, snapshots, or logs.
 
 Build the app bundle with the checked-out Browser ABI owner and this worktree's
 Cargo target:
@@ -122,11 +123,10 @@ The minimum Mac evidence records separately:
 Formal AppSDK admission uses `scripts/macos-admission.mjs` on a committed owner
 candidate. It compiles the pinned module and its connection dependency, copies
 the exact zip into a private `/tmp` installation, launches only that extracted
-bundle, and records separate install and exact-PID restart receipts. The same
-installed entrypoint is driven through AppKit accessibility actions and native
-scroll events: connect, receive and display H.264, take over, navigate, click,
-enter text, scroll, release, inspect the Host only after release, disconnect,
-reconnect, then restart and reconnect again. Screenshots, fixture DOM evidence,
+bundle, and records separate install and exact-PID restart receipts. The
+installed harness scope is only AppKit accessibility `打开菜单` → `连接`, Host
+session status, and restart. Media/codec, takeover, navigation, remote input,
+disconnect, and reconnect are explicitly outside this harness. Screenshots,
 process identities, artifact hashes, and raw command logs remain under the
 ignored task-local `evidence/` directory. The acceptance fixture and app
 processes are owned by the adapter; cleanup terminates only those exact PIDs.
@@ -134,3 +134,7 @@ processes are owned by the adapter; cleanup terminates only those exact PIDs.
 This is a Mac/client vertical slice. It is not Android+Mac same-session proof,
 Relay proof, route-selection proof, final user/global package installation, or
 full M1 acceptance. Those remain integration-owner work.
+
+## Narrow admission scope
+
+The current admission harness verifies only the ordinary AX menu-open and connect action, Host session status, and restart receipt. It does not claim media or codec coverage; `h264_display` is explicitly skipped. It also explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`.

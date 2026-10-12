@@ -1,0 +1,11 @@
+ime=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+-- before reset --
+      mInputShown=false
+  mIsInputViewShown=false mStatusIcon=0
+
+adb shell am force-stop com.google.android.inputmethod.latin
+-- after reset --
+      mInputShown=false
+  mIsInputViewShown=false mStatusIcon=0
+
+selected after reset=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME

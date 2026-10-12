@@ -1,6 +1,6 @@
 package com.agentbrowser.probe;
 
-/** JNI ABI for the native connection owner. Credentials stay in native storage. */
+/** JNI ABI for the native connection owner. The token stays in native storage. */
 public final class NativeConnection {
     public enum Transport { WSS, WEBRTC }
 
@@ -28,19 +28,22 @@ public final class NativeConnection {
         }
     }
 
-    public static native long open(String endpoint, byte[] ca, byte[] cert, byte[] key);
-    public static native long openWebRtc(String endpoint, byte[] ca, byte[] cert, byte[] key, String bindIp);
+    public static native long open(String endpoint, String token);
+    public static native long openWebRtc(String endpoint, String token, String bindIp);
 
-    static long open(String endpoint, byte[] ca, byte[] cert, byte[] key, TransportConfig config) {
+    static long open(String endpoint, String token, TransportConfig config) {
         if (config == null) throw new IllegalArgumentException("TRANSPORT_CONFIG_REQUIRED");
         return config.transport() == Transport.WEBRTC
-            ? openWebRtc(endpoint, ca, cert, key, config.bindIp())
-            : open(endpoint, ca, cert, key);
+            ? openWebRtc(endpoint, token, config.bindIp())
+            : open(endpoint, token);
     }
 
     public static native NetworkFrame frame(long handle);
     public static native void acknowledge(long handle, long ticket);
     public static native String command(long handle, int op, long epoch, long ticket, double x, double y,
                                         double dx, double dy, String text);
+    /** One typed Host10 editing or gesture event. Binding/event JSON is built by the OS adapter. */
+    public static native String editing(long handle, long epoch, long ticket, String operationId,
+                                        long eventSequence, String bindingJson, String eventJson);
     public static native void close(long handle);
 }

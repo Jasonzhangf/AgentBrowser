@@ -1,0 +1,222 @@
+== identity ==
+ba4472104f1b8e887b61e3a7d68bbb9b4540944a
+981514f5ba1dd649f623cf49f2579f674be93ffd
+## codex/m1-ui-receipt-geometry-r3-20261004...origin/main [ahead 19]
+?? docs/runs/m1-ui-receipt-geometry-r3-20261004/
+
+== npm run typecheck ==
+
+> agentbrowser-probe@0.1.0 typecheck
+> tsc --noEmit
+
+exit=0
+
+== npm test ==
+
+> agentbrowser-probe@0.1.0 test
+> tsx --test packages/**/*.test.ts
+
+TAP version 13
+# Subtest: account port keeps command plane typed and projection secret-free
+ok 1 - account port keeps command plane typed and projection secret-free
+  ---
+  duration_ms: 0.985542
+  type: 'test'
+  ...
+# Subtest: account projection preserves online, offline, and expired host status
+ok 2 - account projection preserves online, offline, and expired host status
+  ---
+  duration_ms: 0.182583
+  type: 'test'
+  ...
+# Subtest: account projection rejects credential leakage and malformed states
+ok 3 - account projection rejects credential leakage and malformed states
+  ---
+  duration_ms: 0.179541
+  type: 'test'
+  ...
+# Subtest: missing native capability fails explicitly
+ok 4 - missing native capability fails explicitly
+  ---
+  duration_ms: 0.570458
+  type: 'test'
+  ...
+# Subtest: malformed native response cannot become ready
+ok 5 - malformed native response cannot become ready
+  ---
+  duration_ms: 0.132417
+  type: 'test'
+  ...
+# Subtest: only typed chrome commands cross the native port
+ok 6 - only typed chrome commands cross the native port
+  ---
+  duration_ms: 0.648959
+  type: 'test'
+  ...
+# Subtest: remote-owned chrome projections parse without inventing local state
+ok 7 - remote-owned chrome projections parse without inventing local state
+  ---
+  duration_ms: 0.171958
+  type: 'test'
+  ...
+# Subtest: native rejection is preserved and unknown capability remains unavailable
+ok 8 - native rejection is preserved and unknown capability remains unavailable
+  ---
+  duration_ms: 0.11275
+  type: 'test'
+  ...
+# Subtest: layout projection parses only the accepted native-owned shape
+ok 9 - layout projection parses only the accepted native-owned shape
+  ---
+  duration_ms: 0.199375
+  type: 'test'
+  ...
+# Subtest: set_presentation forwards the caller id and state and preserves applied/rejected receipts
+ok 10 - set_presentation forwards the caller id and state and preserves applied/rejected receipts
+  ---
+  duration_ms: 0.142333
+  type: 'test'
+  ...
+# Subtest: presentation receipts reject mismatched ids and unknown rejection reasons
+ok 11 - presentation receipts reject mismatched ids and unknown rejection reasons
+  ---
+  duration_ms: 0.142292
+  type: 'test'
+  ...
+# Subtest: Cordis browser-chrome plugin mounts once and disposes subscriptions once
+ok 12 - Cordis browser-chrome plugin mounts once and disposes subscriptions once
+  ---
+  duration_ms: 2.487208
+  type: 'test'
+  ...
+# Subtest: no duplicate in-UI page editing entry survives
+ok 13 - no duplicate in-UI page editing entry survives
+  ---
+  duration_ms: 0.663458
+  type: 'test'
+  ...
+# Subtest: address bar submits a normalized typed navigate intent on Enter
+ok 14 - address bar submits a normalized typed navigate intent on Enter
+  ---
+  duration_ms: 0.134834
+  type: 'test'
+  ...
+# Subtest: command rejection and status polling keep separate result owners
+ok 15 - command rejection and status polling keep separate result owners
+  ---
+  duration_ms: 0.057542
+  type: 'test'
+  ...
+# Subtest: tab mutations require a current epoch and re-read control context before sending
+ok 16 - tab mutations require a current epoch and re-read control context before sending
+  ---
+  duration_ms: 0.083208
+  type: 'test'
+  ...
+# Subtest: send-time epoch removal keeps control and capability context valid
+ok 17 - send-time epoch removal keeps control and capability context valid
+  ---
+  duration_ms: 0.072459
+  type: 'test'
+  ...
+# Subtest: address IME confirmation Enter does not submit and explicit Enter submits once
+ok 18 - address IME confirmation Enter does not submit and explicit Enter submits once
+  ---
+  duration_ms: 0.048584
+  type: 'test'
+  ...
+# Subtest: the viewer is declared as the native video/IME input surface
+ok 19 - the viewer is declared as the native video/IME input surface
+  ---
+  duration_ms: 0.098
+  type: 'test'
+  ...
+# Subtest: viewer readiness is native presentation projection, never connection or control
+ok 20 - viewer readiness is native presentation projection, never connection or control
+  ---
+  duration_ms: 0.05425
+  type: 'test'
+  ...
+# Subtest: drawer transitions wait for typed presentation receipts and stay explicit on rejection
+ok 21 - drawer transitions wait for typed presentation receipts and stay explicit on rejection
+  ---
+  duration_ms: 0.261625
+  type: 'test'
+  ...
+# Subtest: applied presentation receipt revisions guard stale native projections
+ok 22 - applied presentation receipt revisions guard stale native projections
+  ---
+  duration_ms: 0.296916
+  type: 'test'
+  ...
+# Subtest: drawer content consumes native safe insets instead of root padding
+ok 23 - drawer content consumes native safe insets instead of root padding
+  ---
+  duration_ms: 0.059
+  type: 'test'
+  ...
+# Subtest: drawer is layered over the page but not persistent when closed
+ok 24 - drawer is layered over the page but not persistent when closed
+  ---
+  duration_ms: 0.148166
+  type: 'test'
+  ...
+# Subtest: drawer close only clears local focus and never cancels remote operations
+ok 25 - drawer close only clears local focus and never cancels remote operations
+  ---
+  duration_ms: 0.052625
+  type: 'test'
+  ...
+# Subtest: missing capabilities render explicit unavailable states
+ok 26 - missing capabilities render explicit unavailable states
+  ---
+  duration_ms: 0.06475
+  type: 'test'
+  ...
+# Subtest: quality keeps requested and effective as separate algebra
+ok 27 - quality keeps requested and effective as separate algebra
+  ---
+  duration_ms: 0.057
+  type: 'test'
+  ...
+# Subtest: only typed chrome commands cross the native port
+ok 28 - only typed chrome commands cross the native port
+  ---
+  duration_ms: 0.11575
+  type: 'test'
+  ...
+1..28
+# tests 28
+# suites 0
+# pass 28
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 195.655541
+exit=0
+
+== npm run build:ui ==
+
+> agentbrowser-probe@0.1.0 build:ui
+> node scripts/build-ui.mjs
+
+exit=0
+
+== w4-build-ui-consumer ==
+{"output":"docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red"}
+exit=0
+
+== source sha256 ==
+f4b48062bbf34e16dfa0d334e4f9cf1d8d856485e7408245d32899a99f4cfe98  packages/ui-plugins/main.tsx
+9bf8e517c64e9d77f75946423f89fa5a6c23bb02fd7d03e4521096c40117c701  packages/ui-plugins/consumer-frame.ts
+950f8afeccccbdb12d52d453f036505bc45d8c788e257a431f416b8be411e838  packages/ui-plugins/browser-consumer.tsx
+987810fa0645b7698a94d2012cba1d74351e81d8986273efeacdee8d1caf6142  packages/ui-plugins/ui-contract.test.ts
+
+== consumer-red sha256 ==
+4a6aae033b5af29b04cdec27f4cf9d10bb9798f78b2121c36b11f295f0d976f7  docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red/app.css
+d2e523b00e447c6488d4baa4e8c946754b56bc814d01279931a83a83d56916aa  docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red/app.js
+2b20f3108851172c48b731d59c72deee867e5ba645f4c7e25855032b6465a816  docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red/consumer-frame.js
+760bb2654e621dc390e3dc62729271b23881c523662e23a076d0e557141781c5  docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red/consumer.html
+68b664a867eec41a3eb1b16eb4d902b7fe20c63eb04667d9fc4e7105b862a049  docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red/consumer.js
+27efac6be2b7286afcd625fc88bed8e9f89191b0a642dacb5ca41d537d5059d2  docs/runs/m1-ui-receipt-geometry-r3-20261004/artifacts/consumer-red/ui-frame.html

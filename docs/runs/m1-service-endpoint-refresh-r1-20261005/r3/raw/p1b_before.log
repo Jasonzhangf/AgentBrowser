@@ -1,0 +1,29 @@
+{"base": "/private/tmp/m1r3-p1b-before", "case": "p1b", "expect": "before"}
+{"case": "p1b.verify_read_failure", "ok": false, "expected": {"code": "ENDPOINT_NOT_REFRESHED", "last_step": "verify_applied", "authorization_state": "not_refreshed", "generation": 1, "lock_released": true, "endpoint_pid_alive": true}, "actual": {"rc": 1, "error": null, "typed": false, "traceback": true, "generation": 1, "record_pid": 6066, "endpoint_pid_alive": true, "stderr_tail": ".14/lib/python3.14/pathlib/__init__.py\", line 771, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nPermissionError: [Errno 13] Permission denied: '/private/tmp/m1r3-p1b-before/root/trust/registry.json'\n"}}
+{
+  "failures": [
+    {
+      "case": "p1b.verify_read_failure",
+      "ok": false,
+      "expected": {
+        "code": "ENDPOINT_NOT_REFRESHED",
+        "last_step": "verify_applied",
+        "authorization_state": "not_refreshed",
+        "generation": 1,
+        "lock_released": true,
+        "endpoint_pid_alive": true
+      },
+      "actual": {
+        "rc": 1,
+        "error": null,
+        "typed": false,
+        "traceback": true,
+        "generation": 1,
+        "record_pid": 6066,
+        "endpoint_pid_alive": true,
+        "stderr_tail": ".14/lib/python3.14/pathlib/__init__.py\", line 771, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nPermissionError: [Errno 13] Permission denied: '/private/tmp/m1r3-p1b-before/root/trust/registry.json'\n"
+      }
+    }
+  ]
+}
+FINDINGS_HARNESS_FAIL

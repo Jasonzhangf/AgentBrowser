@@ -1,0 +1,9 @@
+== issue4: HEAD consumer export coverage ==
+export_bundle refs in HEAD consumer: 0
+membership_receipt refs in HEAD consumer: 0
+HEAD source-trace.md:112 claim:
+   `PARTIAL_REGISTRY_COMMIT` at exit 4 with the actual committed revision.
+10. Premature export returns `PROFILE_CATALOG_UNAVAILABLE` and leaves no output;
+    export also rejects stale projection or mismatched typed receipts.
+11. Real PKCS#12 with exactly `agentbrowser-host-ca`, `agentbrowser-endpoint`,
+    `agentbrowser-client`; `openssl` extracts a client cert matching the

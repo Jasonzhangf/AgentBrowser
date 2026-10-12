@@ -1,0 +1,59 @@
+Starting a Gradle Daemon, 2 incompatible Daemons could not be reused, use --status for details
+
+> Task :app:buildNative
+   Compiling jni-sys v0.3.1
+   Compiling obscura-host-protocol v0.1.0 (/Volumes/Intel/playground/obscura/m1-profile-navigation-impl-r1-20261003/protocol/browser)
+   Compiling jni v0.21.1
+   Compiling agentbrowser-connection v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-android-native-layout-r1-20261004/packages/client-connection)
+   Compiling agentbrowser-android v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-android-native-layout-r1-20261004/packages/android-bridge)
+error[E0063]: missing fields `presentation_revision` and `tab_id` in initializer of `PresentedFrame`
+   --> packages/android-bridge/src/lib.rs:279:42
+    |
+279 |             .map(|(sequence, displayed)| PresentedFrame {
+    |                                          ^^^^^^^^^^^^^^ missing `presentation_revision` and `tab_id`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `agentbrowser-android` (lib) due to 1 previous error
+Traceback (most recent call last):
+  File "/Volumes/Intel/playground/agentbrowser/m1-android-native-layout-r1-20261004/scripts/build-native.py", line 93, in <module>
+    build()
+    ~~~~~^^
+  File "/Volumes/Intel/playground/agentbrowser/m1-android-native-layout-r1-20261004/scripts/build-native.py", line 49, in build
+    subprocess.run(
+    ~~~~~~~~~~~~~~^
+        ["cargo", "build", "--release", "--target", TARGET_TRIPLE, "-p", "agentbrowser-android", "--config", patch],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        check=True,
+        ^^^^^^^^^^^
+    )
+    ^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['cargo', 'build', '--release', '--target', 'aarch64-linux-android', '-p', 'agentbrowser-android', '--config', 'patch.crates-io.obscura-host-protocol.path="/Volumes/Intel/playground/obscura/m1-profile-navigation-impl-r1-20261003/protocol/browser"']' returned non-zero exit status 101.
+
+> Task :app:buildNative FAILED
+
+[Incubating] Problems report is available at: file:///Volumes/Intel/playground/agentbrowser/m1-android-native-layout-r1-20261004/apps/android/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:buildNative'.
+> Process 'command 'python3'' finished with non-zero exit value 1
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 21s
+1 actionable task: 1 executed

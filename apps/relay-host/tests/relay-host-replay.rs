@@ -280,6 +280,7 @@ async fn relay_host_real_endpoint_replay() {
         2,
         Command::Click { x: 30.0, y: 30.0 },
         Some(Operation {
+            operation_id: "relay-replay-second-tunnel-click".to_string(),
             session_id: second_attached.session_id.clone(),
             attachment_id: second_attached
                 .attachment_id
@@ -311,6 +312,7 @@ async fn relay_host_real_endpoint_replay() {
         4,
         Command::Click { x: 30.0, y: 30.0 },
         Some(Operation {
+            operation_id: "relay-replay-first-tunnel-click".to_string(),
             session_id: session_id.clone(),
             attachment_id,
             sequence: before_click.next_sequence,

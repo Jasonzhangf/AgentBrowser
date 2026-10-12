@@ -1,0 +1,1 @@
+real obscura-host required: set OBSCURA_HOST_BINARY or provide active/bin/obscura-host

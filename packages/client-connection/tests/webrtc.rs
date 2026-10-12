@@ -1,5 +1,7 @@
 #![cfg(unix)]
 
+/// The one credential on the connection path.
+const TOKEN: &str = "connection-test-token";
 use std::{
     net::{IpAddr, Ipv4Addr},
     os::unix::fs::{DirBuilderExt, PermissionsExt},
@@ -50,10 +52,6 @@ async fn exercise() {
         .unwrap()
         .signed_by(&server_key, &ca, &ca_key)
         .unwrap();
-    let client_key = rcgen::KeyPair::generate().unwrap();
-    let mut client_params = rcgen::CertificateParams::new(Vec::new()).unwrap();
-    client_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-    let client = client_params.signed_by(&client_key, &ca, &ca_key).unwrap();
     std::fs::write(root.join("server.der"), server.der()).unwrap();
     std::fs::write(root.join("server.key"), server_key.serialize_der()).unwrap();
     std::fs::set_permissions(
@@ -61,7 +59,6 @@ async fn exercise() {
         std::fs::Permissions::from_mode(0o600),
     )
     .unwrap();
-    std::fs::write(root.join("ca.der"), ca.der()).unwrap();
 
     let mut host = ProcessCommand::new(bin.join("obscura-host"))
         .arg("--socket-dir")
@@ -119,8 +116,6 @@ async fn exercise() {
         .arg(root.join("server.der"))
         .arg("--server-key")
         .arg(root.join("server.key"))
-        .arg("--client-ca")
-        .arg(root.join("ca.der"))
         .arg("--media-bin")
         .arg(bin.join("obscura-media"))
         .arg("--enable-webrtc")
@@ -134,29 +129,13 @@ async fn exercise() {
     wait(root.join("endpoint/encoded.sock")).await;
 
     let pairing = || Pairing {
-        endpoint: format!("wss://{address}"),
-        server_ca_der: ca.der().to_vec(),
-        client_cert_der: client.der().to_vec(),
-        client_key_pkcs8_der: client_key.serialize_der(),
+        endpoint: address.to_string(),
+        token: TOKEN.to_string(),
     };
     let config = WebRtcConfig {
         bind_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
     };
     let mut connector = Connector::default();
-    let mut bad_pairing = pairing();
-    bad_pairing.server_ca_der = rcgen::generate_simple_self_signed(vec!["localhost".into()])
-        .unwrap()
-        .cert
-        .der()
-        .to_vec();
-    assert!(
-        connector
-            .connect_webrtc_with_config(bad_pairing, None, config)
-            .await
-            .is_err(),
-        "wrong CA must fail before WebRTC selection"
-    );
-
     let mut connection = connector
         .connect_webrtc_with_config(pairing(), None, config)
         .await
@@ -324,6 +303,8 @@ fn displayed(connection: &agentbrowser_connection::Connection, video: &Video) ->
     DisplayedFrame {
         generation: connection.generation,
         session_id: source.session_id.clone(),
+        tab_id: source.tab_id.clone(),
+        presentation_revision: source.presentation_revision,
         document_revision: source.document_revision,
         viewport_revision: source.viewport_revision,
     }
@@ -388,6 +369,7 @@ fn state(value: ResultValue) -> SessionStatus {
 
 fn identity(state: &SessionStatus) -> Operation {
     Operation {
+        operation_id: format!("legacy-{}", state.next_sequence),
         session_id: state.session_id.clone(),
         attachment_id: state.attachment_id.unwrap(),
         sequence: state.next_sequence,

@@ -1,24 +1,51 @@
 import { Context } from '@cordisjs/core';
 import type { NativePort } from '../client-domain/probe';
-import type { AccountPort } from '../client-domain/account-directory';
 
-declare module '@cordisjs/core' { interface Context { probe: NativePort; accountDirectory: AccountPort } }
+declare module '@cordisjs/core' {
+  interface Context {
+    probe: NativePort;
+  }
+}
 
-export async function createKernel(port: NativePort, accountDirectory: AccountPort, mount: (ctx: Context) => void) {
+export async function createKernel(port: NativePort, mount: (ctx: Context) => void) {
+  const global = globalThis as typeof globalThis & {__kernelTrace?: string[]};
+  global.__kernelTrace = [];
+  const trace = (message: string) => {
+    global.__kernelTrace!.push(message);
+    console.error(`UI_KERNEL ${message}`);
+  };
+  trace(`provider=${Boolean(port)}`);
   if (!port) throw new Error('REQUIRED_PROBE_PROVIDER_MISSING');
-  if (!accountDirectory) throw new Error('REQUIRED_ACCOUNT_DIRECTORY_PROVIDER_MISSING');
   const ctx = new Context();
   ctx.provide('probe', port);
-  ctx.provide('accountDirectory', accountDirectory);
-  ctx.plugin({ name: 'account-directory', inject: ['accountDirectory'], apply() {} });
+  trace('probe_provided');
   let mounted = false;
-  const plugin = { name: 'local-media-probe', inject: ['probe'], apply(scope: Context) {
-    mount(scope);
-    mounted = true;
-    scope.on('dispose', () => { mounted = false; });
-  } };
-  ctx.plugin(plugin);
-  await ctx.start();
-  if (!mounted) { await ctx.stop(); throw new Error('REQUIRED_PROBE_PLUGIN_FAILED'); }
+  const plugin = {
+    name: 'browser-chrome',
+    inject: ['probe'],
+    apply(scope: Context) {
+      trace('plugin_apply');
+      mount(scope);
+      mounted = true;
+      trace('mount_reached');
+      scope.on('dispose', () => {
+        mounted = false;
+      });
+    },
+  };
+  try {
+    ctx.plugin(plugin);
+    trace('plugin_registered');
+    await ctx.start();
+    trace(`started mounted=${mounted}`);
+  } catch (error) {
+    trace(`error=${String(error)}`);
+    throw error;
+  }
+
+  if (!mounted) {
+    await ctx.stop();
+    throw new Error('REQUIRED_PROBE_PLUGIN_FAILED');
+  }
   return { async dispose() { await ctx.stop(); }, get mounted() { return mounted; } };
 }

@@ -1,0 +1,6 @@
+root=/private/tmp/abhs-h10-installed-28603
+runtime=/private/tmp/abhs-h10-installed-rt-28603
+launchd=/private/tmp/abhs-h10-installed-launchd-28603
+label=com.agentbrowser.installed.h10.28603
+binary=/Volumes/Intel/playground/obscura/m1-engine-reconcile-20261002/target/release/obscura-host
+installed=docs/runs/m1-host-service-host10-r1-20261003/installed

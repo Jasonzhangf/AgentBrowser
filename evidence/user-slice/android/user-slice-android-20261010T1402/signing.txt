@@ -1,0 +1,1 @@
+bash: apksigner: command not found

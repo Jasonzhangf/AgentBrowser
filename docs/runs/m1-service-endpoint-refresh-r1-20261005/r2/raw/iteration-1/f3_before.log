@@ -1,0 +1,3 @@
+{"base": "/private/tmp/m1r2f3b-x282S4", "finding": "f3", "expect": "before"}
+{"case": "f3.record_persistence_failure", "ok": true, "expected": "old behavior leaves one orphan endpoint process with no usable record", "actual": {"error_type": "OSError", "orphan_pids": [75806], "record_exists": false}}
+FINDINGS_HARNESS_PASS

@@ -1,0 +1,5 @@
+{"base": "/private/tmp/m1r2f2b-FKB0ci", "finding": "f2", "expect": "before"}
+{"case": "f2.dns_url_preserved", "ok": true, "expected": "wss://localhost:60442/", "actual": "wss://localhost:60442/"}
+{"case": "f2.dns_locator_refresh", "ok": true, "expected": "old projection fails with real endpoint exit 2 invalid socket address syntax", "actual": {"rc": 3, "generation": 1, "endpoint_log_tail": "error: invalid value 'localhost:60442' for '--listen <LISTEN>': invalid socket address syntax\n\nFor more information, try '--help'.\n"}}
+{"case": "f2.rejected_listen_before_side_effect", "ok": true, "expected": "old behavior advances generation and stops the old endpoint before the bind fails", "actual": {"rc": 3, "generation": 2, "old_pid_alive": false}}
+FINDINGS_HARNESS_PASS

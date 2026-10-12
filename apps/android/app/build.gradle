@@ -7,8 +7,8 @@ android {
         applicationId 'com.agentbrowser.probe'
         minSdk 30
         targetSdk 36
-        versionCode 1
-        versionName '0.1.0-probe'
+        versionCode 2
+        versionName '0.2.0-probe'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
         ndk { abiFilters 'arm64-v8a' }
     }
@@ -18,7 +18,11 @@ android {
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
 }
-dependencies { testImplementation 'junit:junit:4.13.2'; testImplementation 'org.json:json:20240303' }
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+}
 tasks.register('bundleUi', Exec) {
     workingDir '../../..'
     commandLine 'npm', 'run', 'build:ui'

@@ -1,0 +1,43 @@
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.agentbrowser.probe.NetworkDeviceTest:
+INSTRUMENTATION_STATUS: test=testBb10ReconnectSlice
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.agentbrowser.probe.NetworkDeviceTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=InstrumentationTestRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=junit.framework.AssertionFailedError: The client must recover after the network is restored
+	at com.agentbrowser.probe.NetworkDeviceTest.testBb10ReconnectSlice(NetworkDeviceTest.java:1464)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: stream=
+Failure in testBb10ReconnectSlice:
+junit.framework.AssertionFailedError: The client must recover after the network is restored
+	at com.agentbrowser.probe.NetworkDeviceTest.testBb10ReconnectSlice(NetworkDeviceTest.java:1464)
+	at android.test.InstrumentationTestCase.runMethod(InstrumentationTestCase.java:220)
+	at android.test.InstrumentationTestCase.runTest(InstrumentationTestCase.java:205)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:195)
+	at android.test.AndroidTestRunner.runTest(AndroidTestRunner.java:181)
+	at android.test.InstrumentationTestRunner.onStart(InstrumentationTestRunner.java:563)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2627)
+
+INSTRUMENTATION_STATUS: test=testBb10ReconnectSlice
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+Test results for InstrumentationTestRunner=.F
+Time: 59.869
+
+FAILURES!!!
+Tests run: 1,  Failures: 1,  Errors: 0
+
+
+INSTRUMENTATION_CODE: -1

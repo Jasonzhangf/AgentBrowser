@@ -1,0 +1,5 @@
+pairing_dir=/tmp/abn-task16-pairing
+endpoint_txt=wss://127.0.0.1:51880/
+device_id=e22b76b6-31ac-487b-9953-13e0d78daec8
+device_label=task6-mac
+scopes=observe_human_control,profile_read

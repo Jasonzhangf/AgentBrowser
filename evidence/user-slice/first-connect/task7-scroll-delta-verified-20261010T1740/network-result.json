@@ -1,0 +1,270 @@
+{
+  "networkFrames": true,
+  "observerTouchIgnored": true,
+  "takeoverPixels": true,
+  "addressNavigation": true,
+  "runId": "1d60e8131dcc4e03a947308a27d006ea",
+  "viewport": {
+    "cssWidth": 411,
+    "cssHeight": 810,
+    "sourceWidth": 411,
+    "sourceHeight": 810
+  },
+  "statusEvidence": {
+    "capabilities": {
+      "connectionSetup": true,
+      "navigation": true,
+      "profiles": false,
+      "quality": false,
+      "tabs": false
+    },
+    "codec": "c2.goldfish.h264.decoder",
+    "connectionSetup": {
+      "active_revision": 2,
+      "error": null,
+      "label": "Android acceptance device",
+      "repair_import_allowed": false,
+      "state": "configured"
+    },
+    "connectionState": "connected",
+    "controlMode": "observe",
+    "displayedCodedHeight": 810,
+    "displayedCodedWidth": 412,
+    "displayedDocumentRevision": 4,
+    "displayedPtsUs": 101429,
+    "displayedTicket": 153,
+    "displayedViewportRevision": 10,
+    "displayedVisibleHeight": 810,
+    "displayedVisibleWidth": 411,
+    "documentRevision": 4,
+    "epoch": 13,
+    "error": null,
+    "generation": 13,
+    "inputReady": true,
+    "layout": {
+      "advertisedViewportRect": {
+        "height": 810,
+        "width": 411,
+        "x": 0,
+        "y": 80
+      },
+      "chromeRect": {
+        "height": 56,
+        "width": 411,
+        "x": 0,
+        "y": 24
+      },
+      "currentTabId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b:t0",
+      "displayedFrame": {
+        "documentRevision": 4,
+        "generation": 13,
+        "sessionId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b",
+        "tabId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b:t0",
+        "viewportRevision": 10
+      },
+      "drawableWindowRect": {
+        "height": 914,
+        "width": 411,
+        "x": 0,
+        "y": 0
+      },
+      "geometryMatches": true,
+      "presentation": "browsing",
+      "presentationViewport": {
+        "height": 810,
+        "width": 411,
+        "x": 0,
+        "y": 80
+      },
+      "presentedContentRect": {
+        "height": 810,
+        "width": 411,
+        "x": 0,
+        "y": 80
+      },
+      "revision": 42,
+      "safeContentRect": {
+        "height": 866,
+        "width": 411,
+        "x": 0,
+        "y": 24
+      },
+      "visibleContent": "native-video",
+      "webRect": {
+        "height": 56,
+        "width": 411,
+        "x": 0,
+        "y": 24
+      }
+    },
+    "pending": "busy",
+    "released": false,
+    "renderedFrames": 3,
+    "sessionId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b",
+    "source": "network",
+    "state": "playing",
+    "transport": "wss",
+    "viewportRevision": 10
+  },
+  "completionStatus": {
+    "capabilities": {
+      "connectionSetup": true,
+      "navigation": true,
+      "profiles": false,
+      "quality": false,
+      "tabs": false
+    },
+    "codec": "c2.goldfish.h264.decoder",
+    "connectionSetup": {
+      "active_revision": 2,
+      "error": null,
+      "label": "Android acceptance device",
+      "repair_import_allowed": false,
+      "state": "configured"
+    },
+    "connectionState": "stopped",
+    "controlMode": "observe",
+    "displayedCodedHeight": 810,
+    "displayedCodedWidth": 412,
+    "displayedDocumentRevision": 4,
+    "displayedPtsUs": 3688322,
+    "displayedTicket": 164,
+    "displayedViewportRevision": 10,
+    "displayedVisibleHeight": 810,
+    "displayedVisibleWidth": 411,
+    "documentRevision": 4,
+    "epoch": 16,
+    "error": null,
+    "generation": 14,
+    "inputReady": false,
+    "layout": {
+      "advertisedViewportRect": {
+        "height": 810,
+        "width": 411,
+        "x": 0,
+        "y": 80
+      },
+      "chromeRect": {
+        "height": 56,
+        "width": 411,
+        "x": 0,
+        "y": 24
+      },
+      "currentTabId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b:t0",
+      "drawableWindowRect": {
+        "height": 914,
+        "width": 411,
+        "x": 0,
+        "y": 0
+      },
+      "geometryMatches": false,
+      "presentation": "browsing",
+      "presentationViewport": {
+        "height": 498,
+        "width": 411,
+        "x": 0,
+        "y": 80
+      },
+      "presentedContentRect": {
+        "height": 498,
+        "width": 411,
+        "x": 0,
+        "y": 80
+      },
+      "revision": 43,
+      "safeContentRect": {
+        "height": 866,
+        "width": 411,
+        "x": 0,
+        "y": 24
+      },
+      "visibleContent": "webview",
+      "webRect": {
+        "height": 914,
+        "width": 411,
+        "x": 0,
+        "y": 0
+      }
+    },
+    "pending": null,
+    "released": true,
+    "renderedFrames": 11,
+    "sessionId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b",
+    "source": "network",
+    "state": "stopped",
+    "transport": "wss",
+    "viewportRevision": 10
+  },
+  "sourceDimensions": {
+    "codedWidth": 412,
+    "codedHeight": 810
+  },
+  "frameAck": {
+    "ticket": 153,
+    "renderedFrames": 3,
+    "displayed": true
+  },
+  "operationReceipts": [
+    {
+      "operation": "observe",
+      "result": "succeeded"
+    },
+    {
+      "operation": "takeover",
+      "result": "succeeded"
+    },
+    {
+      "operation": "release",
+      "result": "succeeded"
+    }
+  ],
+  "busyViewportCoalesced": true,
+  "hostRejectionKeepsConnection": true,
+  "reconnectPreservesDocument": true,
+  "backgroundRelease": true,
+  "staleCallbacksFenced": true,
+  "textSubmitted": true,
+  "sessionId": "d41f5b59-7391-498d-bd99-4f414aa1bd4b",
+  "textPainted": true,
+  "inputGlyphsBefore": 0,
+  "inputGlyphsAfter": 41,
+  "keyboardVisible": true,
+  "compositionStarted": true,
+  "compositionSendDisabled": true,
+  "compositionCancelled": true,
+  "compositionCommitted": true,
+  "unfinishedCompositionDropped": true,
+  "disconnectCompositionCancelled": true,
+  "imeTextEvidence": true,
+  "imeTextPainted": true,
+  "chineseInkPixels": 41,
+  "chineseInkAdded": 0,
+  "imeEvidence": {
+    "owner": "RemoteImeView",
+    "compositionStarted": "Host editing receipt state=pending for composition_begin",
+    "compositionSendDisabled": "Host input_lease fences other Agent operations while the composition is pending",
+    "compositionCancelled": "Host editing receipt state=cancelled for composition_cancel",
+    "compositionCommitted": "Host editing receipt state=applied for composition_commit",
+    "unfinishedCompositionDropped": "cancelled composition left no ink on the Host field",
+    "disconnectCompositionCancelled": "disconnect released the bridge target and the Host accepted a fresh composition",
+    "importedGeneration": "caeba4dd8d374a3692341857a558d89c"
+  },
+  "displayedRevisionFenced": true,
+  "swipeDoesNotClick": true,
+  "scrollPixels": true,
+  "cancelledGestureIgnored": true,
+  "staleViewportGestureIgnored": true,
+  "rotationPreservesState": true,
+  "landscapeViewport": {
+    "cssWidth": 914,
+    "cssHeight": 307,
+    "sourceWidth": 914,
+    "sourceHeight": 307
+  },
+  "portraitViewport": {
+    "cssWidth": 411,
+    "cssHeight": 498,
+    "sourceWidth": 411,
+    "sourceHeight": 810
+  }
+}

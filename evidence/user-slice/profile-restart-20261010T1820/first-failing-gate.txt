@@ -1,0 +1,10 @@
+First failing gate: real Mac client connection.
+
+The ordinary AgentBrowserMac app launched with a valid private pairing directory and its bridge child, but the UI remained:
+- `未连接`
+- `需要配置连接`
+- `状态 idle`
+- `Transport unknown`
+- `Path unknown`
+
+The app's visible `连接` action was not enabled because its typed connectionSetup projection remained required/unconfigured. No direct socket harness was substituted. HTTPS browsing, durable state, restart, and read-back were not reached.

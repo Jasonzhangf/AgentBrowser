@@ -1,0 +1,16 @@
+elapsedMs=85
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=false
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@d4b95f7 mDeactivateRequested=false mServedView=null}
+  mServedView=com.android.internal.policy.DecorView{1e5ba4 V.E...... R....... 0,0-1080,2400 aid=0}[MainActivity]
+  mServedInputConnection=null
+  mServedInputConnectionHandler=null
+
+elapsedMs=654
+      mCurId=com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+      mInputShown=true
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@d4b95f7 mDeactivateRequested=false mServedView=null}
+  mServedView=com.agentbrowser.probe.RemoteImeView{ab94cef VFED..... .F...... 0,0-1,1 aid=1073741824}
+  mServedInputConnection=RemoteInputConnectionImpl{connection=com.agentbrowser.probe.RemoteImeView$Connection@8f58800 mDeactivateRequested=false mServedView=com.agentbrowser.probe.RemoteImeView{ab94cef VFED..... .F...... 0,0-1,1 aid=1073741824}}
+  mServedInputConnectionHandler=null
+

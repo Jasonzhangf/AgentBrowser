@@ -1,0 +1,12 @@
+{
+  "runId": "20261010T175750",
+  "serial": "emulator-5554",
+  "port": 51882,
+  "noReverse": true,
+  "before": [
+    "host-16 tcp:51880 tcp:51880"
+  ],
+  "after": [
+    "host-16 tcp:51880 tcp:51880"
+  ]
+}

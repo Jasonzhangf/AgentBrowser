@@ -8,7 +8,7 @@ fn wire(packet: &serde_json::Value, payload: &[u8]) -> Vec<u8> {
 
 fn frame() -> serde_json::Value {
     serde_json::json!({"type":"access_unit","source":{
-        "session_id":"s","sequence":1,"document_revision":1,"viewport_revision":1,
+        "session_id":"s","tab_id":"tab-a","presentation_revision":1,"sequence":1,"document_revision":1,"viewport_revision":1,
         "width":391,"height":845,"stride":1564,"byte_length":1321580,
         "pixel_format":"premultiplied_rgba8"},"encoder_id":"e","pts_us":1,
         "coded_width":392,"coded_height":846,"codec":"h264_annex_b","keyframe":true,"byte_length":5})
@@ -47,8 +47,52 @@ fn rejects_session_encoder_and_revision_changes_without_poisoning_last_frame() {
     let mut stale = next.clone(); stale["source"]["viewport_revision"] = 0.into();
     assert!(sequence.accept(&decode_video(&wire(&stale, &payload)).unwrap()).is_err());
     sequence.accept(&decode_video(&wire(&next, &payload)).unwrap()).unwrap();
+    let mut tab_b = next.clone();
+    tab_b["source"]["tab_id"] = "tab-b".into();
+    tab_b["source"]["presentation_revision"] = 2.into();
+    tab_b["source"]["sequence"] = 3.into();
+    tab_b["pts_us"] = 3.into();
+    sequence.accept(&decode_video(&wire(&tab_b, &payload)).unwrap()).unwrap();
+    let mut stale_a = tab_b.clone();
+    stale_a["source"]["tab_id"] = "tab-a".into();
+    stale_a["source"]["presentation_revision"] = 1.into();
+    stale_a["source"]["sequence"] = 4.into();
+    stale_a["pts_us"] = 4.into();
+    assert!(
+        sequence
+            .accept(&decode_video(&wire(&stale_a, &payload)).unwrap())
+            .is_err(),
+        "A -> B -> A with a stale A presentation must be rejected"
+    );
+    let mut new_a = tab_b.clone();
+    new_a["source"]["tab_id"] = "tab-a".into();
+    new_a["source"]["presentation_revision"] = 3.into();
+    new_a["source"]["sequence"] = 4.into();
+    new_a["pts_us"] = 4.into();
+    sequence
+        .accept(&decode_video(&wire(&new_a, &payload)).unwrap())
+        .unwrap();
     sequence.accept(&decode_video(&wire(&serde_json::json!({"type":"closed","session_id":"s"}), &[])).unwrap()).unwrap();
     assert!(sequence.accept(&video).is_err());
+}
+
+#[test]
+fn host11_frame_identity_rejects_missing_or_unknown_fields() {
+    let payload = [0, 0, 0, 1, 0x65];
+    let mut missing_tab = frame();
+    missing_tab["source"].as_object_mut().unwrap().remove("tab_id");
+    assert!(decode_video(&wire(&missing_tab, &payload)).is_err());
+
+    let mut missing_presentation = frame();
+    missing_presentation["source"]
+        .as_object_mut()
+        .unwrap()
+        .remove("presentation_revision");
+    assert!(decode_video(&wire(&missing_presentation, &payload)).is_err());
+
+    let mut unknown = frame();
+    unknown["source"]["native_guess"] = true.into();
+    assert!(decode_video(&wire(&unknown, &payload)).is_err());
 }
 
 #[test]

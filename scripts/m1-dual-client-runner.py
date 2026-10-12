@@ -28,6 +28,10 @@ import time
 import uuid
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+# The candidate's own Git status is evidence, so loading a shared helper must
+# not leave an untracked ``__pycache__`` entry behind.
+sys.dont_write_bytecode = True
+
 from instrumentation_result import EXPECTED_TEST_CLASS, parse_instrumentation_result
 
 
@@ -48,6 +52,18 @@ STAGES = (
     "cleanup",
 )
 
+# Claims that need an emission no side in this milestone produces: the Host
+# SessionStatus has no encoded source dimensions, neither the Host nor the Mac
+# bridge has a native display acknowledgement, and the Mac bridge has no rotation
+# identity. They stay `unknown` with their raw reasons and stay outside the
+# Android + Mac transport milestone bar. They are never reported as pass.
+TRANSPORT_MILESTONE_EXCLUDED_CLAIMS = (
+    "viewport_and_source_dimensions",
+    "three_side_source_dimensions",
+    "three_side_frame_ack",
+    "rotation",
+)
+
 
 def _load_direct_replay() -> Any:
     """Load the existing bridge process/framing owner without executing main."""
@@ -60,15 +76,7 @@ def _load_direct_replay() -> Any:
     # while the direct replay module is being imported.  Register the module
     # before executing it, just as the normal import machinery does.
     sys.modules[spec.name] = module
-    # Loading the shared helper must not dirty a clean candidate with an
-    # untracked ``__pycache__`` entry.  The runner records candidate status as
-    # evidence, so a helper import must be observationally side-effect free.
-    write_bytecode = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.dont_write_bytecode = write_bytecode
+    spec.loader.exec_module(module)
     return module
 
 
@@ -236,6 +244,71 @@ def compare_field(field: str, sides: Mapping[str, Mapping[str, Any]]) -> dict[st
     return {"status": "proved", "field": field, "values": values}
 
 
+def same_point_claim(
+    field: str,
+    host: Mapping[str, Any],
+    android: Mapping[str, Any],
+    observation: str,
+) -> dict[str, Any]:
+    """Compare two sides only when both name the same observation point.
+
+    A control epoch advances whenever control changes owner, so a snapshot taken
+    before a later takeover can never be compared with a post-takeover value. A
+    difference at a shared observation point is unproved evidence, not a failed
+    side: the raw values stay in the claim for the reviewer.
+    """
+
+    host_value = host.get("value") if isinstance(host, Mapping) else None
+    android_value = android.get("value") if isinstance(android, Mapping) else None
+    raw = {"observation": observation, "host": host_value, "android": android_value}
+    if not isinstance(host, Mapping) or host.get("status") != "known":
+        return {"status": "unknown", "field": field, "reason": f"Host did not report {field} at {observation}", "raw": raw}
+    if not isinstance(android, Mapping) or android.get("status") != "known":
+        return {"status": "unknown", "field": field, "reason": f"Android did not report {field} at {observation}", "raw": raw}
+    if host_value == android_value:
+        return {"status": "proved", "field": field, "values": {"host": host_value, "android": android_value}, "observation": observation}
+    return {
+        "status": "unknown",
+        "field": field,
+        "reason": f"Host and Android {field} differ at {observation}; a stale snapshot is not a single-session claim",
+        "raw": raw,
+    }
+
+
+def operation_receipts_claim(actions: Mapping[str, Mapping[str, Any]], owner: str) -> dict[str, Any]:
+    """Derive one owner's observe/takeover/release claim from its typed receipts."""
+
+    if all(actions.get(name, {}).get("value") is True for name in ("observe", "takeover", "release")):
+        return {"status": "proved", "reason": f"{owner} typed receipts recorded observe, takeover and release"}
+    return {"status": "unknown", "reason": f"{owner} typed receipts are incomplete"}
+
+
+def claim_set_decision(claims: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Record which claims carry the Android + Mac transport milestone bar.
+
+    The excluded claims keep their raw unknown reasons and are never reported as
+    pass. A failed claim anywhere still fails the decision, so exclusion cannot
+    hide a real failure. The overall run result stays `partial` while any claim,
+    excluded or not, is unproved.
+    """
+
+    excluded = {name: dict(claims.get(name, {})) for name in TRANSPORT_MILESTONE_EXCLUDED_CLAIMS}
+    in_bar = {name: dict(value) for name, value in claims.items() if name not in TRANSPORT_MILESTONE_EXCLUDED_CLAIMS}
+    if any(value.get("status") == "failed" for value in claims.values()):
+        decision = "failed"
+    elif in_bar and all(value.get("status") == "proved" for value in in_bar.values()):
+        decision = "transport_milestone_bar_satisfied"
+    else:
+        decision = "transport_milestone_bar_incomplete"
+    return {
+        "milestone": "android-mac-transport",
+        "decision": decision,
+        "excluded_unknown_claims": excluded,
+        "in_bar_claims": {name: value.get("status") for name, value in in_bar.items()},
+        "note": "Excluded claims stay unknown with their raw reasons and are never reported as pass; full M1 and the user-slice gates remain incomplete.",
+    }
+
+
 def classify_result(first_failure: Optional[Mapping[str, Any]], claims: Mapping[str, Mapping[str, Any]]) -> str:
     if first_failure is not None:
         return "failed"
@@ -291,6 +364,9 @@ def schema_document() -> dict[str, Any]:
             },
             "cross_side": {"type": "object"},
             "required_claims": {"type": "object"},
+            "claim_set_decision": {
+                "description": "Explicit Android + Mac transport milestone claim-set decision; excluded claims stay unknown and are never reported as pass",
+            },
         },
         "additionalProperties": True,
     }
@@ -554,6 +630,10 @@ def build_arguments(namespace: argparse.Namespace, cwd: pathlib.Path = ROOT) -> 
 
 
 class CombinedRunner:
+    # The Host control epoch observed when the Android client finished. It stays
+    # None until the Android stage completes, so correlation never invents one.
+    host_epoch_at_android_completion: Optional[int] = None
+
     def __init__(self, args: Arguments, *, worktree: pathlib.Path = ROOT):
         self.args = args
         self.worktree = worktree.resolve()
@@ -562,6 +642,7 @@ class CombinedRunner:
         self.android_process: Optional[subprocess.Popen[bytes]] = None
         self.android_log_handle: Optional[Any] = None
         self.fixture_root: Optional[pathlib.Path] = None
+        self.bundle_sha256: Optional[str] = None
         self.adb_path: Optional[pathlib.Path] = None
         self.adb_reverse_port: Optional[int] = None
         self.adb_reverse_owned: Optional[dict[str, Any]] = None
@@ -860,8 +941,24 @@ class CombinedRunner:
                 self.abort("PAIRING_ENDPOINT_MISMATCH", "endpoint.txt does not match ready endpoint", owner="fixture endpoint owner", next_action="keep pairing endpoint and ready record identical", stage="fixture_start")
         except OSError as error:
             self.abort("PAIRING_FILE_MISSING", bounded_text(error), owner="fixture endpoint owner", next_action="preserve all fixture pairing files", stage="fixture_start")
+        # The Android instrumentation imports the same bundle this fixture emitted,
+        # so the digest the app compares against its staged file is computed here,
+        # from the ready record's own bundle path, and never re-derived downstream.
+        bundle_raw = ready.get("bundle")
+        if not isinstance(bundle_raw, str) or not bundle_raw:
+            self.abort("PAIRING_BUNDLE_MISSING", f"ready record has no bundle path: {ready!r}", owner="AgentBrowser fixture owner", next_action="emit the frozen pairing bundle path in the ready record", stage="fixture_start")
+        bundle = pathlib.Path(bundle_raw).expanduser().resolve(strict=False)
+        if bundle.parent != fixture_root or not bundle.is_file():
+            self.abort("PAIRING_BUNDLE_INVALID", f"bundle is not a file inside the fixture root: {bundle}", owner="AgentBrowser fixture owner", next_action="emit the owned bundle path inside the fixture root", stage="fixture_start")
+        bundle_digest = file_sha256(bundle)
+        if bundle_digest is None:
+            self.abort("PAIRING_BUNDLE_UNREADABLE", str(bundle), owner="AgentBrowser fixture owner", next_action="preserve the emitted bundle bytes for hashing", stage="fixture_start")
+        bundle_sha256 = bundle_digest.removeprefix("sha256:")
+        if len(bundle_sha256) != 64:
+            self.abort("PAIRING_BUNDLE_DIGEST_INVALID", f"{bundle}: {bundle_digest}", owner="AgentBrowser fixture owner", next_action="hash the emitted bundle bytes with SHA-256", stage="fixture_start")
+        self.bundle_sha256 = bundle_sha256
         self.fixture_root = fixture_root
-        self.evidence["fixture"].update({"identity": artifact_identity(self.args.fixture_bin), "ready": dict(ready), "root": str(fixture_root), "endpoint": endpoint_raw, "session": session, "endpoint_info": endpoint_info})
+        self.evidence["fixture"].update({"identity": artifact_identity(self.args.fixture_bin), "ready": dict(ready), "root": str(fixture_root), "endpoint": endpoint_raw, "session": session, "endpoint_info": endpoint_info, "bundle": {"path": str(bundle), "sha256": bundle_sha256}})
         self._write_json("fixture-ready.json", self.evidence["fixture"])
         self.record_host_status("fixture_ready", "fixture_start")
         self.stage_finish("fixture_start", "passed", {"pid": self.fixture.pid, "session": session, "endpoint": endpoint_raw})
@@ -1242,6 +1339,8 @@ class CombinedRunner:
         if not isinstance(initial_url, str) or not initial_url:
             self.abort("ANDROID_INITIAL_URL_MISSING", "fixture ready record has no initialUrl", owner="AgentBrowser fixture owner", next_action="emit the exact initial URL for instrumentation", stage="android_replay")
         encoded = base64.b64encode(initial_url.encode()).decode()
+        if not self.bundle_sha256:
+            self.abort("ANDROID_BUNDLE_DIGEST_MISSING", "fixture bundle digest was not computed at fixture start", owner="AgentBrowser fixture owner", next_action="hash the emitted pairing bundle before instrumentation", stage="android_replay")
         command = [
             str(self.adb_path),
             "-s",
@@ -1257,6 +1356,9 @@ class CombinedRunner:
             "-e",
             "initialUrlBase64",
             encoded,
+            "-e",
+            "bundleSha256",
+            self.bundle_sha256,
             "-e",
             "class",
             self.args.android_test_class,
@@ -1307,7 +1409,13 @@ class CombinedRunner:
         self.android_result = dict(result)
         self._write_json("android-result.json", self.android_result)
         self.evidence["events"]["android"].append({"event": "instrumentation_result", "observed_at": utc_now(), "value": self.android_result})
-        self.record_host_status("android_complete", "android_replay")
+        completion_status = self.record_host_status("android_complete", "android_replay")
+        # The shared observation point for the cross-side epoch claim: the Host
+        # epoch recorded the moment this Android process finished, compared with
+        # the epoch the Android client reported at its own completion.
+        if isinstance(completion_status, Mapping):
+            control = completion_status.get("control")
+            self.host_epoch_at_android_completion = control_epoch(control.get("epoch")) if isinstance(control, Mapping) else None
         self.stage_finish("android_replay", "passed", {"exit_code": code, "result": str(self.args.evidence_dir / "android-result.json")})
 
     def mac_control(self) -> None:
@@ -1358,9 +1466,10 @@ class CombinedRunner:
         self.stage_finish("mac_reconnect", "passed", {"reconnect": reconnected, "frames": len(self.bridge.frames) if self.bridge else 0, "acks": len(self.bridge.acked_tickets) if self.bridge else 0})
 
     def build_side_evidence(self) -> None:
+        self.stage_start("correlation")
         host = self.host_statuses[-1]["value"] if self.host_statuses else None
         if not isinstance(host, Mapping):
-            host_side = {field: unknown("Host status was not observed") for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "frame_ack")}
+            host_side = {field: unknown("Host status was not observed") for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "control_epoch_at_completion", "frame_ack")}
         else:
             phase = host.get("control", {}).get("phase") if isinstance(host.get("control"), Mapping) else None
             host_session = host.get("session_id")
@@ -1377,6 +1486,7 @@ class CombinedRunner:
                 "viewport_revision": integer_evidence(host.get("viewport_revision"), ["fixture status"], "Host SessionStatus omitted viewport_revision"),
                 "document_revision": integer_evidence(host.get("document_revision"), ["fixture status"], "Host SessionStatus omitted document_revision"),
                 "control_epoch": integer_evidence(host.get("control", {}).get("epoch") if isinstance(host.get("control"), Mapping) else None, ["fixture status"], "Host SessionStatus omitted control epoch"),
+                "control_epoch_at_completion": integer_evidence(self.host_epoch_at_android_completion, ["fixture status at Android completion"], "Host control epoch was not observed when the Android client completed"),
                 "frame_ack": unknown("Host status does not own client display acknowledgements"),
             }
         android = self.android_result or {}
@@ -1407,6 +1517,14 @@ class CombinedRunner:
             status_evidence.get("epoch"),
             ["android-result.json:statusEvidence.epoch"],
             "Android result statusEvidence omitted control epoch",
+        )
+        completion_status = android.get("completionStatus") if isinstance(android, Mapping) else None
+        if not isinstance(completion_status, Mapping):
+            completion_status = {}
+        android_completion_epoch = integer_evidence(
+            completion_status.get("epoch"),
+            ["android-result.json:completionStatus.epoch"],
+            "Android result completionStatus omitted the control epoch observed at client completion",
         )
         explicit_source = android.get("sourceDimensions") if isinstance(android, Mapping) else None
         if isinstance(explicit_source, Mapping):
@@ -1446,6 +1564,7 @@ class CombinedRunner:
             "viewport_revision": android_viewport_revision,
             "document_revision": android_document_revision,
             "control_epoch": android_control_epoch,
+            "control_epoch_at_completion": android_completion_epoch,
             "frame_ack": android_frame_ack,
             "actions": {
                 **android_actions,
@@ -1526,7 +1645,26 @@ class CombinedRunner:
         self.evidence["sides"] = {"host": host_side, "android": android_side, "mac": mac_side}
         self.evidence["cross_side"] = {
             field: compare_field(field, self.evidence["sides"])
-            for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "frame_ack")
+            for field in ("session_id", "attachment", "viewport", "source_dimensions", "viewport_revision", "document_revision", "frame_ack")
+        }
+        # A control epoch advances whenever control changes owner, so only the Host
+        # and Android observations taken at the Android completion point describe
+        # one instant. The Mac epoch is post-takeover and stays a Mac-only claim.
+        self.evidence["cross_side"]["control_epoch_at_android_completion"] = same_point_claim(
+            "control_epoch",
+            host_side["control_epoch_at_completion"],
+            android_side["control_epoch_at_completion"],
+            "android_complete",
+        )
+        self.evidence["cross_side"]["control_epoch_snapshot_skew"] = {
+            "status": "unknown",
+            "field": "control_epoch",
+            "reason": "per-side snapshots were taken at different observation points; recorded raw and never claimed equal",
+            "raw": {
+                "host_last": host_side["control_epoch"].get("value"),
+                "android_status_evidence": android_side["control_epoch"].get("value"),
+                "mac_post_takeover": mac_side["control_epoch"].get("value"),
+            },
         }
         session_claim = self.evidence["cross_side"]["session_id"]
         reconnect_items = {
@@ -1553,13 +1691,10 @@ class CombinedRunner:
             "three_side_source_dimensions": self.evidence["cross_side"]["source_dimensions"],
             "three_side_viewport_revision": self.evidence["cross_side"]["viewport_revision"],
             "three_side_document_revision": self.evidence["cross_side"]["document_revision"],
-            "three_side_control_epoch": self.evidence["cross_side"]["control_epoch"],
+            "host_android_control_epoch_at_android_completion": self.evidence["cross_side"]["control_epoch_at_android_completion"],
             "three_side_frame_ack": self.evidence["cross_side"]["frame_ack"],
-            "mac_observe_takeover_release": {
-                "status": "proved" if all(mac_side["actions"][name].get("value") is True for name in ("observe", "takeover", "release")) else "unknown",
-                "reason": "Mac bridge typed operation receipts were recorded" if {item.get("operation") for item in self.mac_operations} >= {"takeover", "release"} else "Mac control receipts incomplete",
-            },
-            "android_observe_takeover_release": {"status": "unknown", "reason": "Android instrumentation does not export per-operation receipts"},
+            "mac_observe_takeover_release": operation_receipts_claim(mac_side["actions"], "Mac bridge"),
+            "android_observe_takeover_release": operation_receipts_claim(android_side["actions"], "Android instrumentation"),
             "rotation": {
                 "status": combined_status({"android": android_side["actions"]["rotation"], "mac": mac_side["actions"]["rotation"]}),
                 "android": android_side["actions"]["rotation"],
@@ -1573,8 +1708,29 @@ class CombinedRunner:
             if value.get("status") == "unknown"
         )
         required_for_pass = self.evidence["required_claims"]
+        self.evidence["claim_set_decision"] = claim_set_decision(required_for_pass)
         self.evidence["result"] = classify_result(self.first_failure, required_for_pass)
-        self._write_json("correlation.json", {"sides": self.evidence["sides"], "cross_side": self.evidence["cross_side"], "required_claims": self.evidence["required_claims"], "result": self.evidence["result"]})
+        self._write_json(
+            "correlation.json",
+            {
+                "sides": self.evidence["sides"],
+                "cross_side": self.evidence["cross_side"],
+                "required_claims": self.evidence["required_claims"],
+                "claim_set_decision": self.evidence["claim_set_decision"],
+                "result": self.evidence["result"],
+            },
+        )
+        self.stage_finish(
+            "correlation",
+            "passed" if self.evidence["claim_set_decision"]["decision"] == "transport_milestone_bar_satisfied" else "completed_with_unknown_claims",
+            {
+                "decision": self.evidence["claim_set_decision"]["decision"],
+                "result": self.evidence["result"],
+                "unknown_claims": [
+                    name for name, value in required_for_pass.items() if value.get("status") != "proved"
+                ],
+            },
+        )
 
     def dry_run(self) -> int:
         self.stage_start("preflight")
@@ -1587,7 +1743,7 @@ class CombinedRunner:
                 stage="preflight",
             )
         self.evidence["environment"] = environment_identity(self.args.android_serial, probe=False)
-        for claim in ("same_session", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch", "frame_ack", "observe", "takeover", "release", "rotation", "disconnect", "reconnect", "disconnect_reconnect"):
+        for claim in ("same_session", "viewport", "source_dimensions", "viewport_revision", "document_revision", "control_epoch_at_android_completion", "frame_ack", "observe", "takeover", "release", "rotation", "disconnect", "reconnect", "disconnect_reconnect"):
             self.add_unknown(claim, "dry-run does not start fixture or clients")
         self.evidence["result"] = "dry_run" if self.first_failure is None else "failed"
         if self.first_failure is None:

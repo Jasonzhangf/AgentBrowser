@@ -1,7 +1,15 @@
-"""Install/remove this task's ephemeral pairing in the debug app's private files."""
+"""Stage/remove this task's ephemeral pairing bundle in the debug app's private files.
+
+The bundle is staged as a plain file the installed app reads through its own
+import owner. This script never writes the app's live pairing directory; it only
+removes the generation it can prove the fixture created.
+"""
 import argparse
+import hashlib
+import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -25,21 +33,55 @@ else:
     adb = str(pathlib.Path(found).resolve(strict=False)) if found else configured_adb
 
 
-def remote(arguments, data=None):
+def remote(arguments, data=None, check=True):
     return subprocess.run([adb, "-s", serial, "shell", "-T", shlex.join(["run-as", app] + arguments)],
-                          input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True).stdout
+                          input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check).stdout
 
-files = ["endpoint.txt", "ca.der", "client.der", "key.der"]
+
+STAGING = "files/network-replay-input"
+BUNDLE = "pairing.abconnection"
+OWNER = "owner"
+EXPECTED = "expected.json"
+ACTIVE = "files/pairing/active-generation.json"
+GENERATIONS = "files/pairing/.generations"
+GENERATION_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+
 if args.action == "install":
-    # mkdir fails if an existing pairing is present; never replace user trust.
-    remote(["mkdir", "-m", "700", "files/pairing"])
-    remote(["sh", "-c", "umask 077; cat > files/pairing/owner"], fixture.name.encode())
-    for name in files:
-        remote(["sh", "-c", f"umask 077; cat > files/pairing/{name}"], (fixture / name).read_bytes())
+    bundle = (fixture / BUNDLE).read_bytes()
+    client_key = (fixture / "key.der").read_bytes()
+    expected = {
+        "fixture": fixture.name,
+        "bundle_sha256": hashlib.sha256(bundle).hexdigest(),
+        "client_key_sha256": hashlib.sha256(client_key).hexdigest(),
+    }
+    # mkdir fails when an unremoved staging directory is present; never replace
+    # a pairing this task did not stage.
+    remote(["mkdir", "-m", "700", STAGING])
+    remote(["sh", "-c", f"umask 077; cat > {STAGING}/{BUNDLE}"], bundle)
+    remote(["sh", "-c", f"umask 077; cat > {STAGING}/{OWNER}"], fixture.name.encode())
+    remote(["sh", "-c", f"umask 077; cat > {STAGING}/{EXPECTED}"], json.dumps(expected).encode())
+    print(f"Task pairing install staged {STAGING}/{BUNDLE} "
+          f"bundle_sha256={expected['bundle_sha256']}; bundle contents not logged")
 else:
-    owner = remote(["cat", "files/pairing/owner"]).decode().strip()
+    owner = remote(["cat", f"{STAGING}/{OWNER}"]).decode().strip()
     if owner != fixture.name:
-        raise RuntimeError("Refuse cleanup: pairing belongs to another fixture")
-    remote(["rm"] + [f"files/pairing/{name}" for name in files + ["owner"]])
-    remote(["rmdir", "files/pairing"])
-print(f"Task pairing {args.action} completed; credentials not logged")
+        raise RuntimeError("Refuse cleanup: staged pairing belongs to another fixture")
+    expected = json.loads(remote(["cat", f"{STAGING}/{EXPECTED}"]).decode())
+    if expected.get("fixture") != fixture.name:
+        raise RuntimeError("Refuse cleanup: staged expectation belongs to another fixture")
+    active_raw = remote(["sh", "-c", f"cat {ACTIVE} 2>/dev/null || true"]).decode().strip()
+    if active_raw:
+        active = json.loads(active_raw)
+        generation_id = active.get("generation_id")
+        materials = {item.get("name"): item for item in active.get("materials", [])}
+        installed_key = materials.get("key.der", {}).get("sha256")
+        if installed_key != expected.get("client_key_sha256"):
+            raise RuntimeError("Refuse cleanup: active pairing generation belongs to another pairing")
+        if not isinstance(generation_id, str) or not GENERATION_ID.match(generation_id) or ".." in generation_id:
+            raise RuntimeError("Refuse cleanup: active pairing generation id is not removable")
+        remote(["rm", "-rf", f"{GENERATIONS}/{generation_id}"])
+        remote(["rm", "-f", ACTIVE])
+        print(f"Task pairing remove dropped generation {generation_id}; key material not logged")
+    remote(["rm", "-f", f"{STAGING}/{BUNDLE}", f"{STAGING}/{OWNER}", f"{STAGING}/{EXPECTED}"])
+    remote(["rmdir", STAGING])
+    print("Task pairing remove completed; credentials not logged")

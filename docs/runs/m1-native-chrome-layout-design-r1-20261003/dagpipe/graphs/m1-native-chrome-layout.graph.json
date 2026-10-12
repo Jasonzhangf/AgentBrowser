@@ -1,0 +1,158 @@
+{
+  "id": "m1-native-chrome-layout",
+  "version": "2",
+  "description": "原生布局与抽屉补链：布局意图 -> 同源 native 几何 + presentation -> 输入路由 -> overlay 生命周期与资源释放 -> typed 结果唯一出口。P1#1 presentation 可见性来自实际 displayed-frame 身份与几何匹配，独立于 input/control 权限；P1#2 同一 WebView 承载空态与 chrome；P1#3 冻结 rejected/applied/released 终点与唯一释放 owner。",
+  "inputs": [
+    {
+      "id": "native-chrome-layout-request",
+      "schema": "Object"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "绑定布局能力与应用窗口边界",
+      "description": "UI 绑定 typed layout port；AB-04 原生 owner 声明应用窗口、system bars insets 与薄 chrome 的测量入口。owner=AB-02/03 UI port + AB-04 原生。success=port 绑定且窗口边界可测；failure=能力缺失显式拒绝，不 mock。",
+      "operator": "agentbrowser.ui.bind_layout_boundary",
+      "operator_version": "1",
+      "inputs": [
+        "native-chrome-layout-request"
+      ],
+      "output": {
+        "id": "layout-boundary-binding",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "测量四矩形并只在 AdvertisedViewportRect 变化时申报远端视口",
+      "description": "AB-04 原生 owner 采用单一 native 本地 origin/单位：Android edge-to-edge root 逻辑 dp 且 root 不设置 systemBars padding，WindowMetrics 物理 px 先减 window/root 坐标偏移再按 density 转 dp；drawableWindowRect 是 root 完整本地坐标；safeContentRect 只扣 bars 一次；advertisedViewportRect/chromeRect/presentedContentRect 从其派生。保持 root->stage->videoClip->SurfaceView 实际层级：stage 是 root 直接子 View，只接收 presentedContentRect 的 root-local frame；videoClip 是 stage 直接子 View，只接收 stage-local aspect-fit/center；SurfaceView 是 clip 直接子 View，只接收 clip-local coded/source geometry；RemoteImeView 的实际父容器是 stage。有效可见图像 root rect 由 stage origin + clip fit origin + visible-source origin×scale 一次换算；不得把 stage 的 root-local x/y 再应用到 videoClip，也不得 root padding 后二次应用已扣 bars。唯申报触发=旋转/物理窗口变化、system bars 变化、chrome 高度变化；IME/drawer/presentation 切换不申报。Mac 保持 AppKit points 且不乘 backingScaleFactor。",
+      "operator": "agentbrowser.native.measure_content_rect",
+      "operator_version": "1",
+      "inputs": [
+        "layout-boundary-binding"
+      ],
+      "output": {
+        "id": "advertised-content-frame",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "按呈现状态切换 WebView 全应用、薄 chrome 与 overlay 几何",
+      "description": "AB-04 原生 owner 依 visibleContent 与 presentation 定 webRect：无有效 displayed-frame 身份/tab/几何匹配=drawableWindowRect(空态可见)；native-video+browsing=chromeRect；overlay=drawableWindowRect。visibleContent 只来自 native 已实际显示 frame 的 generation/session/tab/document/viewport/geometry 匹配，inputReady/control_mode/commandPending/operation_running 仅决定写入/IME，不决定视频可见。tab identity 若当前边界不可得，实现必须先由 owner 补真实读取字段或报告缺口，不得以 session_id/DOM/URL 替代。UI 只发 set_presentation({id,state})，本地 set_presentation/抽屉不要求远端 writer 权限。success=applied+新 revision；rejected=NO_AUTHORITY/ACTIVITY_NOT_RESUMED/GEOMETRY_UNAVAILABLE，无假成功。",
+      "operator": "agentbrowser.native.apply_presentation_geometry",
+      "operator_version": "1",
+      "inputs": [
+        "advertised-content-frame"
+      ],
+      "output": {
+        "id": "presentation-input-boundary",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "按 presentation 路由本地与远端输入焦点并闭环 overlay 事件",
+      "description": "browsing+native-video 走 native video frame/source transform：pointer 在 SurfaceView/clip-local 按 visible-source origin 与 scale 逆变换，caret/selection/composition 用 stage+clip+source 的 root/window 有效可见图像 rect，二者共用同一 native parent chain，不新增第二套 UI 公式；全应用/overlay 态只由 WebView 消费，不转发远端。可见性选择只消费 displayed-frame 身份与几何匹配，不消费 inputReady/control_mode/commandPending/operation_running。事件闭环：UI 开 drawer=set_presentation(overlay)；系统 Back 先 browsing 再关 drawer；drawer close/outside=browsing；旋转保留或回落 overlay。",
+      "operator": "agentbrowser.native.route_input_by_presentation",
+      "operator_version": "1",
+      "inputs": [
+        "presentation-input-boundary"
+      ],
+      "output": {
+        "id": "layout-lifecycle-release",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    },
+    {
+      "id": "释放布局资源并产出 typed 终态",
+      "description": "唯一释放 owner=AB-04 原生。资源=insets listener/layout listener(永久,onDestroy)、WebView bridge(onDestroy)、RemoteImeView(onStop/onDestroy)、Mac viewport Timer(terminate/window close)。drawer close 不重建永久资源。终点 layout-resource-terminal-result,status in {applied,rejected,released}；result consumer=intent 发起方；UI 空态可见性绑定 native presentation，不以 connected 或 inputReady 代替。",
+      "operator": "agentbrowser.native.release_layout_resources",
+      "operator_version": "1",
+      "inputs": [
+        "layout-lifecycle-release"
+      ],
+      "output": {
+        "id": "layout-resource-terminal-result",
+        "schema": "Object"
+      },
+      "input_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "output_selector": {
+        "include": [],
+        "exclude": [],
+        "predicate": null
+      },
+      "iterator": "Whole"
+    }
+  ],
+  "edges": [
+    {
+      "from": "绑定布局能力与应用窗口边界",
+      "to": "测量四矩形并只在 AdvertisedViewportRect 变化时申报远端视口",
+      "arc_id": "layout-boundary-binding"
+    },
+    {
+      "from": "测量四矩形并只在 AdvertisedViewportRect 变化时申报远端视口",
+      "to": "按呈现状态切换 WebView 全应用、薄 chrome 与 overlay 几何",
+      "arc_id": "advertised-content-frame"
+    },
+    {
+      "from": "按呈现状态切换 WebView 全应用、薄 chrome 与 overlay 几何",
+      "to": "按 presentation 路由本地与远端输入焦点并闭环 overlay 事件",
+      "arc_id": "presentation-input-boundary"
+    },
+    {
+      "from": "按 presentation 路由本地与远端输入焦点并闭环 overlay 事件",
+      "to": "释放布局资源并产出 typed 终态",
+      "arc_id": "layout-lifecycle-release"
+    }
+  ],
+  "outputs": [
+    "layout-resource-terminal-result"
+  ]
+}

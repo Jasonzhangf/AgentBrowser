@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>W4 browser chrome consumer</title>
+  <style>
+    html, body { margin: 0; height: 100%; font: 13px/1.4 system-ui, sans-serif; background: #111a15; color: #e8f1eb; }
+    #root, .consumer { height: 100%; }
+    .consumer { display: flex; flex-direction: column; }
+    .consumer-header { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px; background: #16231c; }
+    .consumer-header strong { margin-right: 6px; }
+    .consumer-header button { min-height: 30px; padding: 4px 9px; border: 1px solid #3d594a; border-radius: 6px; background: #254a39; color: #fff; }
+    #consumer-frame { flex: 1 1 auto; display: block; width: 100%; min-height: 0; border: 0; background: #f2f5f3; }
+    #commands { flex: 0 0 auto; max-height: 20vh; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid #3d594a; color: #a8d8c1; white-space: pre-wrap; }
+  </style>
+</head>
+<body><div id="root"></div><script src="consumer.js"></script></body>
+</html>

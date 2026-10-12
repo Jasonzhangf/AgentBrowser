@@ -1,0 +1,3 @@
+d6a3e3fd1eb242320939a8fe27a78c1a741b829819bf026fb65132e9dbe5453f  apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMac
+f4baf2388720a40205923f3742b5e615e40173bf0b648ddd8a7963ab5909306b  apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMacBridge
+8f7ff83ad6ceab63a55ea83d1ff39f20af63dd97cbcf35aedab3b0e295f927db  generated/modules/macos-shell/lib/AgentBrowserMac.app.zip

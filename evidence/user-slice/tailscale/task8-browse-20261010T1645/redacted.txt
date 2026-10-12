@@ -1,0 +1,4 @@
+endpoint=wss://100.66.1.82:51881/
+scope=same-physical-mac-tailscale-interface
+cross_node=UNKNOWN
+independent_host_dom=unavailable-service-host

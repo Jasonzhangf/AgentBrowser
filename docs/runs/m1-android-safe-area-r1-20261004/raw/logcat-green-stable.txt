@@ -1,0 +1,14 @@
+--------- beginning of main
+10-04 04:33:09.485   714  1019 I HalDevMgr: bestIfaceCreationProposal is null, requestIface=STA, existingIface=[name=wlan0 type=STA]
+10-04 04:33:09.641  5142 17475 I NetworkScheduler.Stats: (REDACTED) Task %s/%s started execution. cause:%s exec_start_elapsed_seconds: %s
+10-04 04:33:09.650  5142 17475 I NetworkScheduler.Stats: (REDACTED) Task %s/%s finished executing. cause:%s result: %s elapsed_millis: %s uptime_millis: %s exec_start_elapsed_seconds: %s
+10-04 04:33:09.695  5142 17500 I NetworkScheduler.Stats: (REDACTED) Task %s/%s started execution. cause:%s exec_start_elapsed_seconds: %s
+10-04 04:33:10.777   714   742 W libbinder.IPCThreadState: Sending oneway calls to frozen process.
+--------- beginning of system
+10-04 04:33:10.803   714   802 D ActivityManager: sync unfroze 5035 com.google.android.apps.photos for 6
+10-04 04:33:10.896   714  1344 W ProcessStats: Tracking association SourceState{c29cb2f system/1000 ImpBg #2876037} whose proc state 6 is better than process ProcessState{43a7c9b com.google.android.apps.photos/10170 pkg=com.google.android.apps.photos} proc state 14 (0 skipped)
+10-04 04:33:11.100   714  1344 W JobScheduler: Job didn't exist in JobStore: c253d60 #u0a170/1034 com.google.android.apps.photos/com.google.android.libraries.social.mediamonitor.MediaMonitorJobSchedulerService
+10-04 04:33:11.414   714  1344 W UriGrantsManagerService: No permission grants found for com.google.android.apps.photos
+10-04 04:33:11.415   714  1344 W UriGrantsManagerService: No permission grants found for com.google.android.apps.photos
+10-04 04:33:11.752   714  1344 W UriGrantsManagerService: No permission grants found for com.google.android.apps.photos
+10-04 04:33:11.753   714  1344 W UriGrantsManagerService: No permission grants found for com.google.android.apps.photos

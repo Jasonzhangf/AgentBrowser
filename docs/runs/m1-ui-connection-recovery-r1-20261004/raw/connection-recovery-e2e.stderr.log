@@ -1,0 +1,3769 @@
+{"spaceId":139,"name":"AgentBrowser UI connection recovery r1 20261004"}
+{
+  "layer": "UI_MODULE",
+  "spaceId": 139,
+  "url": "http://127.0.0.1:55730/consumer.html",
+  "sourceCommit": "de8a0004b16137869ebb4351765c8ef69ab31586",
+  "sourceTree": "9d8bf73970cb99af821ce5fb9da6f5a8fba00871",
+  "bundleDir": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/artifacts/consumer",
+  "bundleHashes": {
+    "app.js": "6e9b979845e9122e126f3e428ced5c950ca7b6624940defe5327b567b44c7d75",
+    "app.css": "4a6aae033b5af29b04cdec27f4cf9d10bb9798f78b2121c36b11f295f0d976f7",
+    "consumer.js": "2c4ba78f47b121ed76ae4eff478eb9bcc6aa3ac68ea13192929c0067bf75d3ba",
+    "consumer-frame.js": "aa4b64f213ea46e412b87974419749386619ceb416d05cc8d3464891053f787a",
+    "consumer.html": "760bb2654e621dc390e3dc62729271b23881c523662e23a076d0e557141781c5",
+    "ui-frame.html": "27efac6be2b7286afcd625fc88bed8e9f89191b0a642dacb5ca41d537d5059d2"
+  },
+  "expectedSafeInset": 24,
+  "finishReceipt": {
+    "spaceId": 139,
+    "closedSpace": true,
+    "keptManagedLabels": [],
+    "closedManagedLabels": [
+      "p1"
+    ],
+    "preservedUnmanagedCount": 0
+  },
+  "screenshots": {
+    "desktop-required-import": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-required-import.png",
+    "desktop-configured-replace": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-configured-replace.png",
+    "desktop-unresolved-retry": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-unresolved-retry.png",
+    "desktop-unresolved-still": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-unresolved-still.png",
+    "desktop-unavailable-repair": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-unavailable-repair.png",
+    "desktop-unavailable-no-repair": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-unavailable-no-repair.png",
+    "desktop-unavailable-repair-cancel": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-unavailable-repair-cancel.png",
+    "desktop-error-recovery": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-error-recovery.png",
+    "desktop-opening": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-opening.png",
+    "desktop-importing": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-importing.png",
+    "desktop-capability-missing": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-capability-missing.png",
+    "desktop-capability-false": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-capability-false.png",
+    "desktop-connected-unresolved": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-connected-unresolved.png",
+    "desktop-connected-unavailable": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-connected-unavailable.png",
+    "desktop-long-label": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-long-label.png",
+    "desktop-drawer-reopened": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/desktop-drawer-reopened.png",
+    "phone-required-import": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-required-import.png",
+    "phone-unresolved-retry": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-unresolved-retry.png",
+    "phone-unresolved-still": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-unresolved-still.png",
+    "phone-unavailable-repair": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-unavailable-repair.png",
+    "phone-unavailable-no-repair": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-unavailable-no-repair.png",
+    "phone-unavailable-repair-cancel": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-unavailable-repair-cancel.png",
+    "phone-capability-missing": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-capability-missing.png",
+    "phone-capability-false": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-capability-false.png",
+    "phone-connected-unresolved": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-connected-unresolved.png",
+    "phone-connected-unavailable": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-connected-unavailable.png",
+    "phone-long-label": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-long-label.png",
+    "phone-drawer-reopened": "/Volumes/Intel/playground/agentbrowser/m1-ui-connection-recovery-r1-20261004/docs/runs/m1-ui-connection-recovery-r1-20261004/screenshots/phone-drawer-reopened.png"
+  },
+  "cases": {
+    "desktop-required-import": {
+      "before": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "需要配置连接",
+        "statusMeta": "请先配置或导入连接",
+        "label": null,
+        "activeRevision": null,
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "after": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-1",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "import_connection"
+        }
+      ]
+    },
+    "desktop-configured-replace": {
+      "before": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Configured phone",
+        "activeRevision": "3",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "after": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Repaired phone",
+        "activeRevision": "6",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-3",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "import_connection"
+        }
+      ]
+    },
+    "desktop-unresolved-retry": {
+      "blocked": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "recovered": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Recovered phone",
+        "activeRevision": "4",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-5",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "retry_connection_setup"
+        }
+      ]
+    },
+    "desktop-unresolved-still": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-7",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "retry_connection_setup"
+        }
+      ]
+    },
+    "desktop-unavailable-repair": {
+      "allowed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Damaged phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "repaired": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Repaired phone",
+        "activeRevision": "6",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-9",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "repair_connection_import"
+        }
+      ]
+    },
+    "desktop-unavailable-no-repair": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；原生未允许替换连接包",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-11",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-unavailable-repair-cancel": {
+      "beforeCancel": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Cancelled phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "cancelled": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Cancelled phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "recovered": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Repaired phone",
+        "activeRevision": "6",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-13",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "repair_connection_import"
+        },
+        {
+          "op": "repair_connection_import"
+        }
+      ]
+    },
+    "desktop-error-recovery": {
+      "before": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONNECTION_SETUP_FAILED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "重试连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "after": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-15",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "import_connection"
+        }
+      ]
+    },
+    "desktop-opening": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "正在打开连接设置",
+        "statusMeta": "等待原生配置入口",
+        "label": null,
+        "activeRevision": null,
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": null,
+        "import": null,
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-17",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-importing": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "正在导入连接信息",
+        "statusMeta": "等待原生导入入口",
+        "label": null,
+        "activeRevision": null,
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": null,
+        "import": null,
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-19",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-capability-missing": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "需要配置连接",
+        "statusMeta": "请先配置或导入连接",
+        "label": null,
+        "activeRevision": null,
+        "error": null,
+        "capabilityMessage": "当前原生版本未提供连接设置能力或投影",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-21",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-capability-false": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 611
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": "当前原生版本未提供连接设置能力或投影",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 587,
+          "left": 890,
+          "width": 390,
+          "height": 563
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": []
+    },
+    "desktop-connected-unresolved": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-25",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-disconnected-unresolved": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-25",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "disconnect"
+        }
+      ]
+    },
+    "desktop-connected-unavailable": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Current phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-27",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-long-label": {
+      "observed": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：PhoneLabelxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "activeRevision": "5",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-29",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "desktop-drawer-geometry": {
+      "opened": {
+        "viewport": {
+          "width": 1280,
+          "height": 502
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "观察中，Agent 可继续操作",
+        "statusMeta": "只读观察，不影响 Agent",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 478,
+          "left": 890,
+          "width": 390,
+          "height": 454
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "closed": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "false",
+        "presentation": "browsing",
+        "statusTitle": "观察中，Agent 可继续操作",
+        "statusMeta": "只读观察，不影响 Agent",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "hidden",
+        "drawerRect": {
+          "top": 0,
+          "right": 1670,
+          "bottom": 469,
+          "left": 1280,
+          "width": 390,
+          "height": 469
+        },
+        "safeTop": "0px",
+        "safeBottom": "0px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "reopened": {
+        "viewport": {
+          "width": 1280,
+          "height": 469
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "观察中，Agent 可继续操作",
+        "statusMeta": "只读观察，不影响 Agent",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 1280,
+          "bottom": 445,
+          "left": 890,
+          "width": 390,
+          "height": 421
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-31",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "id": "presentation-32",
+          "op": "set_presentation",
+          "state": "browsing"
+        },
+        {
+          "id": "presentation-33",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "phone-required-import": {
+      "before": {
+        "viewport": {
+          "width": 390,
+          "height": 234
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "需要配置连接",
+        "statusMeta": "请先配置或导入连接",
+        "label": null,
+        "activeRevision": null,
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 210,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 186
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "after": {
+        "viewport": {
+          "width": 390,
+          "height": 192
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 168,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 144
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-1",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "import_connection"
+        }
+      ]
+    },
+    "phone-unresolved-retry": {
+      "blocked": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "recovered": {
+        "viewport": {
+          "width": 390,
+          "height": 192
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Recovered phone",
+        "activeRevision": "4",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 168,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 144
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-3",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "retry_connection_setup"
+        }
+      ]
+    },
+    "phone-unresolved-still": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 192
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 168,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 144
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-5",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "retry_connection_setup"
+        }
+      ]
+    },
+    "phone-unavailable-repair": {
+      "allowed": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Damaged phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "repaired": {
+        "viewport": {
+          "width": 390,
+          "height": 156
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Repaired phone",
+        "activeRevision": "6",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 132,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 108
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-7",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "repair_connection_import"
+        }
+      ]
+    },
+    "phone-unavailable-no-repair": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；原生未允许替换连接包",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-9",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "phone-unavailable-repair-cancel": {
+      "beforeCancel": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Cancelled phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "cancelled": {
+        "viewport": {
+          "width": 390,
+          "height": 156
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Cancelled phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 132,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 108
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "recovered": {
+        "viewport": {
+          "width": 390,
+          "height": 156
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：Repaired phone",
+        "activeRevision": "6",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 132,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 108
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-11",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "repair_connection_import"
+        },
+        {
+          "op": "repair_connection_import"
+        }
+      ]
+    },
+    "phone-capability-missing": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "需要配置连接",
+        "statusMeta": "请先配置或导入连接",
+        "label": null,
+        "activeRevision": null,
+        "error": null,
+        "capabilityMessage": "当前原生版本未提供连接设置能力或投影",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-13",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "phone-capability-false": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 343
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": "当前原生版本未提供连接设置能力或投影",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 319,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 295
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": []
+    },
+    "phone-connected-unresolved": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-17",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "phone-disconnected-unresolved": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 192
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置提交状态未确认",
+        "statusMeta": "需要显式重试校准；不会自动重试或重放导入",
+        "label": null,
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_COMMIT_UNRESOLVED",
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": {
+          "disabled": false,
+          "text": "重试校准"
+        },
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 168,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 144
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-17",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "op": "disconnect"
+        }
+      ]
+    },
+    "phone-connected-unavailable": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "连接配置不可用",
+        "statusMeta": "现有配置无效；请显式替换连接包",
+        "label": "连接：Current phone",
+        "activeRevision": null,
+        "error": "CONFIG_ACTIVE_REFERENCE_INVALID",
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": true,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": true,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": {
+          "disabled": false,
+          "text": "替换连接包"
+        },
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-19",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "phone-long-label": {
+      "observed": {
+        "viewport": {
+          "width": 390,
+          "height": 198
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "已断开，Host 页面保留",
+        "statusMeta": "Host 页面保留",
+        "label": "连接：PhoneLabelxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "activeRevision": "5",
+        "error": null,
+        "capabilityMessage": "标签页能力不可用",
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": false,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": true,
+          "text": "断开"
+        },
+        "viewerReady": "false",
+        "visibleContent": "webview",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 174,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 150
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 0,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-21",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    },
+    "phone-drawer-geometry": {
+      "opened": {
+        "viewport": {
+          "width": 390,
+          "height": 234
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "观察中，Agent 可继续操作",
+        "statusMeta": "只读观察，不影响 Agent",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 210,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 186
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "closed": {
+        "viewport": {
+          "width": 390,
+          "height": 192
+        },
+        "drawerOpen": "false",
+        "presentation": "browsing",
+        "statusTitle": "观察中，Agent 可继续操作",
+        "statusMeta": "只读观察，不影响 Agent",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "hidden",
+        "drawerRect": {
+          "top": 0,
+          "right": 748.796875,
+          "bottom": 192,
+          "left": 390,
+          "width": 358.796875,
+          "height": 192
+        },
+        "safeTop": "0px",
+        "safeBottom": "0px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "reopened": {
+        "viewport": {
+          "width": 390,
+          "height": 192
+        },
+        "drawerOpen": "true",
+        "presentation": "overlay",
+        "statusTitle": "观察中，Agent 可继续操作",
+        "statusMeta": "只读观察，不影响 Agent",
+        "label": null,
+        "activeRevision": "unknown",
+        "error": null,
+        "capabilityMessage": null,
+        "setup": {
+          "disabled": false,
+          "text": "配置连接"
+        },
+        "import": {
+          "disabled": false,
+          "text": "导入"
+        },
+        "retry": null,
+        "repair": null,
+        "connect": {
+          "disabled": true,
+          "text": "连接"
+        },
+        "disconnect": {
+          "disabled": false,
+          "text": "断开"
+        },
+        "viewerReady": "true",
+        "visibleContent": "native-video",
+        "drawerVisibility": "visible",
+        "drawerRect": {
+          "top": 24,
+          "right": 390,
+          "bottom": 168,
+          "left": 31.203125,
+          "width": 358.796875,
+          "height": 144
+        },
+        "safeTop": "24px",
+        "safeBottom": "24px",
+        "horizontalOverflow": 2,
+        "sensitiveInputs": 0,
+        "inputs": [
+          {
+            "id": "address",
+            "type": "url"
+          }
+        ]
+      },
+      "commands": [
+        {
+          "id": "presentation-23",
+          "op": "set_presentation",
+          "state": "overlay"
+        },
+        {
+          "id": "presentation-24",
+          "op": "set_presentation",
+          "state": "browsing"
+        },
+        {
+          "id": "presentation-25",
+          "op": "set_presentation",
+          "state": "overlay"
+        }
+      ]
+    }
+  },
+  "assertions": [
+    {
+      "ok": true,
+      "message": "desktop: required state is explicit"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required state enables native setup"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required state enables ordinary import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required state refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required state has no recovery action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: opening required drawer emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: native configured receipt enables connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required import emits exactly one ordinary intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required import does not call setup"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required import does not retry reconcile"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required import does not repair"
+    },
+    {
+      "ok": true,
+      "message": "desktop: required import: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured state keeps connection status"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured label is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured active revision is native-owned"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured state allows ordinary import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured state has no repair action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured replacement emits one ordinary intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured replacement does not repair"
+    },
+    {
+      "ok": true,
+      "message": "desktop: replacement consumes native revision"
+    },
+    {
+      "ok": true,
+      "message": "desktop: configured replacement: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved status is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved copy refuses auto recovery"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved refuses ordinary setup/import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved refuses NEW connect despite legacy networkConfigured=true"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved has no repair action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved exposes one explicit retry action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved opening emits no replay"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: retry consumes confirmed native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "desktop: retry enables connect only after native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "desktop: retry reconcile is sent exactly once"
+    },
+    {
+      "ok": true,
+      "message": "desktop: retry does not replay import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved retry: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: still-unresolved native receipt remains visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: still-unresolved does not guess success"
+    },
+    {
+      "ok": true,
+      "message": "desktop: still-unresolved retry does not auto-repeat"
+    },
+    {
+      "ok": true,
+      "message": "desktop: still unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable status is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable copy exposes explicit repair"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable label is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable refuses ordinary setup/import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable refuses ordinary connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable has no implicit retry action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable repair is enabled only by native permission"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair consumes confirmed native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair intent is sent exactly once"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair is not rewritten as ordinary import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair-denied status is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair-denied copy is truthful"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair-denied state refuses all ordinary actions"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair-denied state exposes no recovery action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair-denied state emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair denied: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair-cancel starts unavailable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: cancelled picker keeps unavailable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: cancelled picker leaves repair reachable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: cancelled picker sends one intent and no auto replay"
+    },
+    {
+      "ok": true,
+      "message": "desktop: second explicit repair can recover after cancel"
+    },
+    {
+      "ok": true,
+      "message": "desktop: cancel recovery uses a second explicit user action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: repair cancel recovery: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: legacy setup error remains visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: legacy setup error keeps ordinary recovery reachable"
+    },
+    {
+      "ok": true,
+      "message": "desktop: recovered error consumes native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "desktop: legacy error recovery sends one ordinary import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: legacy error recovery: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: opening status is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: opening renders no repeat setup action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: opening refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: opening emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: opening: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: importing status is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: importing renders no repeat setup action"
+    },
+    {
+      "ok": true,
+      "message": "desktop: importing refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: importing emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: importing: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: missing setup capability refuses setup/import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: missing setup capability refuses retry/repair"
+    },
+    {
+      "ok": true,
+      "message": "desktop: missing setup capability refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: missing setup capability explains refusal"
+    },
+    {
+      "ok": true,
+      "message": "desktop: missing setup capability emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: missing setup capability: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: false setup capability refuses setup/import"
+    },
+    {
+      "ok": true,
+      "message": "desktop: false setup capability refuses retry/repair"
+    },
+    {
+      "ok": true,
+      "message": "desktop: false setup capability refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: false setup capability emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: false setup capability: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved preserves existing video"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved remains visible while connected"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved keeps disconnect available"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved refuses NEW connect while connected"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unresolved connected state does not replay connect"
+    },
+    {
+      "ok": true,
+      "message": "desktop: connected unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: disconnect removes existing video without resolving setup"
+    },
+    {
+      "ok": true,
+      "message": "desktop: disconnect preserves unresolved setup state"
+    },
+    {
+      "ok": true,
+      "message": "desktop: disconnect sends exactly one typed intent"
+    },
+    {
+      "ok": true,
+      "message": "desktop: disconnected unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable preserves existing video"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable keeps explicit repair available while connected"
+    },
+    {
+      "ok": true,
+      "message": "desktop: unavailable connected state does not replay repair"
+    },
+    {
+      "ok": true,
+      "message": "desktop: connected unavailable: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: long valid label is visible"
+    },
+    {
+      "ok": true,
+      "message": "desktop: long label retains all 64 valid characters"
+    },
+    {
+      "ok": true,
+      "message": "desktop: long label does not create horizontal overflow"
+    },
+    {
+      "ok": true,
+      "message": "desktop: long label keeps drawer inside viewport"
+    },
+    {
+      "ok": true,
+      "message": "desktop: setup UI contains no password, textarea, or contenteditable field"
+    },
+    {
+      "ok": true,
+      "message": "desktop: only the address input remains"
+    },
+    {
+      "ok": true,
+      "message": "desktop: long label: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "desktop: drawer opens from current native overlay receipt"
+    },
+    {
+      "ok": true,
+      "message": "desktop: open drawer uses native safe insets"
+    },
+    {
+      "ok": true,
+      "message": "desktop: open drawer stays inside native safe bounds"
+    },
+    {
+      "ok": true,
+      "message": "desktop: closed drawer does not obscure page content"
+    },
+    {
+      "ok": true,
+      "message": "desktop: page content remains visible after drawer close"
+    },
+    {
+      "ok": true,
+      "message": "desktop: reopened drawer preserves native safe insets"
+    },
+    {
+      "ok": true,
+      "message": "desktop: reopened drawer preserves native safe bounds"
+    },
+    {
+      "ok": true,
+      "message": "desktop: close/reopen uses explicit presentation receipts only"
+    },
+    {
+      "ok": true,
+      "message": "desktop: drawer geometry: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: required state is explicit"
+    },
+    {
+      "ok": true,
+      "message": "phone: required state enables native setup"
+    },
+    {
+      "ok": true,
+      "message": "phone: required state enables ordinary import"
+    },
+    {
+      "ok": true,
+      "message": "phone: required state refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "phone: required state has no recovery action"
+    },
+    {
+      "ok": true,
+      "message": "phone: opening required drawer emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "phone: required: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: native configured receipt enables connect"
+    },
+    {
+      "ok": true,
+      "message": "phone: required import emits exactly one ordinary intent"
+    },
+    {
+      "ok": true,
+      "message": "phone: required import does not call setup"
+    },
+    {
+      "ok": true,
+      "message": "phone: required import does not retry reconcile"
+    },
+    {
+      "ok": true,
+      "message": "phone: required import does not repair"
+    },
+    {
+      "ok": true,
+      "message": "phone: required import: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved status is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved copy refuses auto recovery"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved refuses ordinary setup/import"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved refuses NEW connect despite legacy networkConfigured=true"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved has no repair action"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved exposes one explicit retry action"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved opening emits no replay"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: retry consumes confirmed native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "phone: retry enables connect only after native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "phone: retry reconcile is sent exactly once"
+    },
+    {
+      "ok": true,
+      "message": "phone: retry does not replay import"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved retry: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: still-unresolved native receipt remains visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: still-unresolved does not guess success"
+    },
+    {
+      "ok": true,
+      "message": "phone: still-unresolved retry does not auto-repeat"
+    },
+    {
+      "ok": true,
+      "message": "phone: still unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable status is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable copy exposes explicit repair"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable label is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable refuses ordinary setup/import"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable refuses ordinary connect"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable has no implicit retry action"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable repair is enabled only by native permission"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: repair consumes confirmed native configured receipt"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair intent is sent exactly once"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair is not rewritten as ordinary import"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: repair-denied status is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair-denied copy is truthful"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair-denied state refuses all ordinary actions"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair-denied state exposes no recovery action"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair-denied state emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair denied: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: repair-cancel starts unavailable"
+    },
+    {
+      "ok": true,
+      "message": "phone: cancelled picker keeps unavailable"
+    },
+    {
+      "ok": true,
+      "message": "phone: cancelled picker leaves repair reachable"
+    },
+    {
+      "ok": true,
+      "message": "phone: cancelled picker sends one intent and no auto replay"
+    },
+    {
+      "ok": true,
+      "message": "phone: second explicit repair can recover after cancel"
+    },
+    {
+      "ok": true,
+      "message": "phone: cancel recovery uses a second explicit user action"
+    },
+    {
+      "ok": true,
+      "message": "phone: repair cancel recovery: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: missing setup capability refuses setup/import"
+    },
+    {
+      "ok": true,
+      "message": "phone: missing setup capability refuses retry/repair"
+    },
+    {
+      "ok": true,
+      "message": "phone: missing setup capability refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "phone: missing setup capability explains refusal"
+    },
+    {
+      "ok": true,
+      "message": "phone: missing setup capability emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "phone: missing setup capability: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: false setup capability refuses setup/import"
+    },
+    {
+      "ok": true,
+      "message": "phone: false setup capability refuses retry/repair"
+    },
+    {
+      "ok": true,
+      "message": "phone: false setup capability refuses connect"
+    },
+    {
+      "ok": true,
+      "message": "phone: false setup capability emits no setup intent"
+    },
+    {
+      "ok": true,
+      "message": "phone: false setup capability: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved preserves existing video"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved remains visible while connected"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved keeps disconnect available"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved refuses NEW connect while connected"
+    },
+    {
+      "ok": true,
+      "message": "phone: unresolved connected state does not replay connect"
+    },
+    {
+      "ok": true,
+      "message": "phone: connected unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: disconnect removes existing video without resolving setup"
+    },
+    {
+      "ok": true,
+      "message": "phone: disconnect preserves unresolved setup state"
+    },
+    {
+      "ok": true,
+      "message": "phone: disconnect sends exactly one typed intent"
+    },
+    {
+      "ok": true,
+      "message": "phone: disconnected unresolved: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable preserves existing video"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable keeps explicit repair available while connected"
+    },
+    {
+      "ok": true,
+      "message": "phone: unavailable connected state does not replay repair"
+    },
+    {
+      "ok": true,
+      "message": "phone: connected unavailable: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: long valid label is visible"
+    },
+    {
+      "ok": true,
+      "message": "phone: long label retains all 64 valid characters"
+    },
+    {
+      "ok": true,
+      "message": "phone: long label does not create horizontal overflow"
+    },
+    {
+      "ok": true,
+      "message": "phone: long label keeps drawer inside viewport"
+    },
+    {
+      "ok": true,
+      "message": "phone: setup UI contains no password, textarea, or contenteditable field"
+    },
+    {
+      "ok": true,
+      "message": "phone: only the address input remains"
+    },
+    {
+      "ok": true,
+      "message": "phone: long label: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    },
+    {
+      "ok": true,
+      "message": "phone: drawer opens from current native overlay receipt"
+    },
+    {
+      "ok": true,
+      "message": "phone: open drawer uses native safe insets"
+    },
+    {
+      "ok": true,
+      "message": "phone: open drawer stays inside native safe bounds"
+    },
+    {
+      "ok": true,
+      "message": "phone: closed drawer does not obscure page content"
+    },
+    {
+      "ok": true,
+      "message": "phone: page content remains visible after drawer close"
+    },
+    {
+      "ok": true,
+      "message": "phone: reopened drawer preserves native safe insets"
+    },
+    {
+      "ok": true,
+      "message": "phone: reopened drawer preserves native safe bounds"
+    },
+    {
+      "ok": true,
+      "message": "phone: close/reopen uses explicit presentation receipts only"
+    },
+    {
+      "ok": true,
+      "message": "phone: drawer geometry: no viewport, reload, remote-input, or navigation command",
+      "evidence": []
+    }
+  ],
+  "failure": null
+}
+
+exit=0

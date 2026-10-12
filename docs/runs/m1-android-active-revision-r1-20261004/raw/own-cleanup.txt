@@ -1,0 +1,6 @@
+forwards_after_own_cleanup:
+emulator-5554 tcp:9229 localabstract:webview_devtools_remote_9588
+emulator-5554 tcp:9331 localabstract:webview_devtools_remote_%s
+
+invalid_doc_after_cleanup:
+ls: /sdcard/Download/invalid-connection-active-test.txt: No such file or directory

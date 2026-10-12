@@ -1,0 +1,24 @@
+Mac client credential source (apps/macos/connection-bridge/src/main.rs):
+- line 1464: pairing_dir() reads AGENTBROWSER_MAC_PAIRING.
+- lines 1485-1497: load_pairing() reads endpoint.txt, ca.der, client.der, key.der.
+- lines 1500-1512: read_pairing_file validates files; key.der rejects group/other permissions.
+- lines 819-861: connect loads pairing then calls Connector.connect(pairing, None).
+- lines 500-509: status only refreshes provisioning availability from AGENTBROWSER_MAC_ADMIN_SOCKET.
+- lines 511-515: connect is the only native connection operation.
+- lines 540-555: no native import_connection/open_connection_setup operation exists in this dispatch match.
+
+Mac app startup (apps/macos/Sources/main.swift):
+- lines 2176-2188: --pairing-dir is passed only as AGENTBROWSER_MAC_PAIRING; admin socket comes from HostServiceLocator.
+
+Retry raw AX state after visible connection drawer and 连接 action:
+- 未连接
+- 需要配置连接
+- 状态 idle
+- Transport unknown
+- Path unknown
+- connectionSetup remained required/unconfigured
+
+Host-side session evidence:
+- task6 status after retry: state=running, pid=29244, endpoint_pid=67508, endpoint_generation=24.
+- no remote session_id appeared; no endpoint generation change occurred.
+- The pairing directory was present and valid, so this is not a missing pairing file/credential error. It is a missing native connection-setup projection/import operation in the ordinary Mac client path.

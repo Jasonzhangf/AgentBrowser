@@ -1,8 +1,9 @@
 use crate::{
     decode_video,
     protocol::{
-        Command, Mode, Operation, Request, Response, ResultValue, SessionStatus,
-        ViewportDeclaration,
+        Command, EditingReceipt, HOST_PROTOCOL_VERSION, InputBinding, InputEnvelope, InputEvent,
+        InputReceipt, Mode, Operation, PresentedFrameIdentity, Request, Response, ResultValue,
+        SessionStatus, ViewportDeclaration,
     },
     relay_backend::RelayBackend,
     webrtc::{WebRtcBackend, WebRtcConfig},
@@ -17,7 +18,7 @@ use tokio::{
 use tokio_rustls::{
     rustls::{
         self,
-        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
+        pki_types::{CertificateDer, ServerName, UnixTime},
     },
     TlsConnector,
 };
@@ -43,18 +44,19 @@ pub(crate) trait Backend: Send {
     fn close<'a>(&'a mut self) -> BackendFuture<'a, ()>;
 }
 
-/// Explicit prepaired direct endpoint; credentials remain in the native owner.
+/// The necessary connection configuration: the endpoint address and the bearer
+/// token. The token is the only credential on the connection path.
 pub struct Pairing {
     pub endpoint: String,
-    pub server_ca_der: Vec<u8>,
-    pub client_cert_der: Vec<u8>,
-    pub client_key_pkcs8_der: Vec<u8>,
+    pub token: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct DisplayedFrame {
     pub generation: u64,
     pub session_id: String,
+    pub tab_id: String,
+    pub presentation_revision: u64,
     pub document_revision: u64,
     pub viewport_revision: u64,
 }
@@ -73,13 +75,75 @@ pub enum Input {
     },
 }
 
+/// Frame the client actually presented when it produced a typed input event.
+///
+/// `frame_sequence` is the real decoded media sequence; the Host validates
+/// session/document/viewport only and never treats a new frame sequence as an
+/// input fence, but the client still reports the frame it saw rather than
+/// inventing one. `generation` is the local connection generation and is
+/// checked before the event leaves the client.
+#[derive(Clone, Debug)]
+pub struct PresentedFrame {
+    pub generation: u64,
+    pub session_id: String,
+    pub tab_id: String,
+    pub presentation_revision: u64,
+    pub frame_sequence: u64,
+    pub document_revision: u64,
+    pub viewport_revision: u64,
+}
+
+/// One typed remote-input operation.
+///
+/// A whole pointer gesture or one text composition keeps a single
+/// `operation_id`; `event_sequence` orders the events inside it. The connection
+/// pins the Host operation sequence for the life of the lease, so the caller
+/// never reuses a stale `next_sequence` for continuation events. The caller
+/// owns the identity and must not reuse an `operation_id` for a new operation.
+#[derive(Clone, Debug)]
+pub struct EditingInput {
+    pub operation_id: String,
+    pub event_sequence: u64,
+    pub binding: InputBinding,
+    pub event: InputEvent,
+    pub frame: PresentedFrame,
+    pub epoch: u64,
+}
+
+/// Typed result of one accepted typed input event.
+///
+/// A gesture reports the Host transport-level input state; an editor event
+/// reports the target-bound editing receipt. Neither variant is a bare
+/// transport ACK, and no other `ResultValue` variant is coerced into success.
+#[derive(Clone, Debug)]
+pub enum EditingOutcome {
+    Gesture(InputReceipt),
+    Editor(EditingReceipt),
+}
+
+/// Host-owned navigation/tab projection exposed by status and navigation
+/// results. It is read from the Host response, never synthesized locally.
+#[derive(Clone, Debug)]
+pub struct ProfileState {
+    pub session_id: String,
+    pub profile_id: String,
+    pub active_tab_id: String,
+    pub presentation_revision: u64,
+    pub navigation: crate::protocol::NavigationState,
+    pub tabs: Vec<crate::protocol::TabSummary>,
+}
+
 enum Action {
     Status,
     DeclareViewport(ViewportDeclaration),
     Takeover(u64),
     Release(u64),
-    Navigate(String, u64),
+    Navigate {
+        command: Command,
+        epoch: u64,
+    },
     Input(Input, DisplayedFrame, u64),
+    Editing(EditingInput),
 }
 
 pub struct Connector {
@@ -141,7 +205,38 @@ impl Connection {
         status(self.call(Action::Release(epoch)).await?)
     }
     pub async fn navigate(&self, url: String, epoch: u64) -> Result<SessionStatus, Failure> {
-        status(self.call(Action::Navigate(url, epoch)).await?)
+        self.browser_mutation(Command::Navigate { url }, epoch).await
+    }
+    /// History back on the active tab. `NO_HISTORY` is returned unchanged.
+    pub async fn back(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::Back, epoch).await
+    }
+    /// History forward on the active tab. `NO_HISTORY` is returned unchanged.
+    pub async fn forward(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::Forward, epoch).await
+    }
+    /// Reload the active tab's current document.
+    pub async fn reload(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::Reload, epoch).await
+    }
+    /// Create and activate a blank tab in the bound profile session.
+    pub async fn tab_create(&self, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::TabCreate {}, epoch).await
+    }
+    /// Activate an existing Host-assigned tab without reloading it.
+    pub async fn tab_select(&self, tab_id: String, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::TabSelect { tab_id }, epoch).await
+    }
+    /// Close a Host-assigned tab. `LAST_TAB` is returned unchanged.
+    pub async fn tab_close(&self, tab_id: String, epoch: u64) -> Result<SessionStatus, Failure> {
+        self.browser_mutation(Command::TabClose { tab_id }, epoch).await
+    }
+    async fn browser_mutation(
+        &self,
+        command: Command,
+        epoch: u64,
+    ) -> Result<SessionStatus, Failure> {
+        status(self.call(Action::Navigate { command, epoch }).await?)
     }
     pub async fn input(
         &self,
@@ -152,6 +247,19 @@ impl Connection {
         match self.call(Action::Input(input, displayed, epoch)).await? {
             ResultValue::Input { .. } => Ok(()),
             _ => Err(Failure::Protocol("Expected input receipt".into())),
+        }
+    }
+    /// Submit one typed Host11 input event (gesture or target-bound edit).
+    ///
+    /// The returned [`EditingOutcome`] is the Host's real result for this
+    /// event: a gesture input state or a target-bound editing receipt. Host
+    /// refusals surface as `Failure::Host { code, .. }`; a lost mutation reply
+    /// surfaces as `Failure::OutcomeUnknown` and is never replayed.
+    pub async fn editing(&self, input: EditingInput) -> Result<EditingOutcome, Failure> {
+        match self.call(Action::Editing(input)).await? {
+            ResultValue::Input { input } => Ok(EditingOutcome::Gesture(input)),
+            ResultValue::Editing { editing } => Ok(EditingOutcome::Editor(editing)),
+            _ => Err(Failure::Protocol("Expected typed input receipt".into())),
         }
     }
     /// Closing the native connection releases sockets; it does not close Host.
@@ -167,6 +275,28 @@ pub(crate) fn status(value: ResultValue) -> Result<SessionStatus, Failure> {
     match value {
         ResultValue::Status(status) => Ok(status),
         _ => Err(Failure::Protocol("Expected status".into())),
+    }
+}
+
+pub(crate) fn profile_state(status: SessionStatus) -> ProfileState {
+    ProfileState {
+        session_id: status.session_id,
+        profile_id: status.profile_id,
+        active_tab_id: status.active_tab_id,
+        presentation_revision: status.presentation_revision,
+        navigation: status.navigation,
+        tabs: status.tabs,
+    }
+}
+
+impl Connection {
+    /// Return the authoritative navigation/tab/profile projection.
+    ///
+    /// This is a read-only status projection. It does not grant profile
+    /// management authority; `ProfileCatalog/Create/Select` are refused by
+    /// the current mTLS endpoint until an explicit scope is bound.
+    pub async fn profile_state(&self) -> Result<ProfileState, Failure> {
+        Ok(profile_state(self.status().await?))
     }
 }
 
@@ -286,6 +416,9 @@ fn spawn_connection<B: Backend + 'static>(
     tokio::spawn(async move {
         let mut backend = backend;
         let mut sequence = MediaSequence::new(session.clone());
+        // Pinned Host operation sequence for the one open gesture/composition
+        // lease, keyed by the caller-owned operation id.
+        let mut lease: Option<(String, u64)> = None;
         let result: Result<(), Failure> = loop {
             tokio::select! {
                 biased;
@@ -294,7 +427,7 @@ fn spawn_connection<B: Backend + 'static>(
                 Some((action, answer)) = requests.recv() => {
                     // A cancelled request that never started cannot mutate Host.
                     if answer.is_closed() { continue; }
-                    let result = execute(&mut backend, &mut id, action, generation, &session, attachment).await;
+                    let result = execute(&mut backend, &mut id, action, generation, &session, attachment, &mut lease).await;
                     let fatal = matches!(&result, Err(Failure::Transport(_) | Failure::Protocol(_) | Failure::OutcomeUnknown | Failure::Closed));
                     let error = result.as_ref().err().cloned();
                     let _ = answer.send(result);
@@ -401,46 +534,91 @@ async fn establish(
     Ok((bootstrap.control, media, bootstrap.status, bootstrap.id))
 }
 
+/// TLS for the direct endpoint. The bundle carries no CA, so the transport
+/// cannot verify the Host certificate; the token is the only credential. This
+/// verifier therefore accepts the presented server certificate and keeps the
+/// handshake signature checks the crypto provider owns.
+#[derive(Debug)]
+struct TokenOnlyServerVerifier(Arc<rustls::crypto::CryptoProvider>);
+
+impl rustls::client::danger::ServerCertVerifier for TokenOnlyServerVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 async fn establish_control(
     pairing: Pairing,
     viewport: Option<ViewportDeclaration>,
 ) -> Result<Bootstrap, Failure> {
-    let base = url::Url::parse(&pairing.endpoint).map_err(transport)?;
-    if base.scheme() != "wss"
-        || base.host_str().is_none()
-        || !base.username().is_empty()
-        || base.password().is_some()
-        || base.query().is_some()
-        || base.fragment().is_some()
-        || !matches!(base.path(), "" | "/")
-    {
-        return Err(Failure::Protocol(
-            "Expected plain wss endpoint origin".into(),
-        ));
-    }
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(pairing.server_ca_der))
-        .map_err(transport)?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .map_err(transport)?
-    .with_root_certificates(roots)
-    .with_client_auth_cert(
-        vec![CertificateDer::from(pairing.client_cert_der)],
-        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pairing.client_key_pkcs8_der)),
-    )
-    .map_err(transport)?;
+    // The bundle carries the endpoint as `<host>:<port>`; the scheme is the
+    // transport's own. The transport takes the endpoint as given and fails at
+    // connect if it is wrong, so there is no local endpoint-shape check.
+    let base = url::Url::parse(&format!("wss://{}", pairing.endpoint)).map_err(transport)?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(transport)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(TokenOnlyServerVerifier(provider)))
+        .with_no_client_auth();
     let tls = TlsConnector::from(Arc::new(config));
-    let (mut control, token) = open(&base, "/control", &tls, None).await?;
+    let (mut control, token) = open(&base, "/control", &tls, Some(&pairing.token)).await?;
     let session = match response(&mut control).await? {
         Response::Ready {
-            version: 4,
+            version: HOST_PROTOCOL_VERSION,
             session_id,
         } if !session_id.is_empty() => session_id,
-        _ => return Err(Failure::Protocol("Expected Host protocol version 4".into())),
+        Response::Error { code, message, .. } => {
+            return Err(Failure::Protocol(format!("Host {code}: {message}")))
+        }
+        other => {
+            return Err(Failure::Protocol(format!(
+                "Expected Host protocol version {HOST_PROTOCOL_VERSION}; received {:?}",
+                other
+            )))
+        }
     };
     let mut id = 0;
     let attached = status(
@@ -538,6 +716,7 @@ async fn response(socket: &mut Socket) -> Result<Response, Failure> {
         Message::Text(text) if text.len() <= 1024 * 1024 => {
             serde_json::from_str(&text).map_err(|error| Failure::Protocol(error.to_string()))
         }
+        Message::Binary(_) => Err(Failure::Protocol("Expected bounded control JSON".into())),
         _ => Err(Failure::Protocol("Expected bounded control JSON".into())),
     }
 }
@@ -627,13 +806,14 @@ async fn execute<B: Backend>(
     generation: u64,
     session: &str,
     attachment: Option<u64>,
+    lease: &mut Option<(String, u64)>,
 ) -> Result<ResultValue, Failure> {
     let (command, operation) = match action {
         Action::Status => (Command::Status {}, None),
         Action::DeclareViewport(viewport) => (Command::DeclareViewport { viewport }, None),
         Action::Takeover(epoch) => (Command::RequestTakeover { epoch }, None),
         Action::Release(epoch) => (Command::ReleaseControl { epoch }, None),
-        Action::Navigate(url, epoch) => {
+        Action::Navigate { command, epoch } => {
             let current = status(exchange_backend(backend, id, Command::Status {}, None).await?)?;
             if current.session_id != session || current.attachment_id != attachment {
                 return Err(Failure::Protocol("Control attachment changed".into()));
@@ -645,8 +825,9 @@ async fn execute<B: Backend>(
                 });
             }
             (
-                Command::Navigate { url },
+                command,
                 Some(Operation {
+                    operation_id: format!("legacy-{}", current.next_sequence),
                     session_id: session.into(),
                     attachment_id: attachment.unwrap(),
                     sequence: current.next_sequence,
@@ -690,6 +871,7 @@ async fn execute<B: Backend>(
             (
                 command,
                 Some(Operation {
+                    operation_id: format!("legacy-{}", current.next_sequence),
                     session_id: session.into(),
                     attachment_id: attachment.unwrap(),
                     sequence: current.next_sequence,
@@ -698,6 +880,64 @@ async fn execute<B: Backend>(
                     document_revision: frame.document_revision,
                 }),
             )
+        }
+        Action::Editing(input) => {
+            if input.frame.generation != generation || input.frame.session_id != session {
+                return Err(Failure::Protocol(
+                    "Input belongs to another displayed connection".into(),
+                ));
+            }
+            // A continuation event of an open gesture/composition keeps the
+            // sequence that opened the lease; only a fresh operation takes the
+            // Host's next sequence. The Host remains the fence authority.
+            let sequence = match lease.as_ref() {
+                Some((operation_id, sequence)) if operation_id == &input.operation_id => *sequence,
+                _ => {
+                    let current =
+                        status(exchange_backend(backend, id, Command::Status {}, None).await?)?;
+                    if current.session_id != session || current.attachment_id != attachment {
+                        return Err(Failure::Protocol("Control attachment changed".into()));
+                    }
+                    current.next_sequence
+                }
+            };
+            let operation_id = input.operation_id;
+            let frame = PresentedFrameIdentity {
+                session_id: input.frame.session_id,
+                tab_id: input.frame.tab_id,
+                presentation_revision: input.frame.presentation_revision,
+                frame_sequence: input.frame.frame_sequence,
+                document_revision: input.frame.document_revision,
+                viewport_revision: input.frame.viewport_revision,
+            };
+            let operation = Operation {
+                operation_id: operation_id.clone(),
+                session_id: session.into(),
+                attachment_id: attachment.unwrap(),
+                sequence,
+                control_epoch: input.epoch,
+                viewport_revision: frame.viewport_revision,
+                document_revision: frame.document_revision,
+            };
+            let envelope = InputEnvelope {
+                event_sequence: input.event_sequence,
+                frame,
+                binding: input.binding,
+                event: input.event,
+            };
+            let result =
+                exchange_backend(backend, id, Command::Input { envelope }, Some(operation)).await;
+            // Remember the accepted operation identity so continuation events
+            // and an identical replay reuse the exact Host sequence. A fresh
+            // operation takes `next_sequence`; a Host refusal leaves the
+            // previous identity untouched.
+            if matches!(
+                &result,
+                Ok(ResultValue::Editing { .. }) | Ok(ResultValue::Input { .. })
+            ) {
+                *lease = Some((operation_id, sequence));
+            }
+            return result;
         }
     };
     let value = exchange_backend(backend, id, command, operation).await?;
@@ -712,7 +952,8 @@ async fn execute<B: Backend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};
 
     struct PendingVideoBackend {
         status: SessionStatus,
@@ -779,6 +1020,7 @@ mod tests {
     fn pending_video_status() -> SessionStatus {
         SessionStatus {
             session_id: "session".into(),
+            profile_id: "default".into(),
             attachment_id: Some(7),
             mode: Some(Mode::Observe),
             attachments: 1,
@@ -792,9 +1034,20 @@ mod tests {
             next_sequence: 1,
             viewport_revision: 1,
             document_revision: 1,
+            presentation_revision: 1,
+            active_tab_id: "tab".into(),
+            tabs: Vec::new(),
+            navigation: crate::protocol::NavigationState {
+                url: String::new(),
+                title: String::new(),
+                can_go_back: false,
+                can_go_forward: false,
+            },
             viewport: None,
             viewport_owner: None,
             viewport_pending: false,
+            editor_context: None,
+            input_lease: None,
         }
     }
 
@@ -833,6 +1086,87 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(closed.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn browser_mutations_reuse_navigate_operation_and_status_projection() {
+        struct RecordingBackend {
+            status: SessionStatus,
+            commands: Arc<Mutex<Vec<Command>>>,
+        }
+
+        impl Backend for RecordingBackend {
+            fn request<'a>(&'a mut self, request: Request) -> BackendFuture<'a, Response> {
+                self.commands.lock().unwrap().push(request.command.clone());
+                let status = self.status.clone();
+                Box::pin(async move {
+                    Ok(Response::Result {
+                        id: request.id,
+                        value: ResultValue::Status(status),
+                    })
+                })
+            }
+
+            fn next_video<'a>(&'a mut self) -> BackendFuture<'a, Video> {
+                Box::pin(std::future::pending())
+            }
+
+            fn close<'a>(&'a mut self) -> BackendFuture<'a, ()> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let status = pending_video_status();
+        let (_generation_sender, changed) = watch::channel(1);
+        let mut status = status;
+        status.navigation.can_go_back = true;
+        let connection = spawn_connection(
+            1,
+            status.clone(),
+            RecordingBackend {
+                status,
+                commands: Arc::clone(&commands),
+            },
+            0,
+            changed,
+        );
+
+        assert_eq!(connection.back(0).await.unwrap().active_tab_id, "tab");
+        assert_eq!(connection.forward(0).await.unwrap().profile_id, "default");
+        assert_eq!(connection.reload(0).await.unwrap().session_id, "session");
+        assert_eq!(connection.tab_create(0).await.unwrap().tabs.len(), 0);
+        assert_eq!(
+            connection.tab_select("tab-b".into(), 0).await.unwrap().presentation_revision,
+            1
+        );
+        assert_eq!(
+            connection.tab_close("tab-b".into(), 0).await.unwrap().document_revision,
+            1
+        );
+        let projection = connection.profile_state().await.unwrap();
+        assert_eq!(projection.active_tab_id, "tab");
+        assert!(projection.navigation.can_go_back);
+
+        let commands = commands.lock().unwrap();
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                Command::Status {},
+                Command::Back,
+                Command::Status {},
+                Command::Forward,
+                Command::Status {},
+                Command::Reload,
+                Command::Status {},
+                Command::TabCreate {},
+                Command::Status {},
+                Command::TabSelect { .. },
+                Command::Status {},
+                Command::TabClose { .. },
+                Command::Status {}
+            ]
+        ));
     }
 
     #[tokio::test]

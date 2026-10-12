@@ -1,0 +1,38 @@
+100.66.1.82      macstudio                              jason.zhangfan@  macOS    -                                                   
+100.104.163.65   15t-1                                  jason.zhangfan@  android  offline, last seen 8h ago                           
+100.84.43.49     ai-y700                                jason.zhangfan@  android  offline, last seen 4d ago                           
+100.64.45.31     aliyun-dev                             jason.zhangfan@  linux    -                                                   
+100.68.188.116   coder1-new                             jason.zhangfan@  linux    idle; offers exit node; offline, last seen 74d ago  
+100.77.236.86    coder2                                 jason.zhangfan@  linux    idle; offers exit node                              
+100.93.255.89    dsh-016489af6e8a-1                     jason.zhangfan@  macOS    -                                                   
+100.79.195.105   dsh-016489af6e8a                       jason.zhangfan@  macOS    offline, last seen 9d ago                           
+100.97.215.80    fsx                                    jason.zhangfan@  linux    -                                                   
+100.102.227.26   gl-b3000                               jason.zhangfan@  linux    idle; offers exit node                              
+100.112.15.12    hpr-w72                                jason.zhangfan@  android  offline, last seen 73d ago                          
+100.111.91.103   huawei-matebook-fold--ultimate-design  jason.zhangfan@  android  offline, last seen 128d ago                         
+100.116.252.82   huawei-matepad-edge                    jason.zhangfan@  android  offline, last seen 138d ago                         
+100.93.14.124    huawei-pura-x-max                      jason.zhangfan@  android  offline, last seen 116d ago                         
+100.99.193.23    ipa2691                                jason.zhangfan@  android  offline, last seen 4h ago                           
+100.75.122.121   jason-hw-desktop                       jason.zhangfan@  windows  -                                                   
+100.67.129.64    jasonlegion                            jason.zhangfan@  windows  offline, last seen 313d ago                         
+100.124.65.91    jasonmacbook-pro                       jason.zhangfan@  macOS    -                                                   
+100.93.143.20    jennys-macbook-air                     jason.zhangfan@  macOS    -                                                   
+100.86.84.63     macbookair                             jason.zhangfan@  macOS    -                                                   
+100.96.5.127     muse                                   jason.zhangfan@           -                                                   
+100.81.236.38    neo8                                   jason.zhangfan@  android  offline, last seen 162d ago                         
+100.118.146.53   openwrt-router                         jason.zhangfan@  linux    offline, last seen 178d ago                         
+100.119.165.59   oppo-pad-mini                          jason.zhangfan@  android  offline, last seen 55d ago                          
+100.75.72.47     opwrt-1                                jason.zhangfan@  linux    -                                                   
+100.94.44.43     snapdragon                             jason.zhangfan@  windows  offline, last seen 37d ago                          
+100.77.11.8      t2s-jvp5-3                             jason.zhangfan@  linux    -                                                   
+100.117.253.128  v2454da                                jason.zhangfan@  android  offline, last seen 170d ago                         
+100.65.195.25    v2502da                                jason.zhangfan@  android  offline, last seen 14d ago                          
+100.95.178.76    v2545a                                 jason.zhangfan@  android  offline, last seen 10d ago                          
+100.86.226.68    v2547a                                 jason.zhangfan@  android  offline, last seen 64d ago                          
+100.107.194.67   v2548a                                 jason.zhangfan@  android  offline, last seen 68d ago                          
+100.78.53.122    v2602a                                 jason.zhangfan@  android  offline, last seen 9h ago                           
+100.124.49.106   vm-0-8-ubuntu                          jason.zhangfan@  linux    -                                                   
+100.79.203.3     z4pro                                  tagged-devices   linux    idle; offers exit node                              
+
+# Health check:
+#     - Some peers are advertising routes but --accept-routes is false

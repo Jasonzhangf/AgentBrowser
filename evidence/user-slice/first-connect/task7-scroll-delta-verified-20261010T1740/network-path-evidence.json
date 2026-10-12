@@ -1,0 +1,41 @@
+{
+  "schema": "agentbrowser.network-path.evidence.v1",
+  "path_id": "local-direct",
+  "network_path": "local",
+  "transport": "WSS",
+  "session_id": "d41f5b59-7391-498d-bd99-4f414aa1bd4b",
+  "run_id": "1d60e8131dcc4e03a947308a27d006ea",
+  "signaling": {
+    "status": "proved",
+    "evidence": [
+      "network-test.log",
+      "network-host.log"
+    ]
+  },
+  "media": {
+    "status": "proved",
+    "decoded_frames": 3,
+    "displayed": true,
+    "evidence": [
+      "network-result.json",
+      "network-screen.png"
+    ]
+  },
+  "operation_evidence": {
+    "status": "unknown",
+    "evidence": [],
+    "reason": "Existing instrumentation operationReceipts omit operation IDs and generations; no operation receipt is projected"
+  },
+  "operation_receipts": [],
+  "source": {
+    "root": "/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/evidence/user-slice/first-connect/task7-scroll-delta-verified-20261010T1740",
+    "files": [
+      "network-result.json",
+      "network-test.log",
+      "network-screen.png"
+    ],
+    "run_id": "1d60e8131dcc4e03a947308a27d006ea",
+    "producer": "scripts/network-replay.py"
+  },
+  "result": "UNPROVEN"
+}

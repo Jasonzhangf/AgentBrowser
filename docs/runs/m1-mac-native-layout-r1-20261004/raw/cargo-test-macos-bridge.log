@@ -1,0 +1,30 @@
+   Compiling agentbrowser-macos-bridge v0.1.0 (/Volumes/Intel/playground/agentbrowser/m1-mac-native-layout-r1-20261004/apps/macos/connection-bridge)
+    Finished `release` profile [optimized] target(s) in 8.43s
+     Running unittests src/main.rs (/Volumes/Intel/playground/agentbrowser/m1-mac-native-input-r2-20261003/target/release/deps/agentbrowser_macos_bridge-0624629f35359cae)
+
+running 11 tests
+test tests::local_command_fields_are_closed ... ok
+test tests::encoder_unavailable_media_marker_preserves_typed_terminal_error ... ok
+test tests::navigate_command_requires_only_typed_fields ... ok
+test tests::nonfinite_input_is_rejected ... ok
+test tests::probe_snapshot_omits_null_optional_fields ... ok
+test tests::account_status_snapshot_matches_client_domain_abi ... ok
+test tests::unconfigured_account_mutations_return_typed_errors ... ok
+test tests::media_termination_forwards_transport_typed_error ... ok
+test tests::media_termination_with_closed_failure_watch_remains_explicit ... ok
+test tests::media_termination_without_failure_forwards_stream_closed ... ok
+test tests::typed_editing_command_reaches_connection_owner ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/public_consumer.rs (/Volumes/Intel/playground/agentbrowser/m1-mac-native-input-r2-20261003/target/release/deps/public_consumer-97a36dce165d69b3)
+
+running 6 tests
+test invalid_selection_direction_is_typed ... ok
+test typed_select_without_session_is_explicit ... ok
+test unknown_editing_field_is_rejected ... ok
+test invalid_editing_binding_is_typed ... ok
+test status_without_session_reports_observe ... ok
+test typed_editing_command_without_session_is_explicit ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s

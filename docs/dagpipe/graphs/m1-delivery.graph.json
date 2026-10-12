@@ -1,0 +1,14 @@
+{
+ "id":"m1-delivery","version":"1","inputs":[{"id":"scoped-m1-task","schema":"Object"}],
+ "nodes":[
+  {"id":"核对能力与独立设计准入","operator":"agentbrowser.delivery.admit_design","operator_version":"1","inputs":["scoped-m1-task"],"output":{"id":"admitted-task","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"作者完成候选与开发验证","operator":"agentbrowser.delivery.verify_candidate","operator_version":"1","inputs":["admitted-task"],"output":{"id":"candidate-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"安装版本产物并核对实际运行","operator":"agentbrowser.delivery.install_runtime","operator_version":"1","inputs":["candidate-result"],"output":{"id":"runtime-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"完成真实用户黑盒验收","operator":"agentbrowser.delivery.verify_blackbox","operator_version":"1","inputs":["runtime-result"],"output":{"id":"blackbox-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"独立架构审查候选","operator":"agentbrowser.delivery.review_architecture","operator_version":"1","inputs":["blackbox-result"],"output":{"id":"review-result","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"集成远端并归档版本基线","operator":"agentbrowser.delivery.integrate_baseline","operator_version":"1","inputs":["review-result"],"output":{"id":"delivery-receipt","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"},
+  {"id":"核销自有资源并记录交付结果","operator":"agentbrowser.delivery.close_resources","operator_version":"1","inputs":["delivery-receipt"],"output":{"id":"delivery-outcome","schema":"Object"},"input_selector":{"include":[],"exclude":[],"predicate":null},"output_selector":{"include":[],"exclude":[],"predicate":null},"iterator":"Whole"}
+ ],
+ "edges":[{"from":"核对能力与独立设计准入","to":"作者完成候选与开发验证","arc_id":"admitted-task"},{"from":"作者完成候选与开发验证","to":"安装版本产物并核对实际运行","arc_id":"candidate-result"},{"from":"安装版本产物并核对实际运行","to":"完成真实用户黑盒验收","arc_id":"runtime-result"},{"from":"完成真实用户黑盒验收","to":"独立架构审查候选","arc_id":"blackbox-result"},{"from":"独立架构审查候选","to":"集成远端并归档版本基线","arc_id":"review-result"},{"from":"集成远端并归档版本基线","to":"核销自有资源并记录交付结果","arc_id":"delivery-receipt"}],
+ "outputs":["delivery-outcome"]
+}

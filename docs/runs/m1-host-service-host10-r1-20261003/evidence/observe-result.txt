@@ -1,0 +1,5 @@
+install_rc=0
+start_rc=2
+status_rc=0
+state_exists=no
+runtime_exists=yes

@@ -4,9 +4,6 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import org.json.JSONObject;
-import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -14,12 +11,16 @@ import java.util.concurrent.TimeUnit;
 
 /** Platform lifetime only. Host status remains an authoritative projection. */
 final class NetworkSession {
+    static final int COMMAND_NAVIGATE = 7;
+    static int navigationBridgeCommand(){return COMMAND_NAVIGATE;}
     interface FrameSink { CompletableFuture<AnnexBDecoder.Receipt> submit(NetworkFrame frame,long token,long generation); }
-    private final Context context;
     private final FrameSink sink;
     private final Runnable release;
+    private final ConnectionSetupSession connectionSetup;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
+    private Runnable imeSync;
+    private Runnable statusSync;
     private long handle,token,generation,shownEpoch;
     record Viewport(int width,int height,boolean landscape) { }
     record CommandRequest(int op,long epoch,double x,double y,double dx,double dy,String text) { }
@@ -29,11 +30,24 @@ final class NetworkSession {
     private CommandRequest queuedCommand;
     private NetworkFrame displayed;
     private JSONObject host;
+    private String openOperationId;
+    private String gestureOperationId;
+    private String gestureSessionId;
     private String state="idle",error,shownMode="observe",selectedTransport="";
-    NetworkSession(Context context,FrameSink sink,Runnable release){this.context=context.getApplicationContext();this.sink=sink;this.release=release;}
+    private ActiveConfiguration binding;
+    NetworkSession(Context context,FrameSink sink,Runnable release,ConnectionSetupSession connectionSetup){
+        this.sink=sink;this.release=release;this.connectionSetup=connectionSetup;
+    }
     synchronized boolean active(){return running||state.equals("connecting")||state.equals("stopping");}
     synchronized boolean connected(){return running&&handle!=0;}
     synchronized String transport(){return selectedTransport;}
+    synchronized long generation(){return generation;}
+    synchronized String hostSessionId(){return host==null?null:host.optString("session_id",null);}
+    synchronized String activeTabId(){return host==null?null:host.optString("active_tab_id",null);}
+    synchronized long hostDocumentRevision(){return host==null?-1:host.optLong("document_revision",-1);}
+    synchronized long hostViewportRevision(){return host==null?-1:host.optLong("viewport_revision",-1);}
+    synchronized long hostPresentationRevision(){return host==null?-1:host.optLong("presentation_revision",-1);}
+    synchronized boolean hostViewportPending(){return host!=null&&host.optBoolean("viewport_pending",false);}
     synchronized boolean current(long value){return connected()&&token==value;}
     synchronized boolean inputReady(){return connected()&&!commandPending&&queuedCommand==null&&displayed!=null
         &&java.util.Objects.equals(requestedViewport,submittedViewport)&&hostReady(host)
@@ -56,6 +70,130 @@ final class NetworkSession {
         if(!viewport.equals(requestedViewport))rejectedViewport=null;
         requestedViewport=viewport;
         flushViewport();
+    }
+    synchronized JSONObject editorContext(){
+        return host==null?null:host.optJSONObject("editor_context");
+    }
+    /** Host-published navigation state; the app never invents a local URL. */
+    synchronized JSONObject navigation(){
+        return host==null?null:host.optJSONObject("navigation");
+    }
+    synchronized JSONObject selection(){
+        JSONObject context=editorContext();
+        return context==null?null:context.optJSONObject("selection");
+    }
+    synchronized JSONObject surrounding(){
+        JSONObject context=editorContext();
+        return context==null?null:context.optJSONObject("surrounding");
+    }
+    synchronized boolean remoteImeEligible(){
+        return editEligible();
+    }
+    synchronized boolean gestureEligible(String operationId){
+        return connectionEligible()&&host!=null&&!host.optBoolean("viewport_pending",false)
+            &&RemoteInput.gestureAllowed(host,operationId,gestureOperationId,gestureSessionId);
+    }
+    private synchronized boolean connectionEligible(){
+        return connected()&&!commandPending&&queuedCommand==null&&displayed!=null
+            &&java.util.Objects.equals(requestedViewport,submittedViewport)&&host!=null
+            &&!host.optBoolean("viewport_pending",false)
+            &&displayed.documentRevision==host.optLong("document_revision",-1)
+            &&displayed.viewportRevision==host.optLong("viewport_revision",-1)
+            &&humanShown();
+    }
+    private synchronized boolean editEligible(){
+        return connectionEligible()&&RemoteInput.editable(host);
+    }
+    /** One typed event at a time. Operation/event identities belong to the caller. */
+    synchronized String editing(long epoch,String operationId,long eventSequence,String binding,String event){
+        if(!remoteImeEligible())throw new IllegalStateException("REMOTE_IME_NOT_ELIGIBLE");
+        return submitNative(epoch,operationId,eventSequence,binding,event,false);
+    }
+    synchronized String gesture(long epoch,String operationId,String gestureSessionId,long eventSequence,String event){
+        if(operationId==null||operationId.isEmpty()||gestureSessionId==null||gestureSessionId.isEmpty())
+            throw new IllegalStateException("INVALID_REMOTE_GESTURE");
+        if(eventSequence>0&&!operationId.equals(gestureOperationId))
+            throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        if(!gestureEligible(operationId))throw new IllegalStateException("REMOTE_GESTURE_NOT_ELIGIBLE");
+        if(eventSequence==0){
+            gestureOperationId=operationId;
+            // The parameter shadows the field, so bind the field explicitly: the
+            // terminal cancel must carry the session id that opened the Host lease.
+            this.gestureSessionId=gestureSessionId;
+        }
+        return submitNative(epoch,operationId,eventSequence,RemoteInput.gestureBinding(gestureSessionId),event,false);
+    }
+    /** Cancel a gesture this attachment still owns, even if new input is fenced. */
+    synchronized String cancelGesture(long epoch,String operationId,long eventSequence){
+        if(operationId==null||operationId.isEmpty()||!operationId.equals(gestureOperationId))
+            throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        if(!connected()||displayed==null||epoch!=shownEpoch)throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        if(host==null||!RemoteInput.gestureCancelOwned(host,operationId))
+            throw new IllegalStateException("STALE_GESTURE_OPERATION");
+        return submitNative(epoch,operationId,eventSequence,RemoteInput.gestureBinding(gestureSessionId),
+            RemoteInput.event("pointer_cancel","pointer_id",1),true);
+    }
+    /** Terminalize our own editor lease after its remote target is gone. */
+    synchronized String cancelEditing(long epoch,String operationId,long eventSequence,String binding,String event){
+        if(operationId==null||operationId.isEmpty()||binding==null||event==null)
+            throw new IllegalStateException("INVALID_REMOTE_EDIT");
+        if(!connected()||displayed==null||epoch!=shownEpoch)throw new IllegalStateException("STALE_CONTROL");
+        if(host==null||!RemoteInput.compositionCancelOwned(host,operationId))
+            throw new IllegalStateException("STALE_EDITING_OPERATION");
+        return submitNative(epoch,operationId,eventSequence,binding,event,true);
+    }
+    private synchronized String submitNative(long epoch,String operationId,long eventSequence,String binding,String event,boolean fencedCancel){
+        if(epoch!=shownEpoch)throw new IllegalStateException("STALE_CONTROL");
+        if(operationId==null||operationId.isEmpty()||eventSequence<0||binding==null||event==null)
+            throw new IllegalStateException("INVALID_REMOTE_EDIT");
+        boolean continuing=eventSequence>0&&operationId.equals(openOperationId);
+        if(commandPending||queuedCommand!=null
+                ||(host.optBoolean("operation_running",false)&&!continuing&&!fencedCancel))
+            throw new IllegalStateException("OPERATION_PENDING");
+        if(displayed==null)throw new IllegalStateException("DISPLAY_NOT_READY");
+        try{
+            String result=NativeConnection.editing(handle,epoch,displayed.ticket,operationId,eventSequence,binding,event);
+            try{
+                JSONObject value=new JSONObject(result);
+                if(value.optJSONObject("editing")==null){
+                    if(value.optJSONObject("input")==null)throw new IllegalStateException("INVALID_EDITING_RECEIPT");
+                    RemoteInput.requireGestureReceipt(result,event);
+                }
+                if(fencedCancel||RemoteInput.eventTerminal(event))openOperationId=null;
+                else openOperationId=operationId;
+                if(openOperationId==null){
+                    gestureOperationId=null;
+                    gestureSessionId=null;
+                    flushViewport();
+                }
+            }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_EDITING_RECEIPT",invalid);}
+            return result;
+        }catch(HostCommandException rejection){
+            error=rejection.toString();
+            throw rejection;
+        }catch(RuntimeException failure){
+            error=failure.toString();
+            throw failure;
+        }
+    }
+    synchronized void resetEditing(){
+        openOperationId=null;
+        gestureOperationId=null;
+        gestureSessionId=null;
+    }
+    synchronized void onImeSync(Runnable runnable){this.imeSync=runnable;}
+    private synchronized void notifyImeSync(){if(imeSync!=null)main.post(imeSync);}
+    synchronized void onStatusSync(Runnable runnable){this.statusSync=runnable;}
+    private synchronized void notifyStatusSync(){if(statusSync!=null)main.post(statusSync);}
+    /** Only identity-bearing status changes need a native layout reconciliation. */
+    static boolean identityStatusChanged(JSONObject previous,JSONObject current){
+        if(previous==null||current==null)return previous!=current;
+        return !java.util.Objects.equals(previous.optString("session_id",null),current.optString("session_id",null))
+            ||!java.util.Objects.equals(previous.optString("active_tab_id",null),current.optString("active_tab_id",null))
+            ||previous.optLong("presentation_revision",-1)!=current.optLong("presentation_revision",-1)
+            ||previous.optLong("document_revision",-1)!=current.optLong("document_revision",-1)
+            ||previous.optLong("viewport_revision",-1)!=current.optLong("viewport_revision",-1)
+            ||previous.optBoolean("viewport_pending",false)!=current.optBoolean("viewport_pending",false);
     }
     static boolean viewportNeedsSubmission(Viewport requested,Viewport submitted,Viewport rejected){
         return requested!=null&&!requested.equals(submitted)&&!requested.equals(rejected);
@@ -80,11 +218,27 @@ final class NetworkSession {
         return viewportNeedsSubmission(requested,submitted,rejected)?CommandAdvance.SUBMIT_VIEWPORT:CommandAdvance.IDLE;
     }
     private synchronized void flushViewport(){
-        if(!connected()||commandPending||!viewportNeedsSubmission(requestedViewport,submittedViewport,rejectedViewport))return;
+        // A new viewport must not be applied before the current operation ends: the
+        // operation keeps one fencing for its whole life, and a mid-operation viewport
+        // change would make its terminal event unstoppable.
+        if(!connected()||commandPending||openOperationId!=null
+                ||!viewportNeedsSubmission(requestedViewport,submittedViewport,rejectedViewport))return;
         Viewport viewport=requestedViewport;
         command(6,0,viewport.width(),viewport.height(),viewport.landscape()?1:0,0,"");
     }
     private static long next(long value){if(value==Long.MAX_VALUE)throw new IllegalStateException("GENERATION_EXHAUSTED");return value+1;}
+    /**
+     * The Android probe advertises only capabilities with a wired native path.
+     * navigation: MainActivity forwards op=navigate to NativeConnection op 7.
+     * tabs/profiles/quality: no Android native owner exists yet, so they stay false.
+     * connectionSetup: ConnectionSetupSession owns the SAF import path.
+     */
+    static JSONObject capabilitiesProjection(){
+        try{
+            return new JSONObject().put("navigation",true).put("tabs",false).put("profiles",false)
+                .put("connectionSetup",true).put("quality",false);
+        }catch(org.json.JSONException invalid){throw new IllegalStateException("CAPABILITIES_INVALID",invalid);}
+    }
     synchronized JSONObject snapshot(JSONObject media){
         try{
             String mode="observe";long epoch=0;
@@ -102,7 +256,8 @@ final class NetworkSession {
                 .put("source","network").put("connectionState",state).put("controlMode",mode).put("epoch",epoch)
                 .put("transport",selectedTransport)
                 .put("inputReady",inputReady()).put("pending",commandPending||queuedCommand!=null||framePending?"busy":JSONObject.NULL)
-                .put("networkConfigured",new File(context.getFilesDir(),"pairing").isDirectory());
+                .put("connectionSetup",connectionSetup.projection())
+                .put("capabilities",capabilitiesProjection());
             if(host!=null)value.put("sessionId",host.getString("session_id")).put("documentRevision",host.getLong("document_revision")).put("viewportRevision",host.getLong("viewport_revision"));
             if(displayed!=null)value.put("displayedPtsUs",displayed.ptsUs).put("displayedTicket",displayed.ticket)
                 .put("displayedDocumentRevision",displayed.documentRevision).put("displayedViewportRevision",displayed.viewportRevision)
@@ -112,54 +267,25 @@ final class NetworkSession {
         }catch(org.json.JSONException invalid){throw new IllegalStateException("INVALID_HOST_STATUS",invalid);}
     }
 
-    static NativeConnection.TransportConfig parseTransportConfig(String raw) {
-        if (raw == null || raw.isBlank()) throw new IllegalArgumentException("TRANSPORT_CONFIG_EMPTY");
-        try {
-            JSONObject value = new JSONObject(raw);
-            java.util.Iterator<String> keys = value.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                if (!key.equals("transport") && !key.equals("bind_ip"))
-                    throw new IllegalArgumentException("UNKNOWN_TRANSPORT_CONFIG_FIELD");
-            }
-            String transport = value.optString("transport", "");
-            return switch (transport) {
-                case "wss" -> {
-                    if (value.has("bind_ip")) throw new IllegalArgumentException("WSS_BIND_IP_FORBIDDEN");
-                    yield NativeConnection.TransportConfig.wss();
-                }
-                case "webrtc" -> {
-                    if (!value.has("bind_ip")) throw new IllegalArgumentException("WEBRTC_BIND_IP_REQUIRED");
-                    yield NativeConnection.TransportConfig.webRtc(value.getString("bind_ip"));
-                }
-                default -> throw new IllegalArgumentException("UNKNOWN_TRANSPORT");
-            };
-        } catch (org.json.JSONException invalid) {
-            throw new IllegalArgumentException("INVALID_TRANSPORT_CONFIG", invalid);
-        }
-    }
-
-    private NativeConnection.TransportConfig transportConfig() throws Exception {
-        File file = new File(context.getFilesDir(), "pairing/transport.json");
-        if (!file.exists()) return NativeConnection.TransportConfig.wss();
-        if (!file.isFile() || file.length() > 4096) throw new IllegalStateException("TRANSPORT_CONFIG_MISSING_OR_OVERSIZED");
-        return parseTransportConfig(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-    }
-
     synchronized void connect(){
         if(closed)throw new IllegalStateException("HOST_INACTIVE");
         if(active()||handle!=0)throw new IllegalStateException("NETWORK_BUSY");
+        ActiveConfiguration admitted=connectionSetup.admitNewBinding();
         token=next(token);generation=next(generation);long expected=token;
         state="connecting";error=null;host=null;displayed=null;shownEpoch=0;shownMode="observe";selectedTransport="";
         submittedViewport=null;rejectedViewport=null;queuedCommand=null;commandPendingOp=-1;
+        binding=admitted;
         worker.execute(()->open(expected));
     }
     private void open(long expected){
         long opened=0;
+        ActiveConfiguration activeBinding;
+        synchronized(this){activeBinding=binding;}
+        if(activeBinding==null){synchronized(this){if(token==expected){handle=0;failState(new IllegalStateException("CONNECTION_NOT_CONFIGURED"));}}main.post(release);return;}
         try{
             NativeConnection.load();
-            NativeConnection.TransportConfig config=transportConfig();
-            opened=NativeConnection.open(new String(read("endpoint.txt"),StandardCharsets.UTF_8).trim(),read("ca.der"),read("client.der"),read("key.der"),config);
+            NativeConnection.TransportConfig config=NativeConnection.TransportConfig.wss();
+            opened=NativeConnection.open(activeBinding.endpoint(),activeBinding.token(),config);
             JSONObject status=new JSONObject(NativeConnection.command(opened,0,0,0,0,0,0,0,""));
             synchronized(this){if(closed||token!=expected){NativeConnection.close(opened);return;}handle=opened;host=status;running=true;state="connected";selectedTransport=config.transport().name().toLowerCase(java.util.Locale.ROOT);flushViewport();}
             poll(expected);
@@ -196,7 +322,10 @@ final class NetworkSession {
                 synchronized(this){if(!current(expected))return;displayed=frame;framePending=false;}
             }
             JSONObject status=new JSONObject(NativeConnection.command(nativeHandle,0,0,0,0,0,0,0,""));
-            synchronized(this){if(!current(expected))return;host=status;startQueuedIfReady();}
+            boolean identityChanged;
+            synchronized(this){if(!current(expected))return;identityChanged=identityStatusChanged(host,status);host=status;startQueuedIfReady();}
+            notifyImeSync();
+            if(identityChanged)notifyStatusSync();
             worker.schedule(()->poll(expected),30,TimeUnit.MILLISECONDS);
         }catch(Exception failure){terminate(expected,failure);}
     }
@@ -274,7 +403,10 @@ final class NetworkSession {
     synchronized void disconnect(){
         if(!active()&&handle==0)return;
         token=next(token);generation=next(generation);running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="stopping";
+        resetEditing();
         long old=handle;handle=0;main.post(release);
+        binding=null;
+        notifyImeSync();
         worker.execute(()->{
             try{if(old!=0)NativeConnection.close(old);synchronized(this){state="stopped";}}
             catch(Exception failure){synchronized(this){failState(failure);}}
@@ -282,14 +414,10 @@ final class NetworkSession {
     }
     synchronized void close(){if(closed)return;disconnect();closed=true;worker.shutdown();}
     private void terminate(long expected,Exception failure){
-        long old;synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);failState(failure);}
+        long old;
+        synchronized(this){if(token!=expected)return;old=handle;handle=0;token=next(token);binding=null;failState(failure);}
         try{if(old!=0)NativeConnection.close(old);}catch(Exception close){failure.addSuppressed(close);synchronized(this){error=failure+"; close: "+close;}}
         main.post(release);
     }
     private void failState(Exception failure){running=false;framePending=false;commandPending=false;commandPendingOp=-1;queuedCommand=null;state="error";error=failure.toString();}
-    private byte[] read(String name)throws Exception{
-        File file=new File(context.getFilesDir(),"pairing/"+name);
-        if(!file.isFile()||file.length()>65536)throw new IllegalStateException("PAIRING_FILE_MISSING_OR_OVERSIZED:"+name);
-        return Files.readAllBytes(file.toPath());
-    }
 }
