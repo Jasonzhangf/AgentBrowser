@@ -718,27 +718,27 @@ def fixture_snapshot(value: Any) -> Optional[dict[str, Any]]:
 
 
 def loopback_endpoint(raw: Any) -> tuple[dict[str, Any], Optional[str]]:
+    # `docs/m1/connection-minimum.md` §7.1 froze the endpoint value as
+    # `<host>:<port>`. The scheme belongs to the transport, so the runner parses
+    # the bare value and no longer looks for a `wss://` prefix.
     if not isinstance(raw, str) or not raw:
         return {}, "ENDPOINT_MISSING"
+    if "/" in raw:
+        return {"raw": raw}, "RELAY_ENDPOINT_REJECTED"
     try:
-        parsed = urllib.parse.urlsplit(raw)
+        parsed = urllib.parse.urlsplit(f"//{raw}")
         host = parsed.hostname
         port = parsed.port
     except ValueError as error:
-        return {}, f"ENDPOINT_INVALID:{error}"
-    if parsed.scheme.lower() != "wss":
-        return {"raw": raw, "scheme": parsed.scheme, "host": host}, "RELAY_ENDPOINT_REJECTED"
+        return {"raw": raw}, f"ENDPOINT_INVALID:{error}"
     if host not in LOOPBACK_HOSTS:
-        return {"raw": raw, "scheme": parsed.scheme, "host": host}, "RELAY_ENDPOINT_REJECTED"
+        return {"raw": raw, "host": host}, "RELAY_ENDPOINT_REJECTED"
     if parsed.username is not None or parsed.password is not None:
-        return {"raw": raw, "scheme": parsed.scheme, "host": host}, "ENDPOINT_USERINFO_FORBIDDEN"
+        return {"raw": raw, "host": host}, "ENDPOINT_USERINFO_FORBIDDEN"
     if port is None or not (1 <= port <= 65_535):
-        return {"raw": raw, "scheme": parsed.scheme, "host": host, "port": port}, "ENDPOINT_PORT_INVALID"
-    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-        return {"raw": raw, "scheme": parsed.scheme, "host": host, "port": port}, "ENDPOINT_PATH_INVALID"
+        return {"raw": raw, "host": host, "port": port}, "ENDPOINT_PORT_INVALID"
     return {
         "raw": raw,
-        "scheme": "wss",
         "host": host,
         "port": port,
         "network_path": "local",
@@ -1178,7 +1178,7 @@ class Runner:
                 endpoint_error,
                 f"fixture endpoint rejected: {endpoint_raw!r}",
                 owner="AgentBrowser fixture / endpoint owner",
-                next_action="emit a loopback wss://127.0.0.1:<port> endpoint for direct replay",
+                next_action="emit a loopback 127.0.0.1:<port> endpoint for direct replay",
                 stage="fixture_start",
             )
         self.endpoint = str(endpoint_raw)
