@@ -249,13 +249,16 @@ function materializeWrongTokenPairing(target, endpoint) {
 }
 
 /// The session identity the app itself observed, read from its own native trace.
+/// The `sessionId` projection is the product-owned signal: it carries the Host's
+/// `ready` session id and is omitted entirely until a session exists. An earlier
+/// version of this reader also required a `TASK19_RAW_CONTROL_FRAME` debug trace,
+/// which is no longer emitted, so the requirement could never be met again.
 function observedSessionId(suffix) {
   const path = join(directory, `app${suffix}.stderr`);
   if (!existsSync(path)) return null;
   const text = readFileSync(path, 'utf8');
-  const ready = [...text.matchAll(/"type":"ready"[^}]*"session_id":"([^"]+)"/g)].map(match => match[1]);
   const snapshot = [...text.matchAll(/"sessionId":"([^"]+)"/g)].map(match => match[1]);
-  return {ready: ready.at(-1) ?? null, snapshot: snapshot.at(-1) ?? null, ready_frames: ready.length};
+  return {snapshot: snapshot.at(-1) ?? null, snapshot_frames: snapshot.length};
 }
 
 async function stopApp(child) {
@@ -455,13 +458,15 @@ try {
   assertStep(hostStatus.session_id, 'HOST_SESSION', 'the running Host reported no session id');
   record('host_evidence', 'pass', `host session_id ${hostStatus.session_id}`);
 
-  // 7. The app must observe that same Host session, not a private one.
+  // 7. The app must observe that same Host session, not a private one. Its
+  //    `sessionId` projection is absent until a session exists, so a match here
+  //    can only come from the Host's `ready` frame.
   const firstObserved = observedSessionId('');
   persist('session-identity.json', {app_observed: firstObserved, host_session_id: hostStatus.session_id});
-  assertStep(firstObserved.ready === hostStatus.session_id, 'SESSION_IDENTITY',
-    `app observed session ${firstObserved.ready} but the Host reports ${hostStatus.session_id}`);
+  assertStep(firstObserved.snapshot, 'SESSION_IDENTITY',
+    'the app never projected a session id, so it never attached to the Host');
   assertStep(firstObserved.snapshot === hostStatus.session_id, 'SESSION_IDENTITY',
-    `app snapshot session ${firstObserved.snapshot} but the Host reports ${hostStatus.session_id}`);
+    `app observed session ${firstObserved.snapshot} but the Host reports ${hostStatus.session_id}`);
   record('session_identity', 'pass', `app and Host agree on session ${hostStatus.session_id}`);
 
   // 8. Reconnect: restart the client and attach to the same Host session again.
@@ -486,8 +491,8 @@ try {
   if (!reconnected) {
     throw fail('RECONNECT', `restarted app never reported connected; last surface: ${reconnectSeries.filter(entry => entry.available).at(-1)?.raw ?? 'unavailable'}`);
   }
-  assertStep(secondObserved.ready === hostStatus.session_id, 'RECONNECT_SESSION',
-    `reconnected app observed session ${secondObserved.ready} but the Host session is ${hostStatus.session_id}`);
+  assertStep(secondObserved.snapshot === hostStatus.session_id, 'RECONNECT_SESSION',
+    `reconnected app observed session ${secondObserved.snapshot} but the Host session is ${hostStatus.session_id}`);
   record('reconnect', 'pass', `restarted app reattached to session ${hostStatus.session_id}`);
 
   // 9. Negative path: a wrong token must surface the Host's real
