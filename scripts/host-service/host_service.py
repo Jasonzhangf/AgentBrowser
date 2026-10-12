@@ -41,7 +41,7 @@ SOCKET_PATH_LIMIT = 100
 STATE_NAME = "state.json"
 CONFIG_NAME = "config.json"
 
-# Local trust authority layout and frozen wire values (agentbrowser.connection@1).
+# Local trust authority layout and frozen wire values (bundle = endpoint + token).
 # The authority carries only the endpoint locator and the access token. There is
 # no certificate authority, no device registry and no authorization projection.
 TRUST_DIR_NAME = "trust"

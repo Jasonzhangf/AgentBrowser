@@ -299,11 +299,12 @@ locator fails with `TRUST_NOT_INITIALIZED`.
 `trust export` writes the connection bundle and emits it:
 
 ```json
-{"format": "agentbrowser.connection", "version": 1,
- "endpoint": "100.64.0.1:8443", "token": "<opaque>"}
+{"endpoint": "100.64.0.1:8443", "token": "<opaque>"}
 ```
 
-Those four fields are the whole bundle. It is written to the `--output` path at
+Those two fields are the whole bundle. There is no `format` and no `version`:
+they existed only so the client could validate them, and the client validates
+nothing. It is written to the `--output` path at
 `0600`, newline-terminated. Export requires a running endpoint whose applied
 receipt matches the current generation. Without a usable receipt it refuses:
 `ENDPOINT_NOT_REFRESHED` when no applied receipt exists for the committed
