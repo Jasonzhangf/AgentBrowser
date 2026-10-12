@@ -21,7 +21,6 @@ const launcher = join(root, 'scripts/host-service/host-service');
 const appExecutable = join(root, 'apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMac');
 const bridgeExecutable = join(root, 'apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMacBridge');
 const pairingDirectory = process.env.AGENTBROWSER_MAC_PAIRING ?? '/tmp/abn-task6-mac-pairing';
-const enrolledDeviceLabel = process.env.MAC_GATE_DEVICE_LABEL ?? 'task6-mac';
 const expectedHostBinary = process.env.MAC_GATE_HOST_BINARY ?? null;
 const serviceLabel = 'com.agentbrowser.task6';
 const observationSeconds = Number(process.env.MAC_GATE_OBSERVATION_SECONDS ?? '40');
@@ -238,16 +237,14 @@ function launchApp(suffix, pairingOverride = pairingDirectory) {
   return child;
 }
 
-/// Materialize a private pairing directory for one already-enrolled device from
-/// the service trust root. Used only for the negative authorization path.
-function materializeDevicePairing(deviceId, target, endpoint) {
-  const trust = join(serviceRoot, 'trust');
-  const record = JSON.parse(readFileSync(join(trust, 'devices', `${deviceId}.json`), 'utf8'));
+/// Materialize a private pairing directory whose only defect is a wrong token.
+/// Used only for the negative path: the endpoint is correct, so any error the
+/// app surfaces is the Host's token comparison and nothing else.
+function materializeWrongTokenPairing(target, endpoint) {
   mkdirSync(target, {recursive: true, mode: 0o700});
-  writeFileSync(join(target, 'ca.der'), readFileSync(join(trust, 'ca.der')), {mode: 0o600});
-  writeFileSync(join(target, 'client.der'), Buffer.from(record.client_certificate_der_base64, 'base64'), {mode: 0o600});
-  writeFileSync(join(target, 'key.der'), Buffer.from(record.client_key_pkcs8_der_base64, 'base64'), {mode: 0o600});
   writeFileSync(join(target, 'endpoint.txt'), endpoint, {mode: 0o600});
+  const wrong = createHash('sha256').update(`wrong-${Date.now()}-${Math.random()}`).digest('hex');
+  writeFileSync(join(target, 'token'), wrong, {mode: 0o600});
 }
 
 /// The session identity the app itself observed, read from its own native trace.
@@ -293,7 +290,7 @@ function cleanup(message) {
   if (appChild && appChild.pid) {
     try { process.kill(appChild.pid, 'SIGTERM'); } catch { /* already gone */ }
   }
-  // The negative-path pairing copy holds device key material; never retain it.
+  // The negative-path pairing copy holds a token; never retain it.
   rmSync(join(directory, 'negative-pairing'), {recursive: true, force: true});
   if (serviceStarted) {
     const stop = run(launcher, ['stop', '--root', serviceRoot], {timeout: 60_000});
@@ -320,10 +317,11 @@ try {
   assert(existsSync(appExecutable), `Installed app executable missing: ${appExecutable}`);
   assert(existsSync(bridgeExecutable), `Bridge executable missing: ${bridgeExecutable}`);
   assert(existsSync(pairingDirectory), `Pairing directory missing: ${pairingDirectory}`);
-  // endpoint.txt is written by this harness from the refreshed endpoint receipt.
-  for (const name of ['ca.der', 'client.der', 'key.der']) {
-    assert(existsSync(join(pairingDirectory, name)), `Pairing file missing: ${name}`);
-  }
+  // This harness writes both pairing files: `endpoint.txt` from the refreshed
+  // endpoint receipt, and `token` from the service-owned access token. Those two
+  // files are the whole pairing state (`docs/m1/connection-minimum.md` §7.5).
+  const serviceTokenPath = join(serviceRoot, 'trust', 'token');
+  assert(existsSync(serviceTokenPath), `Service access token missing: ${serviceTokenPath}`);
   persist('build-hashes.txt', [
     `${hash(readFileSync(appExecutable)).replace('sha256:', '')}  ${appExecutable}`,
     `${hash(readFileSync(bridgeExecutable)).replace('sha256:', '')}  ${bridgeExecutable}`,
@@ -340,20 +338,16 @@ try {
     bridge_executable_hash: hash(readFileSync(bridgeExecutable)),
   });
 
-  // The pairing material must be the enrolled task6 device, not a stale copy.
+  // The one credential on the connection path is the service-owned access
+  // token. It must be the exact token the running Host will compare.
   const trustStatus = JSON.parse(required('trust_status', launcher, ['trust', 'status', '--root', serviceRoot], {log: 'trust-status.log'}).stdout);
-  const device = (trustStatus.devices ?? []).find(entry => entry.device_label === enrolledDeviceLabel && entry.status === 'active');
-  assertStep(device, 'PAIRING_DEVICE', `no active enrolled device labelled ${enrolledDeviceLabel}`);
-  const clientCertificateHash = hash(readFileSync(join(pairingDirectory, 'client.der'))).replace('sha256:', '');
-  assertStep(clientCertificateHash === device.client_certificate_sha256, 'PAIRING_DEVICE',
-    `pairing client.der ${clientCertificateHash} is not the enrolled ${enrolledDeviceLabel} certificate ${device.client_certificate_sha256}`);
-  persist('pairing-device.json', {
-    device_id: device.device_id,
-    device_label: device.device_label,
-    client_certificate_sha256: device.client_certificate_sha256,
-    pairing_client_der_sha256: clientCertificateHash,
-  });
-  record('preconditions', 'pass', 'entrypoint, app, bridge, pairing files present');
+  const token = readFileSync(serviceTokenPath, 'utf8').trim();
+  assertStep(token.length > 0, 'PAIRING_TOKEN', 'the service access token is empty');
+  const tokenDigest = createHash('sha256').update(token, 'utf8').digest('hex');
+  assertStep(trustStatus.token_sha256 === tokenDigest, 'PAIRING_TOKEN',
+    `service token digest ${tokenDigest} is not the digest trust status reports ${trustStatus.token_sha256}`);
+  persist('pairing-token.json', {token_sha256: `sha256:${tokenDigest}`, token_source: serviceTokenPath});
+  record('preconditions', 'pass', 'entrypoint, app, bridge, pairing directory present');
 
   // 1. Lifecycle: observe, start if stopped, then refresh the endpoint.
   const before = required('status_before', launcher, ['status', '--root', serviceRoot], {log: 'status-before.log'});
@@ -387,13 +381,17 @@ try {
   const statusNow = JSON.parse(required('status_refreshed', launcher, ['status', '--root', serviceRoot], {log: 'status-refreshed.log'}).stdout);
   persist('status-refreshed.json', statusNow);
   const boundAddress = refreshReceipt.bound_address;
-  const endpointText = `wss://${boundAddress}/`;
+  // The bundle endpoint is exactly `<host>:<port>`; the transport owns the
+  // scheme (`docs/m1/connection-minimum.md` §7.1).
+  const endpointText = boundAddress;
   writeFileSync(join(pairingDirectory, 'endpoint.txt'), endpointText, {mode: 0o600});
+  writeFileSync(join(pairingDirectory, 'token'), token, {mode: 0o600});
   persist('pairing.json', {
     directory: pairingDirectory,
     endpoint: endpointText,
     endpoint_source: 'trust endpoint-refresh bound_address',
-    files: ['endpoint.txt', 'ca.der', 'client.der', 'key.der'],
+    token_sha256: `sha256:${tokenDigest}`,
+    files: ['endpoint.txt', 'token'],
   });
   record('pairing', 'pass', `pairing endpoint set to ${endpointText}`);
 
@@ -474,37 +472,23 @@ try {
     `reconnected app observed session ${secondObserved.ready} but the Host session is ${hostStatus.session_id}`);
   record('reconnect', 'pass', `restarted app reattached to session ${hostStatus.session_id}`);
 
-  // 9. Negative path: an enrolled device without profile membership must surface
-  //    the Host's real error code, never a bare protocol message.
-  const catalog = JSON.parse(required('catalog', launcher, ['admin', 'catalog', 'list', '--root', serviceRoot], {log: 'catalog.log'}).stdout);
-  const profiles = catalog.profiles ?? [];
-  const profile = profiles.find(entry => entry.profile_id === catalog.default_profile_id) ?? profiles[0] ?? {members: []};
-  const members = new Set(profile.members ?? []);
-  const negativeDevice = (trustStatus.devices ?? []).find(entry => entry.status === 'active' && entry.device_id !== device.device_id && !members.has(entry.device_id));
-  if (!negativeDevice) {
-    record('negative_authorization', 'skipped', 'no enrolled device without profile membership is available');
-  } else {
-    const negativePairing = join(directory, 'negative-pairing');
-    materializeDevicePairing(negativeDevice.device_id, negativePairing, endpointText);
-    const negativeApp = launchApp('-negative', negativePairing);
-    const negativeSeries = await connectThroughVisibleUi(negativeApp, '-negative', 12);
-    const negativeLast = negativeSeries.filter(entry => entry.available).at(-1) ?? null;
-    const error = negativeLast?.error ?? '';
-    persist('negative-authorization.json', {
-      device_id: negativeDevice.device_id,
-      device_label: negativeDevice.device_label,
-      profile_id: profile.profile_id ?? null,
-      final_surface: negativeLast?.raw ?? null,
-      error,
-    });
-    await stopApp(negativeApp);
-    assertStep(error, 'NEGATIVE_AUTHORIZATION', `no error surfaced for the unauthorized device; last surface: ${negativeLast?.raw ?? 'unavailable'}`);
-    assertStep(/Host [A-Z0-9_]+:/.test(error), 'NEGATIVE_AUTHORIZATION',
-      `the Host authorization error did not surface its real code: ${error}`);
-    assertStep(!/Expected Host protocol version/.test(error), 'NEGATIVE_AUTHORIZATION',
-      `the Host authorization error was collapsed into a protocol-version message: ${error}`);
-    record('negative_authorization', 'pass', `surfaced ${error}`);
-  }
+  // 9. Negative path: a wrong token must surface the Host's real
+  //    `REMOTE_TOKEN_INVALID` code, never a bare protocol message. The endpoint
+  //    is correct, so the token is the only variable.
+  const negativePairing = join(directory, 'negative-pairing');
+  materializeWrongTokenPairing(negativePairing, endpointText);
+  const negativeApp = launchApp('-negative', negativePairing);
+  const negativeSeries = await connectThroughVisibleUi(negativeApp, '-negative', 12);
+  const negativeLast = negativeSeries.filter(entry => entry.available).at(-1) ?? null;
+  const error = negativeLast?.error ?? '';
+  persist('negative-token.json', {final_surface: negativeLast?.raw ?? null, error});
+  await stopApp(negativeApp);
+  assertStep(error, 'NEGATIVE_TOKEN', `no error surfaced for the wrong token; last surface: ${negativeLast?.raw ?? 'unavailable'}`);
+  assertStep(/REMOTE_TOKEN_INVALID/.test(error), 'NEGATIVE_TOKEN',
+    `the Host token rejection did not surface REMOTE_TOKEN_INVALID: ${error}`);
+  assertStep(!/Expected Host protocol version/.test(error), 'NEGATIVE_TOKEN',
+    `the Host token rejection was collapsed into a protocol-version message: ${error}`);
+  record('negative_token', 'pass', `surfaced ${error}`);
 
   persist('pass.json', {
     run_id: runId,

@@ -1726,11 +1726,6 @@ private func firstLine(_ text: String) -> String {
     return "host-service returned no result"
 }
 
-/// Native AppKit provisioning sheet. It reads/creates/selects a profile,
-/// chooses the device label and explicit scopes, enrolls the device, writes the
-/// grant membership, refreshes and verifies the endpoint, saves the bundle
-/// through `NSSavePanel`, and shows the one-time transfer code in a native
-/// modal. Secrets never enter the WebView, snapshots, logs, or argv.
 /// Native AppKit sheet that produces the one connection file. It initializes
 /// the endpoint locator if needed, re-binds the endpoint, and writes the
 /// `.abconnection` bundle through `NSSavePanel`. The service generates and owns

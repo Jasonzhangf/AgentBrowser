@@ -52,11 +52,12 @@ collapsed into a successful startup or silently retried path.
 
 ## Pairing and build
 
-Pairing is a private directory containing `endpoint.txt`, `ca.der`,
-`client.der`, and mode-0600 `key.der`. The helper reads it only through the
-`AGENTBROWSER_MAC_PAIRING` environment variable. The app's `--pairing-dir`
-argument sets that variable for its child. Credentials are not sent to JS or
-written into snapshots.
+Pairing is a private directory containing `endpoint.txt` and a mode-0600
+`token`. Those two files are the whole pairing state; the bridge reads nothing
+else, and a missing `token` fails as `PAIRING_FILE_MISSING:token`. The helper
+reads the directory only through the `AGENTBROWSER_MAC_PAIRING` environment
+variable. The app's `--pairing-dir` argument sets that variable for its child.
+The token never enters JS, snapshots, or logs.
 
 Build the app bundle with the checked-out Browser ABI owner and this worktree's
 Cargo target:

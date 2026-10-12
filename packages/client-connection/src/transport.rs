@@ -592,19 +592,10 @@ async fn establish_control(
     pairing: Pairing,
     viewport: Option<ViewportDeclaration>,
 ) -> Result<Bootstrap, Failure> {
-    // The frozen bundle carries the endpoint as exactly `<host>:<port>`.
+    // The bundle carries the endpoint as `<host>:<port>`; the scheme is the
+    // transport's own. The transport takes the endpoint as given and fails at
+    // connect if it is wrong, so there is no local endpoint-shape check.
     let base = url::Url::parse(&format!("wss://{}", pairing.endpoint)).map_err(transport)?;
-    if base.scheme() != "wss"
-        || base.host_str().is_none()
-        || base.port().is_none()
-        || !base.username().is_empty()
-        || base.password().is_some()
-        || base.query().is_some()
-        || base.fragment().is_some()
-        || !matches!(base.path(), "" | "/")
-    {
-        return Err(Failure::Protocol("Expected <host>:<port> endpoint".into()));
-    }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()

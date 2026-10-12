@@ -198,6 +198,51 @@ fn unique_path(tag: &str) -> PathBuf {
     path
 }
 
+/// `docs/m1/connection-minimum.md` §7.6 freezes the client projection to exactly
+/// `state`, `error`, `label`, with `state` in {`configured`, `unconfigured`}.
+/// The client-domain consumer rejects any other key and any other state, so an
+/// extra field or a legacy state here breaks app boot with
+/// `INVALID_NATIVE_RESPONSE`. This asserts the producer against that contract in
+/// both pairing states, so the projection cannot drift from the consumer again.
+#[test]
+fn connection_setup_projection_matches_the_frozen_client_contract() {
+    fn assert_frozen(snapshot: &serde_json::Value, expected_state: &str) {
+        let setup = snapshot["connectionSetup"]
+            .as_object()
+            .expect("snapshot carries a connectionSetup object");
+        let mut keys: Vec<&str> = setup.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["error", "label", "state"],
+            "connectionSetup must carry exactly the frozen client keys"
+        );
+        assert_eq!(
+            setup["state"], expected_state,
+            "connectionSetup reported the wrong frozen state"
+        );
+        assert!(
+            setup["error"].is_null() || setup["error"].is_string(),
+            "connectionSetup error must be null or a string"
+        );
+    }
+
+    let mut unpaired = Bridge::start();
+    let value = unpaired.request("{\"op\":\"status\"}");
+    let snapshot: serde_json::Value = serde_json::from_str(&value).expect("snapshot json");
+    assert_frozen(&snapshot, "unconfigured");
+
+    let pairing = unique_path("connection-setup");
+    std::fs::create_dir_all(&pairing).expect("create pairing dir");
+    let mut paired = Bridge::start_with(|command| {
+        command.env("AGENTBROWSER_MAC_PAIRING", &pairing);
+    });
+    let value = paired.request("{\"op\":\"status\"}");
+    let snapshot: serde_json::Value = serde_json::from_str(&value).expect("snapshot json");
+    assert_frozen(&snapshot, "configured");
+    let _ = std::fs::remove_dir_all(&pairing);
+}
+
 #[test]
 fn provisioning_unavailable_without_admin_socket() {
     let mut bridge = Bridge::start();

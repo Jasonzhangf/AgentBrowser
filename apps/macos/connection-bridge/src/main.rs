@@ -1205,11 +1205,13 @@ fn snapshot(app: &AppState) -> String {
         "transport": if app.pairing_available { "wss" } else { "unknown" },
         "path": if app.pairing_available { "direct" } else { "unknown" },
         "connectionSetup": {
-            "state": if app.pairing_available { "configured" } else { "required" },
+            // Frozen projection, `docs/m1/connection-minimum.md` §7.6: exactly
+            // `state`, `error`, `label`, with `state` in {configured, unconfigured}.
+            // The client-domain consumer rejects any other key or state, so this
+            // snapshot must not grow fields.
+            "state": if app.pairing_available { "configured" } else { "unconfigured" },
             "error": null,
-            "label": if app.pairing_available { Some("Local pairing") } else { None },
-            "repair_import_allowed": false,
-            "active_revision": 1
+            "label": if app.pairing_available { Some("Local pairing") } else { None }
         },
         "capabilities": {
             "navigation": app.pairing_available,
