@@ -40,6 +40,7 @@ mkdirSync(directory, {recursive: true, mode: 0o700});
 const steps = [];
 let failedGate = null;
 let failureDetail = null;
+let certifiedCommit = null;
 
 function persist(name, value) {
   const path = join(directory, name);
@@ -299,6 +300,7 @@ function cleanup(message) {
   persist('gate-summary.txt', [
     `run: ${runId}`,
     `directory: evidence/r2-mac-client/${runId}`,
+    `commit: ${certifiedCommit ?? 'unknown (failed before the revision gate)'}`,
     `service_root: ${serviceRoot}`,
     `service_label: ${serviceLabel}`,
     failedGate ? `result: FAIL` : `result: ${message}`,
@@ -337,6 +339,22 @@ try {
     app_executable_hash: hash(readFileSync(appExecutable)),
     bridge_executable_hash: hash(readFileSync(bridgeExecutable)),
   });
+
+  // The acceptance must name the exact revision it ran on. An earlier run
+  // recorded a worktree hash that is not a git object, so this gate records the
+  // commit plus every dirty path, and refuses to certify a run whose connection
+  // path itself is uncommitted.
+  const revision = run('git', ['rev-parse', 'HEAD'], {timeout: 30_000});
+  assertStep(revision.status === 0, 'REVISION', 'cannot read the git revision of this worktree');
+  const head = revision.stdout.trim();
+  const dirtyPaths = run('git', ['status', '--porcelain'], {timeout: 30_000}).stdout.trim().split('\n').filter(Boolean);
+  const connectionPath = /^(apps\/macos\/|packages\/client-connection\/|packages\/client-domain\/|scripts\/host-service\/|scripts\/mac-connect-gate\.mjs)/;
+  const dirtyConnection = dirtyPaths.filter(line => connectionPath.test(line.slice(3)));
+  persist('revision.json', {commit: head, dirty_paths: dirtyPaths, dirty_connection_paths: dirtyConnection});
+  assertStep(dirtyConnection.length === 0, 'REVISION',
+    `the connection path is uncommitted, so this run cannot certify revision ${head}:\n${dirtyConnection.join('\n')}`);
+  certifiedCommit = head;
+  record('revision', 'pass', `commit ${head}, connection path clean`);
 
   // The one credential on the connection path is the service-owned access
   // token. It must be the exact token the running Host will compare.
@@ -493,6 +511,7 @@ try {
   persist('pass.json', {
     run_id: runId,
     result: 'pass',
+    commit: certifiedCommit,
     app_executable_hash: hash(readFileSync(appExecutable)),
     bridge_executable_hash: hash(readFileSync(bridgeExecutable)),
     host_binary: hostStatus.host_binary,
