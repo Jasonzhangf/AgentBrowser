@@ -569,8 +569,8 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         self.pendingPointer = nil
         guard let epoch = inputEpoch else { return }
         let cancel = editingEvent(
-            binding: json([("type", "gesture"), ("gesture_session_id", pendingPointer.operationId)]),
-            event: json([("type", "pointer_cancel"), ("pointer_id", String(pendingPointer.pointerId))]),
+            binding: json([("type", .string("gesture")), ("gesture_session_id", .string(pendingPointer.operationId))]),
+            event: json([("type", .string("pointer_cancel")), ("pointer_id", .uint(pendingPointer.pointerId))]),
             operationId: pendingPointer.operationId,
             eventSequence: pendingPointer.sequence + 1,
             epoch: epoch
@@ -649,7 +649,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
             sequence: 0
         )
         let raw = editingEvent(
-            binding: json([("type", "gesture"), ("gesture_session_id", operationId)]),
+            binding: json([("type", .string("gesture")), ("gesture_session_id", .string(operationId))]),
             event: pointerEvent(type: "pointer_down", pointerId: pointerId, x: coordinates.x, y: coordinates.y, button: "left", buttons: 1),
             operationId: operationId,
             eventSequence: 0,
@@ -673,14 +673,16 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         pending.sequence += 1
         pendingPointer = pending
         let raw = editingEvent(
-            binding: json([("type", "gesture"), ("gesture_session_id", pending.operationId)]),
+            binding: json([("type", .string("gesture")), ("gesture_session_id", .string(pending.operationId))]),
             event: json([
-                ("type", "pointer_move"),
-                ("pointer_id", String(pending.pointerId)),
-                ("x", String(format: "%.3f", coordinates.x)),
-                ("y", String(format: "%.3f", coordinates.y)),
-                ("buttons", "1"),
-                ("modifiers", "0"),
+                // PointerMove omits `button`, which pointerEvent() adds for
+                // down/up, so this one stays inline.
+                ("type", .string("pointer_move")),
+                ("pointer_id", .uint(pending.pointerId)),
+                ("x", .number(coordinates.x)),
+                ("y", .number(coordinates.y)),
+                ("buttons", .uint(1)),
+                ("modifiers", .uint(0)),
             ]),
             operationId: pending.operationId,
             eventSequence: pending.sequence,
@@ -702,7 +704,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
             pendingPointer = nil
             let sequence = pending.sequence + 1
             let raw = editingEvent(
-                binding: json([("type", "gesture"), ("gesture_session_id", pending.operationId)]),
+                binding: json([("type", .string("gesture")), ("gesture_session_id", .string(pending.operationId))]),
                 event: pointerEvent(type: "pointer_up", pointerId: pending.pointerId, x: coordinates.x, y: coordinates.y, button: "left", buttons: 0),
                 operationId: pending.operationId,
                 eventSequence: sequence,
@@ -771,29 +773,34 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
     }
 
     private func pointerEvent(type: String, pointerId: UInt64, x: Double, y: Double, button: String, buttons: UInt64) -> String {
-        var fields: [(String, String)] = [
-            ("type", type),
-            ("pointer_id", String(pointerId)),
-            ("x", String(format: "%.3f", x)),
-            ("y", String(format: "%.3f", y)),
+        var fields: [(String, JSONValue)] = [
+            ("type", .string(type)),
+            ("pointer_id", .uint(pointerId)),
+            ("x", .number(x)),
+            ("y", .number(y)),
         ]
         if type != "pointer_cancel" {
-            fields.append(("button", button))
-            fields.append(("buttons", String(buttons)))
-            fields.append(("modifiers", "0"))
+            fields.append(("button", .string(button)))
+            fields.append(("buttons", .uint(buttons)))
+            fields.append(("modifiers", .uint(0)))
         }
         return json(fields)
     }
 
     private func editingEvent(binding: String, event: String, operationId: String, eventSequence: UInt64, epoch: UInt64) -> String {
-        json([
-            ("op", "editing"),
-            ("epoch", String(epoch)),
-            ("operation_id", operationId),
-            ("event_sequence", String(eventSequence)),
-            ("binding", binding),
-            ("event", event),
-        ])
+        // binding and event are already JSON objects; they must be inlined as
+        // objects, not string literals, or serde rejects every edit as
+        // INVALID_EDITING_BINDING. jsonValue treats them as raw fragments, and
+        // json() handles the outer field escaping and number rendering.
+        let fields: [(String, JSONValue)] = [
+            ("op", .string("editing")),
+            ("epoch", .uint(epoch)),
+            ("operation_id", .string(operationId)),
+            ("event_sequence", .uint(eventSequence)),
+            ("binding", .raw(binding)),
+            ("event", .raw(event)),
+        ]
+        return json(fields)
     }
 
     private var editingActive: Bool {
@@ -936,8 +943,8 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
             sequence = 0
             editOperationId = operationId
         }
-        let event = cancel ? json([("type", "composition_cancel")])
-            : json([("type", "composition_commit"), ("data", data ?? markedData())])
+        let event = cancel ? json([("type", .string("composition_cancel"))])
+            : json([("type", .string("composition_commit")), ("data", .string(data ?? markedData()))])
         let raw = editingEvent(
             binding: editorBinding(context: context),
             event: event,
@@ -966,11 +973,11 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
 
     private func editorBinding(context: EditorContext) -> String {
         json([
-            ("type", "editor"),
-            ("edit_session_id", editSessionId),
-            ("target_id", context.targetId),
-            ("focus_revision", String(context.focusRevision)),
-            ("editor_revision", String(context.editorRevision)),
+            ("type", .string("editor")),
+            ("edit_session_id", .string(editSessionId)),
+            ("target_id", .string(context.targetId)),
+            ("focus_revision", .uint(context.focusRevision)),
+            ("editor_revision", .uint(context.editorRevision)),
         ])
     }
 
@@ -1239,9 +1246,9 @@ private extension VideoSurfaceView {
         }
         guard !text.isEmpty else { return }
         let event = json([
-            ("type", "replace_text"),
-            ("text", text),
-            ("input_type", editorContext?.inputType ?? "insertText"),
+            ("type", .string("replace_text")),
+            ("text", .string(text)),
+            ("input_type", .string(editorContext?.inputType ?? "insertText")),
         ])
         _ = submitStandaloneEdit(event: event)
     }
@@ -1253,15 +1260,15 @@ private extension VideoSurfaceView {
             // inserts a line break (textarea/contenteditable) or does nothing
             // (single-line input) instead of the client forcing a newline.
             _ = submitStandaloneEdit(event: json([
-                ("type", "key_down"),
-                ("key", "Enter"),
-                ("code", "Enter"),
-                ("modifiers", "0"),
+                ("type", .string("key_down")),
+                ("key", .string("Enter")),
+                ("code", .string("Enter")),
+                ("modifiers", .uint(0)),
             ]))
         } else if command == #selector(deleteBackward(_:)) {
-            _ = submitStandaloneEdit(event: json([("type", "editor_action"), ("action", "delete_backward")]))
+            _ = submitStandaloneEdit(event: json([("type", .string("editor_action")), ("action", .string("delete_backward"))]))
         } else if command == #selector(deleteForward(_:)) {
-            _ = submitStandaloneEdit(event: json([("type", "editor_action"), ("action", "delete_forward")]))
+            _ = submitStandaloneEdit(event: json([("type", .string("editor_action")), ("action", .string("delete_forward"))]))
         } else if command == #selector(moveLeft(_:)) {
             moveCaret(by: -1, extend: false)
         } else if command == #selector(moveRight(_:)) {
@@ -1292,9 +1299,9 @@ private extension VideoSurfaceView {
         } else if command == Selector("paste:") {
             guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
             _ = submitStandaloneEdit(event: json([
-                ("type", "replace_text"),
-                ("text", text),
-                ("input_type", "insertFromPaste"),
+                ("type", .string("replace_text")),
+                ("text", .string(text)),
+                ("input_type", .string("insertFromPaste")),
             ]))
         }
     }
@@ -1361,7 +1368,7 @@ private extension VideoSurfaceView {
             }
         }
         if lower != upper {
-            _ = submitStandaloneEdit(event: json([("type", "delete_range"), ("start", String(editValueOffset + UInt64(lower))), ("end", String(editValueOffset + UInt64(upper)))]))
+            _ = submitStandaloneEdit(event: json([("type", .string("delete_range")), ("start", .uint(editValueOffset + UInt64(lower))), ("end", .uint(editValueOffset + UInt64(upper)))]))
             return
         }
         if backward {
@@ -1373,7 +1380,7 @@ private extension VideoSurfaceView {
                 target -= 1
             }
             guard target < lower else { return }
-            _ = submitStandaloneEdit(event: json([("type", "delete_range"), ("start", String(editValueOffset + UInt64(target))), ("end", String(editValueOffset + UInt64(lower)))]))
+            _ = submitStandaloneEdit(event: json([("type", .string("delete_range")), ("start", .uint(editValueOffset + UInt64(target))), ("end", .uint(editValueOffset + UInt64(lower)))]))
         } else {
             var target = upper
             while target < units.count, !isWord(units[target]) {
@@ -1383,7 +1390,7 @@ private extension VideoSurfaceView {
                 target += 1
             }
             guard target > upper else { return }
-            _ = submitStandaloneEdit(event: json([("type", "delete_range"), ("start", String(editValueOffset + UInt64(upper))), ("end", String(editValueOffset + UInt64(target)))]))
+            _ = submitStandaloneEdit(event: json([("type", .string("delete_range")), ("start", .uint(editValueOffset + UInt64(upper))), ("end", .uint(editValueOffset + UInt64(target)))]))
         }
     }
 
@@ -1391,17 +1398,17 @@ private extension VideoSurfaceView {
         guard let context = editorContext else { return }
         let operationId = nextOperationId(prefix: "select")
         let raw = json([
-            ("op", "select"),
-            ("epoch", String(inputEpoch ?? 0)),
-            ("operation_id", operationId),
-            ("event_sequence", "0"),
-            ("edit_session_id", editSessionId),
-            ("target_id", context.targetId),
-            ("focus_revision", String(context.focusRevision)),
-            ("editor_revision", String(context.editorRevision)),
-            ("start", String(editValueOffset + UInt64(max(0, start)))),
-            ("end", String(editValueOffset + UInt64(max(0, end)))),
-            ("direction", direction),
+            ("op", .string("select")),
+            ("epoch", .uint(inputEpoch ?? 0)),
+            ("operation_id", .string(operationId)),
+            ("event_sequence", .uint(0)),
+            ("edit_session_id", .string(editSessionId)),
+            ("target_id", .string(context.targetId)),
+            ("focus_revision", .uint(context.focusRevision)),
+            ("editor_revision", .uint(context.editorRevision)),
+            ("start", .uint(editValueOffset + UInt64(max(0, start)))),
+            ("end", .uint(editValueOffset + UInt64(max(0, end)))),
+            ("direction", .string(direction)),
         ])
         if refused(onEdit?(raw)) {
             endEditing(cancelRemote: false)
@@ -1439,8 +1446,8 @@ private extension VideoSurfaceView {
             editMarkedRange = NSRange(location: NSNotFound, length: 0)
         }
         let event = json([
-            ("type", wasComposing ? "composition_update" : "composition_begin"),
-            ("data", text),
+            ("type", .string(wasComposing ? "composition_update" : "composition_begin")),
+            ("data", .string(text)),
         ])
         let raw = editingEvent(
             binding: editorBinding(context: context),
@@ -2360,15 +2367,33 @@ private func escapeJSON(_ value: String) -> String {
     return String(raw.dropFirst().dropLast())
 }
 
-private func json(_ values: [(String, String)]) -> String {
-    var out = "{"
-    for (index, entry) in values.enumerated() {
-        if index > 0 { out += "," }
-        // escapeJSON returns a fully quoted JSON string literal, so the value
-        // is inserted as-is; adding quotes here doubled them and the bridge
-        // rejected every native pointer and keyboard event as
-        // INVALID_COMMAND_JSON.
-        out += escapeJSON(entry.0) + ":" + escapeJSON(entry.1)
+// The Host protocol types some fields as u64, some as f64. serde rejects a
+// string-typed value either way, and it rejects an integer rendered as a
+// float (42.0 for a u64), so each field has to say which one it is.
+//
+// .raw inlines a fragment that json() already rendered, so a nested JSON
+// object lands in the wire string as an object rather than a string literal.
+private enum JSONValue {
+    case string(String)
+    case uint(UInt64)
+    case number(Double)
+    case raw(String)
+}
+
+private func jsonValue(_ value: JSONValue) -> String {
+    switch value {
+    case .string(let value): return escapeJSON(value)
+    case .raw(let value): return value
+    case .uint(let value): return String(value)
+    case .number(let value): return String(value)
+    }
+}
+
+private func json(_ values: [(String, JSONValue)]) -> String {
+    guard let first = values.first else { return "{}" }
+    var out = "{" + escapeJSON(first.0) + ":" + jsonValue(first.1)
+    for entry in values.dropFirst() {
+        out += "," + escapeJSON(entry.0) + ":" + jsonValue(entry.1)
     }
     return out + "}"
 }
