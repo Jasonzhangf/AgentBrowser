@@ -650,7 +650,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         )
         let raw = editingEvent(
             binding: json([("type", .string("gesture")), ("gesture_session_id", .string(operationId))]),
-            event: pointerEvent(type: "pointer_down", pointerId: pointerId, x: coordinates.x, y: coordinates.y, button: "left", buttons: 1),
+            event: pointerButtonEvent(type: "pointer_down", pointerId: pointerId, x: coordinates.x, y: coordinates.y, button: "left", buttons: 1),
             operationId: operationId,
             eventSequence: 0,
             epoch: epoch
@@ -675,8 +675,8 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         let raw = editingEvent(
             binding: json([("type", .string("gesture")), ("gesture_session_id", .string(pending.operationId))]),
             event: json([
-                // PointerMove omits `button`, which pointerEvent() adds for
-                // down/up, so this one stays inline.
+                // PointerMove omits `button`, which pointerButtonEvent() adds
+                // for down/up, so this one stays inline.
                 ("type", .string("pointer_move")),
                 ("pointer_id", .uint(pending.pointerId)),
                 ("x", .number(coordinates.x)),
@@ -705,7 +705,7 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
             let sequence = pending.sequence + 1
             let raw = editingEvent(
                 binding: json([("type", .string("gesture")), ("gesture_session_id", .string(pending.operationId))]),
-                event: pointerEvent(type: "pointer_up", pointerId: pending.pointerId, x: coordinates.x, y: coordinates.y, button: "left", buttons: 0),
+                event: pointerButtonEvent(type: "pointer_up", pointerId: pending.pointerId, x: coordinates.x, y: coordinates.y, button: "left", buttons: 0),
                 operationId: pending.operationId,
                 eventSequence: sequence,
                 epoch: epoch
@@ -772,19 +772,19 @@ private final class VideoSurfaceView: NSView, NSTextInputClient {
         return "\(prefix)-\(editSessionId)-\(editSequenceCounter)"
     }
 
-    private func pointerEvent(type: String, pointerId: UInt64, x: Double, y: Double, button: String, buttons: UInt64) -> String {
-        var fields: [(String, JSONValue)] = [
+    // Only the variants that carry a button. PointerMove omits `button`, and
+    // PointerCancel carries only a pointer id, so those are built at their call
+    // sites; both would be rejected here under deny_unknown_fields.
+    private func pointerButtonEvent(type: String, pointerId: UInt64, x: Double, y: Double, button: String, buttons: UInt64) -> String {
+        json([
             ("type", .string(type)),
             ("pointer_id", .uint(pointerId)),
             ("x", .number(x)),
             ("y", .number(y)),
-        ]
-        if type != "pointer_cancel" {
-            fields.append(("button", .string(button)))
-            fields.append(("buttons", .uint(buttons)))
-            fields.append(("modifiers", .uint(0)))
-        }
-        return json(fields)
+            ("button", .string(button)),
+            ("buttons", .uint(buttons)),
+            ("modifiers", .uint(0)),
+        ])
     }
 
     private func editingEvent(binding: String, event: String, operationId: String, eventSequence: UInt64, epoch: UInt64) -> String {
