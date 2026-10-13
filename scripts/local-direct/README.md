@@ -62,11 +62,13 @@ python3 scripts/local-direct/replay.py \
 ```
 
 The fixture must emit one JSON ready record on stdout with non-empty
-`fixture`, `endpoint`, and `session` fields. The current fixture shape also
-provides `endpoint.txt`, `ca.der`, `client.der`, and `key.der` under the root;
-the runner checks that `endpoint.txt` exactly matches the ready endpoint and
-that the private key is not group/world readable. The fixture's `status`,
-`inspect`, and `quit` commands are used only through its stdin/stdout pipe.
+`fixture`, `endpoint`, and `session` fields. The pairing directory under the
+fixture root is exactly `endpoint.txt` plus `token`
+(`docs/m1/connection-minimum.md` §7.1). The runner checks that `endpoint.txt`
+exactly matches the ready endpoint and reports the two files it found; there is
+no TLS material to check and the import side validates nothing. The fixture's
+`status`, `inspect`, and `quit` commands are used only through its
+stdin/stdout pipe.
 
 AppKit mode launches `AgentBrowserMac` and a separate UI driver. The driver
 receives `AGENTBROWSER_LOCAL_DIRECT_CONTEXT`,

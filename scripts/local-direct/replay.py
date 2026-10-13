@@ -718,27 +718,27 @@ def fixture_snapshot(value: Any) -> Optional[dict[str, Any]]:
 
 
 def loopback_endpoint(raw: Any) -> tuple[dict[str, Any], Optional[str]]:
+    # `docs/m1/connection-minimum.md` §7.1 froze the endpoint value as
+    # `<host>:<port>`. The scheme belongs to the transport, so the runner parses
+    # the bare value and no longer looks for a `wss://` prefix.
     if not isinstance(raw, str) or not raw:
         return {}, "ENDPOINT_MISSING"
+    if "/" in raw:
+        return {"raw": raw}, "RELAY_ENDPOINT_REJECTED"
     try:
-        parsed = urllib.parse.urlsplit(raw)
+        parsed = urllib.parse.urlsplit(f"//{raw}")
         host = parsed.hostname
         port = parsed.port
     except ValueError as error:
-        return {}, f"ENDPOINT_INVALID:{error}"
-    if parsed.scheme.lower() != "wss":
-        return {"raw": raw, "scheme": parsed.scheme, "host": host}, "RELAY_ENDPOINT_REJECTED"
+        return {"raw": raw}, f"ENDPOINT_INVALID:{error}"
     if host not in LOOPBACK_HOSTS:
-        return {"raw": raw, "scheme": parsed.scheme, "host": host}, "RELAY_ENDPOINT_REJECTED"
+        return {"raw": raw, "host": host}, "RELAY_ENDPOINT_REJECTED"
     if parsed.username is not None or parsed.password is not None:
-        return {"raw": raw, "scheme": parsed.scheme, "host": host}, "ENDPOINT_USERINFO_FORBIDDEN"
+        return {"raw": raw, "host": host}, "ENDPOINT_USERINFO_FORBIDDEN"
     if port is None or not (1 <= port <= 65_535):
-        return {"raw": raw, "scheme": parsed.scheme, "host": host, "port": port}, "ENDPOINT_PORT_INVALID"
-    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-        return {"raw": raw, "scheme": parsed.scheme, "host": host, "port": port}, "ENDPOINT_PATH_INVALID"
+        return {"raw": raw, "host": host, "port": port}, "ENDPOINT_PORT_INVALID"
     return {
         "raw": raw,
-        "scheme": "wss",
         "host": host,
         "port": port,
         "network_path": "local",
@@ -997,13 +997,50 @@ class Runner:
                 next_action="run the replay from an owner worktree branch",
                 stage="preflight",
             )
+        # Record the revision this run certifies, the way
+        # `scripts/mac-connect-gate.mjs` does. An earlier acceptance recorded a
+        # worktree hash that was not a git object, so a run must name the commit
+        # it belongs to and must not certify an uncommitted connection path.
         status = self.evidence["candidate"].get("status_before", [])
-        if status:
+        connection_prefixes = (
+            "apps/macos/",
+            "packages/client-connection/",
+            "packages/client-domain/",
+            "packages/android-bridge/",
+            "scripts/host-service/",
+            "scripts/local-direct/",
+        )
+        dirty_connection = [
+            line for line in status if any(line[3:].startswith(prefix) for prefix in connection_prefixes)
+        ]
+        revision = {
+            "commit": self.evidence["candidate"].get("commit"),
+            "tree": self.evidence["candidate"].get("tree"),
+            "dirty_paths": status,
+            "dirty_connection_paths": dirty_connection,
+        }
+        self.evidence["candidate"]["revision"] = revision
+        try:
+            (self.args.evidence_dir / "revision.json").write_text(
+                json.dumps(revision, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as error:
             self.abort(
-                "DIRTY_CANDIDATE_TREE",
-                "candidate tree has uncommitted or untracked paths: " + "; ".join(status),
+                "REVISION_EVIDENCE_UNWRITABLE",
+                bounded_text(error),
+                owner="local direct runner",
+                next_action="make the evidence directory writable",
+                stage="preflight",
+            )
+        if dirty_connection:
+            self.abort(
+                "DIRTY_CONNECTION_PATH",
+                "the connection path is uncommitted, so this run cannot certify commit "
+                + str(self.evidence["candidate"].get("commit"))
+                + ": "
+                + "; ".join(dirty_connection),
                 owner="candidate worktree",
-                next_action="commit or move unrelated changes before replay",
+                next_action="commit the connection-path changes before replay",
                 stage="preflight",
             )
         requested = self.args.requested_evidence_dir.resolve(strict=False)
@@ -1141,7 +1178,7 @@ class Runner:
                 endpoint_error,
                 f"fixture endpoint rejected: {endpoint_raw!r}",
                 owner="AgentBrowser fixture / endpoint owner",
-                next_action="emit a loopback wss://127.0.0.1:<port> endpoint for direct replay",
+                next_action="emit a loopback 127.0.0.1:<port> endpoint for direct replay",
                 stage="fixture_start",
             )
         self.endpoint = str(endpoint_raw)
@@ -1233,35 +1270,31 @@ class Runner:
                 next_action="start the real endpoint and retain the socket directory it creates after TCP bind",
                 stage="socket_validation",
             )
+        # `docs/m1/connection-minimum.md` §7.1: the pairing directory is exactly
+        # `endpoint.txt` plus `token`. There are no TLS material files to check,
+        # and the import side validates nothing. These two reads confirm the
+        # artifact exists so the run reports a real absence instead of a later
+        # connect failure.
         pairing_files: dict[str, Any] = {}
-        for name in ("endpoint.txt", "ca.der", "client.der", "key.der"):
+        for name in ("endpoint.txt", "token"):
             path = self.fixture_root / name
             try:
                 metadata = path.stat()
-                info: dict[str, Any] = {
+                pairing_files[name] = {
                     "path": str(path),
                     "regular_file": stat.S_ISREG(metadata.st_mode),
                     "size": metadata.st_size,
                     "mode": oct(stat.S_IMODE(metadata.st_mode)),
                 }
-                if name == "key.der" and stat.S_IMODE(metadata.st_mode) & 0o077:
-                    self.abort(
-                        "PAIRING_KEY_PERMISSIONS",
-                        f"pairing key is accessible by group or other: {path}",
-                        owner="AgentBrowser pairing owner",
-                        next_action="write the pairing key with mode 0600",
-                        stage="socket_validation",
-                    )
             except OSError as error:
-                info = {"path": str(path), "exists": False, "error": bounded_text(error)}
+                pairing_files[name] = {"path": str(path), "exists": False, "error": bounded_text(error)}
                 self.abort(
                     "PAIRING_MATERIAL_MISSING",
                     f"required pairing file is unavailable: {path}",
                     owner="AgentBrowser fixture owner",
-                    next_action="emit endpoint.txt and the four ephemeral TLS files",
+                    next_action="emit endpoint.txt and token",
                     stage="socket_validation",
                 )
-            pairing_files[name] = info
         try:
             pairing_endpoint = (self.fixture_root / "endpoint.txt").read_text(encoding="utf-8").strip()
         except OSError as error:
