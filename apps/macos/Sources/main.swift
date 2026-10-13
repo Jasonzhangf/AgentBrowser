@@ -2364,7 +2364,11 @@ private func json(_ values: [(String, String)]) -> String {
     var out = "{"
     for (index, entry) in values.enumerated() {
         if index > 0 { out += "," }
-        out += "\"" + escapeJSON(entry.0) + "\":\"" + escapeJSON(entry.1) + "\""
+        // escapeJSON returns a fully quoted JSON string literal, so the value
+        // is inserted as-is; adding quotes here doubled them and the bridge
+        // rejected every native pointer and keyboard event as
+        // INVALID_COMMAND_JSON.
+        out += escapeJSON(entry.0) + ":" + escapeJSON(entry.1)
     }
     return out + "}"
 }
