@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """End-to-end GUI probe for the macOS client click path.
 
-Real clicks must be posted from inside the same System Events script that
-activates the app. A separate cliclick process loses focus to the full-screen
-terminal window, so its events never reach the WebView.
+Two environment facts drive this script:
+
+1. System Events' `first process whose unix id is N` returns the wrong
+   process when two instances of the app run. Resolve the process with an
+   explicit loop over `every process` instead.
+2. `cliclick` does not deliver mouse events here. Post clicks with
+   System Events' `click at {x, y}` inside the same script that activates
+   the app.
 
 Usage: python3 docs/mac-gui-click-e2e.py
 """
@@ -13,7 +18,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 
@@ -27,83 +31,92 @@ LOG = "/tmp/mac-gui-e2e-bridge.log"
 log = lambda *a: print(*a, flush=True)
 
 
-def osa(script):
-    return subprocess.run(["osascript", "-e", script], capture_output=True, text=True).stdout.strip()
+def osa(body, pid):
+    """Run `body` inside the matching process iteration.
 
-
-def click_named(pid, name):
-    """Activate the app and click the named AX button, in one System Events run."""
-    return osa(f'''
+    A saved `target` reference is not stable across the repeat loop, so the
+    body must run inside the matching iteration and use `pr` directly.
+    """
+    script = f'''
 tell application "System Events"
-  set p to first process whose unix id is {pid}
-  set frontmost of p to true
-  delay 0.4
-  perform action "AXRaise" of window 1 of p
-  delay 0.8
-  set fm to frontmost of p
-  set es to entire contents of window 1 of p
-  repeat with e in es
+  repeat with pr in (every process)
     try
-      if role of e is "AXButton" and name of e is "{name}" then
-        set pos to position of e
-        set sz to size of e
-        set cx to (item 1 of pos) + ((item 1 of sz) / 2) as integer
-        set cy to (item 2 of pos) + ((item 2 of sz) / 2) as integer
-        click at {{cx, cy}}
-        return "OK " & cx & "," & cy & " front=" & (fm as text)
+      if (unix id of pr) is {pid} then
+        {body}
       end if
     end try
   end repeat
-  return "MISSING"
+  return "NO_PROCESS"
 end tell
-''')
-
-
-def press_named(pid, name):
-    return osa(f'''
-tell application "System Events"
-  set p to first process whose unix id is {pid}
-  set frontmost of p to true
-  delay 0.4
-  perform action "AXRaise" of window 1 of p
-  delay 0.8
-  set fm to frontmost of p
-  set es to entire contents of window 1 of p
-  repeat with e in es
-    try
-      if role of e is "AXButton" and name of e is "{name}" then perform action "AXPress" of e
-    end try
-  end repeat
-  return "DONE"
-end tell
-''')
-
-
-def click_point(pid, x, y):
-    return osa(f'''
-tell application "System Events"
-  set p to first process whose unix id is {pid}
-  set frontmost of p to true
-  delay 0.4
-  perform action "AXRaise" of window 1 of p
-  delay 0.8
-  click at {{{x}, {y}}}
-  return "OK"
-end tell
-''')
+'''
+    return subprocess.run(["osascript", "-e", script],
+                          capture_output=True, text=True).stdout.strip()
 
 
 def window_frame(pid):
-    out = osa(f'''
-tell application "System Events"
-  set p to first process whose unix id is {pid}
-  set w to window 1 of p
+    out = osa('''
+  set w to window 1 of pr
   set pos to position of w
   set sz to size of w
-  return ((item 1 of pos) as text) & "," & ((item 2 of pos) as text) & "," & ((item 1 of sz) as text) & "," & ((item 2 of sz) as text)
-end tell
-''')
-    return tuple(int(float(v)) for v in out.split(","))
+  return ((item 1 of pos) as text) & "," & ((item 2 of pos) as text) & "," & ((item 1 of sz) as text) & "," & ((item 2 of sz) as text)''', pid)
+    try:
+        return tuple(int(float(v)) for v in out.split(","))
+    except Exception:
+        return None
+
+
+def move_window(pid, x, y):
+    return osa(f'''
+  try
+    set position of window 1 of pr to {{{x}, {y}}}
+    return "moved"
+  on error e
+    return "MOVE_ERR " & e
+  end try''', pid)
+
+
+# Panel geometry relative to the window origin, read from the live AX tree of
+# a running instance. The WebView does not always expose DOM buttons to
+# accessibility, so drive the panel by coordinate.
+MENU_TOGGLE = (1149, 61)
+MENU_CLOSE = (1121, 70)
+PANEL_CONNECT = (890, 323)
+PANEL_TAKEOVER = (890, 376)
+PANEL_RELEASE = (1075, 376)
+PAGE_ORIGIN = (0, 86)
+
+
+def activate(pid):
+    """Bring the app and its window forward. Kept separate from clicking so the
+    click script stays short and does not time out with error -25208."""
+    return osa('''
+  set frontmost of pr to true
+  perform action "AXRaise" of window 1 of pr
+  return "OK"''', pid)
+
+
+def click_at(pid, x, y, attempts=3):
+    """Post a real click at a screen point, retrying transient AX errors."""
+    last = ""
+    for _ in range(attempts):
+        last = osa(f'''
+  try
+    click at {{{x}, {y}}}
+    return "OK"
+  on error e
+    return "ERR " & e
+  end try''', pid)
+        if last == "OK":
+            return last
+        time.sleep(1.5)
+    return last
+
+
+def panel_point(pid, offset):
+    frame = window_frame(pid)
+    if frame is None:
+        return None
+    return (frame[0] + offset[0], frame[1] + offset[1])
 
 
 def send_counts():
@@ -151,28 +164,18 @@ def main():
                            stdout=logfile, stderr=subprocess.STDOUT)
 
     try:
-        time.sleep(12)
-        r = subprocess.run(["osascript", "-e", f"""
-tell application "System Events"
-  set p to first process whose unix id is {app.pid}
-  try
-    set position of window 1 of p to {{2560, 100}}
-    return "moved"
-  on error e
-    return "MOVE_ERR " & e
-  end try
-end tell
-"""], capture_output=True, text=True)
-        log("  move:", (r.stdout or r.stderr).strip())
-        time.sleep(1)
-        log("window:", window_frame(app.pid))
+        time.sleep(16)
+        log("  window:", window_frame(app.pid))
 
         log("== connect ==")
-        press_named(app.pid, "打开菜单")
+        log("  activate:", activate(app.pid))
+        time.sleep(1.5)
+        pt = panel_point(app.pid, MENU_TOGGLE)
+        log("  toggle:", click_at(app.pid, *pt))
         time.sleep(1.5)
         subprocess.run(["screencapture", "-x", "/tmp/gui-menu.png"])
-        subprocess.run(["screencapture", "-x", "/tmp/gui-menu.png"])
-        log("  click 连接:", click_named(app.pid, "连接"))
+        pt = panel_point(app.pid, PANEL_CONNECT)
+        log("  click 连接:", click_at(app.pid, *pt))
         for _ in range(40):
             if '"connectionState":"connected"' in open(LOG, errors="ignore").read():
                 break
@@ -181,24 +184,45 @@ end tell
         log("  connectionState:", states[-1] if states else "none")
 
         log("== takeover ==")
-        press_named(app.pid, "打开菜单")
+        activate(app.pid)
+        time.sleep(1.0)
+        pt = panel_point(app.pid, MENU_TOGGLE)
+        log("  toggle:", click_at(app.pid, *pt))
         time.sleep(1.5)
-        log("  click 接管:", click_named(app.pid, "接管"))
+        pt = panel_point(app.pid, PANEL_TAKEOVER)
+        log("  click 接管:", click_at(app.pid, *pt))
         time.sleep(3)
         log("  control:", fixture.call("status").get("control"))
 
         log("== page click ==")
-        wx, wy, ww, wh = window_frame(app.pid)
-        px, py = wx + 90, wy + 28 + 56 + 50
+        activate(app.pid)
+        time.sleep(1.0)
+        pt = panel_point(app.pid, MENU_CLOSE)
+        log("  close menu:", click_at(app.pid, *pt))
+        time.sleep(1.5)
+        pt = panel_point(app.pid, PAGE_ORIGIN)
+        px, py = pt[0] + 90, pt[1] + 50
         log("  point:", px, py)
-        click_point(app.pid, px, py)
-        time.sleep(3)
+        subprocess.run(["screencapture", "-x", "/tmp/gui-before-click.png"])
+        origin = panel_point(app.pid, PAGE_ORIGIN)
+        for dx, dy, label in [(90, 50, "red-button"), (100, 119, "input"), (400, 220, "blue"), (600, 520, "blue-low")]:
+            before = send_counts()
+            log(f"  click {label} ({dx},{dy}):", click_at(app.pid, origin[0] + dx, origin[1] + dy))
+            time.sleep(2)
+            after = send_counts()
+            delta = {k: after[k] - before.get(k, 0) for k in after if after[k] - before.get(k, 0) > 0}
+            log(f"    delta: {delta}")
         log("  sends:", send_counts())
+        log("  dom:", fixture.call("inspect"))
 
         log("== release ==")
-        press_named(app.pid, "打开菜单")
+        activate(app.pid)
+        time.sleep(1.0)
+        pt = panel_point(app.pid, MENU_TOGGLE)
+        log("  toggle:", click_at(app.pid, *pt))
         time.sleep(1.5)
-        log("  click 返回观察:", click_named(app.pid, "返回观察"))
+        pt = panel_point(app.pid, PANEL_RELEASE)
+        log("  click 返回观察:", click_at(app.pid, *pt))
         time.sleep(3)
         log("  control:", fixture.call("status").get("control"))
         log("  dom:", fixture.call("inspect"))

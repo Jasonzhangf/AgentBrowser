@@ -212,54 +212,55 @@ gesture    pointer_down + pointer_up 通过 → clicked 1 -> 2
 
 不满足时输入返回 `DISPLAY_NOT_READY_OR_CONTROL_NOT_GRANTED`。
 
-### 5.3 GUI 点击已能送达，但 连接 按钮不可用（真实缺陷）
+### 5.3 Mac 图形界面：连接、取景、接管已通过
 
 `docs/mac-gui-click-e2e.py` 用辅助功能坐标加真实鼠标事件驱动 GUI。
 
-本轮先解决了两个测试环境问题：
+本轮先修好三个测试环境问题：
 
-1. `cliclick` 在本机不送达事件。改用 System Events 的 `click at {x,y}`，
-   并且必须在同一个 osascript 内先激活应用。
-2. 本机已有一个他人启动的旧版 AgentBrowser 实例，窗口位置相同。
-   必须先把探针自己的窗口移到不重叠的位置，否则点击落到旧实例上。
+1. `cliclick` 在本机不送达事件。改用 System Events 的 `click at {x,y}`。
+2. `first process whose unix id is N` 在本机返回错误的进程。两个同名实例同时运行时，
+   它总是返回先启动的那个。必须改成遍历 `every process` 逐个比对。
+   这一点此前让所有 GUI 结论都指向了他人启动的旧实例。
+3. 面板按钮坐标要按窗口原点的相对偏移算，偏移量取自实际截图。
 
-修正后，真实点击确实到达 WebView。证据：对 `关闭菜单` 按钮发真实点击，菜单关闭。
-
-但 `连接` 按钮仍然不触发：
-
-```text
-click 连接: OK 3450,401 front=true
-connectionState: "connectionState":"idle"
-send counts: {'MAC_NATIVE_SEND op=status': 237}
-```
-
-从未出现 `op=connect`。面板显示：
+修正后，Mac 图形界面整链实测通过：
 
 ```text
-连接 未连接
-需要配置连接
-请先配置或导入连接
+op=connect   1 次 → connectionState "connected"
+op=viewport  1 次
+op=ack_frame 162 到 320 次
+op=takeover  1 次 → control {"epoch":3,"phase":{"type":"human","attachment_id":2}}
+返回观察       → control {"epoch":4,"phase":{"type":"agent"}}
 ```
 
-而原生桥接层在同一进程内报告：
+截图确认界面显示远端页面：红色 `touch` 按钮、`type here` 输入框、
+`AgentBrowser live Host` 文本和蓝色长页面。
+
+### 5.4 未通过：页面指针输入
+
+在远端页面区域点击不产生任何输入操作。
+
+实测：在接管状态下，`presentation` 为 `browsing`，`controlMode` 为 `control`，
+`inputReady` 为 `true`，`visibleContent` 为 `native-video`。
+
+对页面区域连点四个位置，每次只有 `op=status` 与 `op=ack_frame`：
 
 ```text
-connectionSetup: {"error":null,"label":"Local pairing","state":"configured"}
-networkConfigured: true
+click red-button (90,50):   delta {'op=status': 33, 'op=ack_frame': 25}
+click input (100,119):      delta {'op=status': 33, 'op=ack_frame': 25}
+click blue (400,220):       delta {'op=status': 32, 'op=ack_frame': 25}
+click blue-low (600,520):   delta {'op=status': 33, 'op=ack_frame': 25}
 ```
 
-统计本轮 205 条 `op=status` 回执，全部为 `configured`。
+没有 `op=click`，也没有 `op=editing`。
 
-`canConnect` 要求 `connectionSetup.state === 'configured'`。
-UI 判为未配置，所以按钮禁用。
+同一套点击方法在 WebView 区域有效：点 `☰` 能打开面板，点 `✕` 能关闭面板。
 
-进一步证据：UI 渲染的字符串 `请先配置或导入连接` 在当前源码和已构建的
-`app.js` 中都不存在。当前源码与构建产物用的是 `请先选择并导入连接文件`。
+所以点击注入本身可用，问题局限在原生视频视图 `VideoSurfaceView` 的事件送达。
 
-即运行中的界面代码与构建产物不一致。这是阻断 Mac 图形界面发起连接的真实缺陷。
-
-未定位：界面代码与构建产物不一致的确切来源。已排除 WebKit 缓存和进程池共享。
-把 `app.js` 中的该字符串替换为标记后重启，界面仍显示旧字符串。
+对照：无 GUI 探针用 `op=click` 和手势两条路径都能点击成功（见 5.1）。
+即协议层与桥接层正确，缺口在 Swift 指针层。
 
 ## 6. 注意
 
@@ -267,4 +268,5 @@ UI 判为未配置，所以按钮禁用。
 - `fixture` 目录是临时目录，重启后会被清理。
 - 手机换网络后 `adb` 可能显示 `offline`。用 `adb connect <ip>:5555` 重连。
 - 合成点击必须用 System Events 的 `click at`，不能用 `cliclick`。
-- 本机有他人启动的旧版 AgentBrowser 实例，验收前先把窗口移到不重叠位置。
+- 查进程必须遍历 `every process` 比对 `unix id`，不能用 `first process whose unix id is N`。
+- 本机有他人启动的旧版 AgentBrowser 实例。两者窗口位置相同，验收前先确认目标进程。
