@@ -212,61 +212,110 @@ gesture    pointer_down + pointer_up 通过 → clicked 1 -> 2
 
 不满足时输入返回 `DISPLAY_NOT_READY_OR_CONTROL_NOT_GRANTED`。
 
-### 5.3 Mac 图形界面：连接、取景、接管已通过
+### 5.3 Mac 图形界面：整链已通过
 
 `docs/mac-gui-click-e2e.py` 用辅助功能坐标加真实鼠标事件驱动 GUI。
 
 本轮先修好三个测试环境问题：
 
-1. `cliclick` 在本机不送达事件。改用 System Events 的 `click at {x,y}`。
+1. `cliclick` 在本机不送达事件。
 2. `first process whose unix id is N` 在本机返回错误的进程。两个同名实例同时运行时，
    它总是返回先启动的那个。必须改成遍历 `every process` 逐个比对。
    这一点此前让所有 GUI 结论都指向了他人启动的旧实例。
 3. 面板按钮坐标要按窗口原点的相对偏移算，偏移量取自实际截图。
+
+还有一个关键点：System Events 的 `click at {x,y}` 只对辅助功能树里存在的元素有效。
+
+原生视频视图是普通 NSView，不在辅助功能树里，所以收不到这种点击。
+
+必须改用 CoreGraphics 的真实 HID 事件（`CGEventCreateMouseEvent` 加 `CGEventPost`）。
 
 修正后，Mac 图形界面整链实测通过：
 
 ```text
 op=connect   1 次 → connectionState "connected"
 op=viewport  1 次
-op=ack_frame 162 到 320 次
+op=ack_frame 335 次
 op=takeover  1 次 → control {"epoch":3,"phase":{"type":"human","attachment_id":2}}
 返回观察       → control {"epoch":4,"phase":{"type":"agent"}}
 ```
 
+页面点击实测（接管状态下，菜单已关闭）：
+
+```text
+click red-button (90,50):   delta {'op=status': 35, 'op=ack_frame': 27, 'op=editing': 2}
+click input (100,119):      delta {'op=status': 36, 'op=ack_frame': 27, 'op=editing': 2}
+click blue (400,220):       delta {'op=status': 36, 'op=ack_frame': 28, 'op=editing': 2}
+click blue-low (600,520):   delta {'op=status': 35, 'op=ack_frame': 27, 'op=editing': 2}
+```
+
+每个点击产生 2 条 `op=editing`，即 `pointer_down` 加 `pointer_up`。
+
+释放控制后远端页面自检：
+
+```text
+{"clicked":1,"text":"","scrollY":0,"maxScroll":0,"scrollTrace":[0],"editorEvents":[]}
+```
+
+`clicked` 由 0 变 1，只有红色按钮那一次命中。图形界面点击真实作用到远端页面。
+
 截图确认界面显示远端页面：红色 `touch` 按钮、`type here` 输入框、
 `AgentBrowser live Host` 文本和蓝色长页面。
 
-### 5.4 未通过：页面指针输入
+结论：Mac 原生应用的关联、页面浏览与控制三项在图形界面上全部可用。
 
-在远端页面区域点击不产生任何输入操作。
+### 5.4 点击注入方式对照
 
-实测：在接管状态下，`presentation` 为 `browsing`，`controlMode` 为 `control`，
-`inputReady` 为 `true`，`visibleContent` 为 `native-video`。
+| 方式 | WebView 元素 | 原生视频视图 |
+| --- | --- | --- |
+| `cliclick` | 不送达 | 不送达 |
+| System Events `click at` | 送达 | 不送达 |
+| CoreGraphics `CGEventPost` | 送达 | 送达 |
 
-对页面区域连点四个位置，每次只有 `op=status` 与 `op=ack_frame`：
+验收和自动化一律使用 CoreGraphics 方式。
+
+### 5.5 Android 侧：安装、导入、连接、显示已通过
+
+本轮在 Android 16 模拟器（`sdk_gphone64_arm64`，arm64-v8a）上重跑手机侧验收。
 
 ```text
-click red-button (90,50):   delta {'op=status': 33, 'op=ack_frame': 25}
-click input (100,119):      delta {'op=status': 33, 'op=ack_frame': 25}
-click blue (400,220):       delta {'op=status': 32, 'op=ack_frame': 25}
-click blue-low (600,520):   delta {'op=status': 33, 'op=ack_frame': 25}
+adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk   Success
+adb shell am start -n com.agentbrowser.probe/.MainActivity              启动成功
 ```
 
-没有 `op=click`，也没有 `op=editing`。
+配对与连接步骤全部通过：
 
-同一套点击方法在 WebView 区域有效：点 `☰` 能打开面板，点 `✕` 能关闭面板。
+1. 把配对文件推到 `/sdcard/Download/pairing.abconnection`。
+2. 点 `☰`，点 `导入`，在 DocumentsUI 里选中该文件。
+3. 面板显示 `连接：192.168.0.3:<端口>`，`连接` 按钮变为可用。
+4. 点 `连接`，面板显示 `已连接` 与 `停止`。
 
-所以点击注入本身可用，问题局限在原生视频视图 `VideoSurfaceView` 的事件送达。
+Mac 侧同时可核对：
 
-对照：无 GUI 探针用 `op=click` 和手势两条路径都能点击成功（见 5.1）。
-即协议层与桥接层正确，缺口在 Swift 指针层。
+```text
+lsof -nP -iTCP:<端口>   两条来自 qemu-system 的 ESTABLISHED
+fixture status           attachment_id 1，connectionState 已连接
+```
+
+模拟器把宿主机局域地址 `192.168.0.3` 直接打通，不需要改成 `10.0.2.2`。
+改成 `10.0.2.2` 反而连接被拒。
+
+远端页面在模拟器上正常显示。截图能看到红色 `touch` 按钮，
+位于 `[0,210]-[470,471]`。
+
+模拟器用 `adb shell input tap` 点击 `☰` 可以开关面板。
+但面板内 `接管` 的点击坐标尚未校准，本轮没有完成模拟器上的接管与页面点击。
+
+这是在模拟器上继续验收的下一步，与真机无关。
 
 ## 6. 注意
 
 - 不要把 pairing token 写入文档、日志或聊天。
 - `fixture` 目录是临时目录，重启后会被清理。
 - 手机换网络后 `adb` 可能显示 `offline`。用 `adb connect <ip>:5555` 重连。
-- 合成点击必须用 System Events 的 `click at`，不能用 `cliclick`。
+- 点击注入用 CoreGraphics 的 `CGEventPost`，不要用 `cliclick`。
 - 查进程必须遍历 `every process` 比对 `unix id`，不能用 `first process whose unix id is N`。
 - 本机有他人启动的旧版 AgentBrowser 实例。两者窗口位置相同，验收前先确认目标进程。
+- 模拟器验收前先确认 `adb devices` 里选中的是哪个设备，本机同时有真机与模拟器。
+- `device_fixture` 的命令通道是 stdin 明文行命令，例如 `status`、`inspect`，
+  不是 JSON。
