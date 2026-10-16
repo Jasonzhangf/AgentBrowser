@@ -212,23 +212,59 @@ gesture    pointer_down + pointer_up 通过 → clicked 1 -> 2
 
 不满足时输入返回 `DISPLAY_NOT_READY_OR_CONTROL_NOT_GRANTED`。
 
-### 5.3 尚未验证：GUI 指针投递
+### 5.3 GUI 点击已能送达，但 连接 按钮不可用（真实缺陷）
 
-`docs/mac-gui-click-e2e.py` 用辅助功能坐标 + 真实鼠标事件驱动 GUI。
+`docs/mac-gui-click-e2e.py` 用辅助功能坐标加真实鼠标事件驱动 GUI。
 
-本次实测不能作结论。
+本轮先解决了两个测试环境问题：
 
-原因：合成点击没有到达应用窗口。
+1. `cliclick` 在本机不送达事件。改用 System Events 的 `click at {x,y}`，
+   并且必须在同一个 osascript 内先激活应用。
+2. 本机已有一个他人启动的旧版 AgentBrowser 实例，窗口位置相同。
+   必须先把探针自己的窗口移到不重叠的位置，否则点击落到旧实例上。
 
-`关闭菜单` 按钮的辅助功能中心是 `(2455,412)`，对它发真实点击后菜单仍然打开。
+修正后，真实点击确实到达 WebView。证据：对 `关闭菜单` 按钮发真实点击，菜单关闭。
 
-截图显示应用窗口不在当前可见桌面。
+但 `连接` 按钮仍然不触发：
 
-因此本轮关于 GUI 指针投递的所有失败结果都不可信，需要人在前台手动重测。
+```text
+click 连接: OK 3450,401 front=true
+connectionState: "connectionState":"idle"
+send counts: {'MAC_NATIVE_SEND op=status': 237}
+```
+
+从未出现 `op=connect`。面板显示：
+
+```text
+连接 未连接
+需要配置连接
+请先配置或导入连接
+```
+
+而原生桥接层在同一进程内报告：
+
+```text
+connectionSetup: {"error":null,"label":"Local pairing","state":"configured"}
+networkConfigured: true
+```
+
+统计本轮 205 条 `op=status` 回执，全部为 `configured`。
+
+`canConnect` 要求 `connectionSetup.state === 'configured'`。
+UI 判为未配置，所以按钮禁用。
+
+进一步证据：UI 渲染的字符串 `请先配置或导入连接` 在当前源码和已构建的
+`app.js` 中都不存在。当前源码与构建产物用的是 `请先选择并导入连接文件`。
+
+即运行中的界面代码与构建产物不一致。这是阻断 Mac 图形界面发起连接的真实缺陷。
+
+未定位：界面代码与构建产物不一致的确切来源。已排除 WebKit 缓存和进程池共享。
+把 `app.js` 中的该字符串替换为标记后重启，界面仍显示旧字符串。
 
 ## 6. 注意
 
 - 不要把 pairing token 写入文档、日志或聊天。
 - `fixture` 目录是临时目录，重启后会被清理。
 - 手机换网络后 `adb` 可能显示 `offline`。用 `adb connect <ip>:5555` 重连。
-- 头部无窗口时，合成点击不可靠。GUI 验收需要人在前台执行。
+- 合成点击必须用 System Events 的 `click at`，不能用 `cliclick`。
+- 本机有他人启动的旧版 AgentBrowser 实例，验收前先把窗口移到不重叠位置。

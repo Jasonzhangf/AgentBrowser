@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """End-to-end GUI probe for the macOS client click path.
 
-Starts a real Obscura host+endpoint fixture, launches the macOS native app
-against a staged pairing directory, then drives the WebKit connection menu with
-real mouse clicks placed from the accessibility frames of the menu buttons.
+Real clicks must be posted from inside the same System Events script that
+activates the app. A separate cliclick process loses focus to the full-screen
+terminal window, so its events never reach the WebView.
 
-It reports whether the GUI page click reaches the remote DOM.
+Usage: python3 docs/mac-gui-click-e2e.py
 """
 
 import json
@@ -27,47 +27,74 @@ LOG = "/tmp/mac-gui-e2e-bridge.log"
 log = lambda *a: print(*a, flush=True)
 
 
-def ax_frame(pid, name):
-    script = f'''
+def osa(script):
+    return subprocess.run(["osascript", "-e", script], capture_output=True, text=True).stdout.strip()
+
+
+def click_named(pid, name):
+    """Activate the app and click the named AX button, in one System Events run."""
+    return osa(f'''
 tell application "System Events"
   set p to first process whose unix id is {pid}
+  set frontmost of p to true
+  delay 0.4
+  perform action "AXRaise" of window 1 of p
+  delay 0.8
+  set fm to frontmost of p
   set es to entire contents of window 1 of p
   repeat with e in es
     try
       if role of e is "AXButton" and name of e is "{name}" then
         set pos to position of e
         set sz to size of e
-        return ((item 1 of pos) as text) & "," & ((item 2 of pos) as text) & "," & ((item 1 of sz) as text) & "," & ((item 2 of sz) as text)
+        set cx to (item 1 of pos) + ((item 1 of sz) / 2) as integer
+        set cy to (item 2 of pos) + ((item 2 of sz) / 2) as integer
+        click at {{cx, cy}}
+        return "OK " & cx & "," & cy & " front=" & (fm as text)
       end if
     end try
   end repeat
   return "MISSING"
 end tell
-'''
-    out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True).stdout.strip()
-    if out == "MISSING" or "," not in out:
-        return None
-    x, y, w, h = (int(float(v)) for v in out.split(","))
-    return x + w // 2, y + h // 2
+''')
 
 
-def ax_press(pid, name):
-    script = f'''
+def press_named(pid, name):
+    return osa(f'''
 tell application "System Events"
   set p to first process whose unix id is {pid}
+  set frontmost of p to true
+  delay 0.4
+  perform action "AXRaise" of window 1 of p
+  delay 0.8
+  set fm to frontmost of p
   set es to entire contents of window 1 of p
   repeat with e in es
     try
       if role of e is "AXButton" and name of e is "{name}" then perform action "AXPress" of e
     end try
   end repeat
+  return "DONE"
 end tell
-'''
-    subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+''')
+
+
+def click_point(pid, x, y):
+    return osa(f'''
+tell application "System Events"
+  set p to first process whose unix id is {pid}
+  set frontmost of p to true
+  delay 0.4
+  perform action "AXRaise" of window 1 of p
+  delay 0.8
+  click at {{{x}, {y}}}
+  return "OK"
+end tell
+''')
 
 
 def window_frame(pid):
-    script = f'''
+    out = osa(f'''
 tell application "System Events"
   set p to first process whose unix id is {pid}
   set w to window 1 of p
@@ -75,9 +102,16 @@ tell application "System Events"
   set sz to size of w
   return ((item 1 of pos) as text) & "," & ((item 2 of pos) as text) & "," & ((item 1 of sz) as text) & "," & ((item 2 of sz) as text)
 end tell
-'''
-    out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True).stdout.strip()
+''')
     return tuple(int(float(v)) for v in out.split(","))
+
+
+def send_counts():
+    text = open(LOG, errors="ignore").read()
+    counts = {}
+    for s in re.findall(r"MAC_NATIVE_SEND op=[a-z_]+", text):
+        counts[s] = counts.get(s, 0) + 1
+    return counts
 
 
 class Fixture:
@@ -118,74 +152,56 @@ def main():
 
     try:
         time.sleep(12)
-        subprocess.run(["osascript", "-e",
-                        f'tell application "System Events" to set frontmost of (first process whose unix id is {app.pid}) to true'],
-                       capture_output=True)
-        time.sleep(2)
-        wx, wy, ww, wh = window_frame(app.pid)
-        log("window:", wx, wy, ww, wh)
+        r = subprocess.run(["osascript", "-e", f"""
+tell application "System Events"
+  set p to first process whose unix id is {app.pid}
+  try
+    set position of window 1 of p to {{2560, 100}}
+    return "moved"
+  on error e
+    return "MOVE_ERR " & e
+  end try
+end tell
+"""], capture_output=True, text=True)
+        log("  move:", (r.stdout or r.stderr).strip())
+        time.sleep(1)
+        log("window:", window_frame(app.pid))
 
-        log("== open menu ==")
-        ax_press(app.pid, "打开菜单")
+        log("== connect ==")
+        press_named(app.pid, "打开菜单")
         time.sleep(1.5)
-        close_target = ax_frame(app.pid, "关闭菜单")
-        log("close-menu button center:", close_target)
-        if close_target:
-            subprocess.run(["screencapture", "-x", "/tmp/mac-gui-e2e-shot.png"])
-            subprocess.run(["cliclick", f"m:{close_target[0]},{close_target[1]}", "w:250", "c:2220,668"])
-            time.sleep(1.5)
-            still_open = ax_frame(app.pid, "关闭菜单") is not None
-            log("menu still open after real click:", still_open)
-            if not still_open:
-                ax_press(app.pid, "打开菜单")
-                time.sleep(1.5)
-        target = ax_frame(app.pid, "连接")
-        log("connect button center:", target)
-        if not target:
-            log("CONNECT_BUTTON_NOT_FOUND")
-            return
-        subprocess.run(["cliclick", f"m:{target[0]},{target[1]}", "w:250"])
+        subprocess.run(["screencapture", "-x", "/tmp/gui-menu.png"])
+        subprocess.run(["screencapture", "-x", "/tmp/gui-menu.png"])
+        log("  click 连接:", click_named(app.pid, "连接"))
         for _ in range(40):
-            if re.search(r'"connectionState":"connected"', open(LOG, errors="ignore").read()):
+            if '"connectionState":"connected"' in open(LOG, errors="ignore").read():
                 break
             time.sleep(0.5)
-        tail = re.findall(r'"connectionState":"[a-z]+"', open(LOG, errors="ignore").read())
-        log("connectionState:", tail[-1] if tail else "none")
+        states = re.findall(r'"connectionState":"[a-z]+"', open(LOG, errors="ignore").read())
+        log("  connectionState:", states[-1] if states else "none")
 
         log("== takeover ==")
-        ax_press(app.pid, "打开菜单")
+        press_named(app.pid, "打开菜单")
         time.sleep(1.5)
-        target = ax_frame(app.pid, "接管")
-        log("takeover button center:", target)
-        if target:
-            subprocess.run(["cliclick", f"m:{target[0]},{target[1]}", "w:250"])
+        log("  click 接管:", click_named(app.pid, "接管"))
         time.sleep(3)
-        status = fixture.call("status")
-        log("control after takeover:", status.get("control"))
+        log("  control:", fixture.call("status").get("control"))
 
         log("== page click ==")
-        page_x = wx + 90
-        page_y = wy + 28 + 56 + 50
-        log("page click at:", page_x, page_y)
-        subprocess.run(["cliclick", f"c:{page_x},{page_y}"])
+        wx, wy, ww, wh = window_frame(app.pid)
+        px, py = wx + 90, wy + 28 + 56 + 50
+        log("  point:", px, py)
+        click_point(app.pid, px, py)
         time.sleep(3)
-        sends = re.findall(r"MAC_NATIVE_SEND op=[a-z_]+", open(LOG, errors="ignore").read())
-        counts = {}
-        for s in sends:
-            counts[s] = counts.get(s, 0) + 1
-        log("send counts:", counts)
+        log("  sends:", send_counts())
 
-        log("== release via menu ==")
-        ax_press(app.pid, "打开菜单")
+        log("== release ==")
+        press_named(app.pid, "打开菜单")
         time.sleep(1.5)
-        target = ax_frame(app.pid, "返回观察")
-        log("release button center:", target)
-        if target:
-            subprocess.run(["cliclick", f"m:{target[0]},{target[1]}", "w:250"])
+        log("  click 返回观察:", click_named(app.pid, "返回观察"))
         time.sleep(3)
-        status = fixture.call("status")
-        log("control after release:", status.get("control"))
-        log("dom:", fixture.call("inspect"))
+        log("  control:", fixture.call("status").get("control"))
+        log("  dom:", fixture.call("inspect"))
     finally:
         for proc in (app, fixture.proc):
             try:
