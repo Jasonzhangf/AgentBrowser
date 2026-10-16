@@ -274,39 +274,70 @@ click blue-low (600,520):   delta {'op=status': 35, 'op=ack_frame': 27, 'op=edit
 
 验收和自动化一律使用 CoreGraphics 方式。
 
-### 5.5 Android 侧：安装、导入、连接、显示已通过
+### 5.5 Android 侧：关联、页面浏览、控制全部通过
 
-本轮在 Android 16 模拟器（`sdk_gphone64_arm64`，arm64-v8a）上重跑手机侧验收。
+本轮在 Android 16 模拟器（`sdk_gphone64_arm64`，arm64-v8a）上跑完手机侧验收。
 
 ```text
 adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk   Success
 adb shell am start -n com.agentbrowser.probe/.MainActivity              启动成功
 ```
 
-配对与连接步骤全部通过：
+配对与连接：
 
 1. 把配对文件推到 `/sdcard/Download/pairing.abconnection`。
 2. 点 `☰`，点 `导入`，在 DocumentsUI 里选中该文件。
 3. 面板显示 `连接：192.168.0.3:<端口>`，`连接` 按钮变为可用。
-4. 点 `连接`，面板显示 `已连接` 与 `停止`。
+4. 点 `连接`。
 
-Mac 侧同时可核对：
+Mac 侧同时核对：
 
 ```text
-lsof -nP -iTCP:<端口>   两条来自 qemu-system 的 ESTABLISHED
-fixture status           attachment_id 1，connectionState 已连接
+lsof -nP -iTCP:<端口>   qemu-system 4 条 ESTABLISHED
 ```
 
 模拟器把宿主机局域地址 `192.168.0.3` 直接打通，不需要改成 `10.0.2.2`。
 改成 `10.0.2.2` 反而连接被拒。
 
-远端页面在模拟器上正常显示。截图能看到红色 `touch` 按钮，
-位于 `[0,210]-[470,471]`。
+控制闭环实测（`docs/android-ui-drive.py`，2026-10-16）：
 
-模拟器用 `adb shell input tap` 点击 `☰` 可以开关面板。
-但面板内 `接管` 的点击坐标尚未校准，本轮没有完成模拟器上的接管与页面点击。
+```text
+after connect          clients 4
+baseline inspect       {"clicked":0,...}
+接管                    control {"epoch":3,"phase":{"type":"human","attachment_id":2}}
+点远端红色按钮 3 次      屏幕坐标 (234,340)
+返回观察                control {"epoch":4,"phase":{"type":"agent"}}
+final inspect          {"clicked":3,...}
+```
 
-这是在模拟器上继续验收的下一步，与真机无关。
+`clicked` 由 0 变 3，说明手机上的三次点击真实送达远端页面。
+
+#### 5.5.1 面板按钮坐标必须从 WebView 实时读取
+
+面板按钮在 WebView 内部。CSS 视口是 `411x914`，DPR 是 `2.625`，
+所以 CSS 坐标乘 `2.628` 才是屏幕坐标。
+
+面板内容的纵向位置会随连接状态变化，写死的屏幕坐标会失准。
+
+正确做法是用 WebView 的 DevTools 通道读实时矩形：
+
+```sh
+PID=$(adb -s emulator-5554 shell pidof com.agentbrowser.probe)
+adb -s emulator-5554 forward tcp:19222 localabstract:webview_devtools_remote_$PID
+curl -s http://127.0.0.1:19222/json
+```
+
+然后对 `webSocketDebuggerUrl` 发 `Runtime.evaluate`，取
+`element.getBoundingClientRect()`。WebSocket 握手要省略 `Origin` 头，
+否则返回 403。
+
+`docs/android-ui-drive.py` 已封装这套流程，可直接复用。
+
+两个易错点：
+
+1. 判断面板是否打开不能用 `offsetParent`，它在面板移出视口时依然为真。
+   要用矩形是否落在视口内。
+2. 关闭面板用面板自己的 `#drawer-close`。面板打开时工具栏 `☰` 不响应。
 
 ## 6. 注意
 
@@ -317,5 +348,9 @@ fixture status           attachment_id 1，connectionState 已连接
 - 查进程必须遍历 `every process` 比对 `unix id`，不能用 `first process whose unix id is N`。
 - 本机有他人启动的旧版 AgentBrowser 实例。两者窗口位置相同，验收前先确认目标进程。
 - 模拟器验收前先确认 `adb devices` 里选中的是哪个设备，本机同时有真机与模拟器。
+- 手机端面板按钮坐标从 WebView DevTools 实时读取，不要写死屏幕坐标。
+  步骤见 5.5.1。
 - `device_fixture` 的命令通道是 stdin 明文行命令，例如 `status`、`inspect`，
   不是 JSON。
+- 手机持有控制时 `inspect` 会被拒绝，返回 `CONTROL_REQUIRED`。
+  先点“返回观察”再自检。
