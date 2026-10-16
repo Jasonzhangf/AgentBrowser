@@ -13,6 +13,7 @@ Two environment facts drive this script:
 Usage: python3 docs/mac-gui-click-e2e.py
 """
 
+import ctypes
 import json
 import os
 import re
@@ -29,6 +30,31 @@ BIND_IP = "192.168.0.3"
 LOG = "/tmp/mac-gui-e2e-bridge.log"
 
 log = lambda *a: print(*a, flush=True)
+
+
+# System Events' `click at` only reaches elements that exist in the
+# accessibility tree. The native video surface is a plain NSView, so post
+# real HID events through CoreGraphics instead.
+_cg = ctypes.cdll.LoadLibrary(
+    "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+_cg.CGEventCreateMouseEvent.restype = ctypes.c_void_p
+_cg.CGEventCreateMouseEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint32, _CGPoint, ctypes.c_uint32]
+_cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+
+
+def cg_click(x, y):
+    """Post a real left mouse down/up pair at a screen point."""
+    for event_type in (1, 2):
+        event = _cg.CGEventCreateMouseEvent(None, event_type, _CGPoint(x, y), 0)
+        _cg.CGEventPost(0, event)
+        time.sleep(0.08)
+    return "OK"
 
 
 def osa(body, pid):
@@ -95,21 +121,11 @@ def activate(pid):
   return "OK"''', pid)
 
 
-def click_at(pid, x, y, attempts=3):
-    """Post a real click at a screen point, retrying transient AX errors."""
-    last = ""
-    for _ in range(attempts):
-        last = osa(f'''
-  try
-    click at {{{x}, {y}}}
-    return "OK"
-  on error e
-    return "ERR " & e
-  end try''', pid)
-        if last == "OK":
-            return last
-        time.sleep(1.5)
-    return last
+def click_at(pid, x, y):
+    """Activate the app, then post a real HID click at a screen point."""
+    activate(pid)
+    time.sleep(0.5)
+    return cg_click(x, y)
 
 
 def panel_point(pid, offset):
