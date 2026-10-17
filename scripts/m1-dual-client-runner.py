@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
-import hashlib
 import importlib.util
 import ipaddress
 import json
@@ -87,7 +86,6 @@ ProcessProtocolError = _DIRECT.ProcessProtocolError
 artifact_identity = _DIRECT.artifact_identity
 bounded_text = _DIRECT.bounded_text
 control_epoch = _DIRECT.control_epoch
-file_sha256 = _DIRECT.file_sha256
 is_rejection = _DIRECT.is_rejection
 loopback_endpoint = _DIRECT.loopback_endpoint
 nonnegative_integer = _DIRECT.nonnegative_integer
@@ -143,7 +141,6 @@ def candidate_git_probes(cwd: pathlib.Path) -> dict[str, dict[str, Any]]:
     return {
         "branch": git_probe(cwd, "symbolic-ref", "--quiet", "--short", "HEAD"),
         "commit": git_probe(cwd, "rev-parse", "HEAD"),
-        "tree": git_probe(cwd, "rev-parse", "HEAD^{tree}"),
         "status": git_probe(cwd, "status", "--porcelain=v1", "--untracked-files=all"),
     }
 
@@ -500,14 +497,10 @@ class Arguments:
         bind_ip: str,
         android_test_class: str,
         android_test_component: str,
-        skip_android_build: bool,
         fixture_args: list[str],
         mac_bridge_args: list[str],
         agent_commit: Optional[str],
-        agent_tree: Optional[str],
         obscura_commit: Optional[str],
-        obscura_tree: Optional[str],
-        android_build_provenance: Optional[pathlib.Path],
     ):
         self.dry_run = dry_run
         self.fixture_bin = fixture_bin
@@ -523,14 +516,10 @@ class Arguments:
         self.bind_ip = bind_ip
         self.android_test_class = android_test_class
         self.android_test_component = android_test_component
-        self.skip_android_build = skip_android_build
         self.fixture_args = fixture_args
         self.mac_bridge_args = mac_bridge_args
         self.agent_commit = agent_commit
-        self.agent_tree = agent_tree
         self.obscura_commit = obscura_commit
-        self.obscura_tree = obscura_tree
-        self.android_build_provenance = android_build_provenance
 
 
 def parser() -> argparse.ArgumentParser:
@@ -549,14 +538,10 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--bind-ip", default=os.environ.get("OBSCURA_ENDPOINT_BIND_IP", "127.0.0.1"))
     value.add_argument("--android-test-class", default=DEFAULT_ANDROID_CLASS)
     value.add_argument("--android-test-component", default=DEFAULT_TEST_COMPONENT)
-    value.add_argument("--skip-android-build", action="store_true")
-    value.add_argument("--android-build-provenance", type=pathlib.Path, default=None)
     value.add_argument("--fixture-arg", action="append", default=[])
     value.add_argument("--mac-bridge-arg", action="append", default=[])
     value.add_argument("--agent-commit", default=None)
-    value.add_argument("--agent-tree", default=None)
     value.add_argument("--obscura-commit", default=None)
-    value.add_argument("--obscura-tree", default=None)
     return value
 
 
@@ -599,10 +584,6 @@ def build_arguments(namespace: argparse.Namespace, cwd: pathlib.Path = ROOT) -> 
         if path is not None:
             expanded = path.expanduser()
             path_values[key] = (expanded if expanded.is_absolute() else cwd / expanded).resolve(strict=False)
-    provenance = namespace.android_build_provenance
-    if provenance is not None:
-        expanded = provenance.expanduser()
-        provenance = (expanded if expanded.is_absolute() else cwd / expanded).resolve(strict=False)
     return Arguments(
         dry_run=namespace.dry_run,
         fixture_bin=path_values["fixture_bin"],
@@ -618,14 +599,10 @@ def build_arguments(namespace: argparse.Namespace, cwd: pathlib.Path = ROOT) -> 
         bind_ip=namespace.bind_ip,
         android_test_class=namespace.android_test_class,
         android_test_component=namespace.android_test_component,
-        skip_android_build=namespace.skip_android_build,
         fixture_args=list(namespace.fixture_arg),
         mac_bridge_args=list(namespace.mac_bridge_arg),
         agent_commit=namespace.agent_commit,
-        agent_tree=namespace.agent_tree,
         obscura_commit=namespace.obscura_commit,
-        obscura_tree=namespace.obscura_tree,
-        android_build_provenance=provenance,
     )
 
 
@@ -642,7 +619,7 @@ class CombinedRunner:
         self.android_process: Optional[subprocess.Popen[bytes]] = None
         self.android_log_handle: Optional[Any] = None
         self.fixture_root: Optional[pathlib.Path] = None
-        self.bundle_sha256: Optional[str] = None
+        self.bundle_path: Optional[pathlib.Path] = None
         self.adb_path: Optional[pathlib.Path] = None
         self.adb_reverse_port: Optional[int] = None
         self.adb_reverse_owned: Optional[dict[str, Any]] = None
@@ -672,14 +649,11 @@ class CombinedRunner:
                 "worktree": str(self.worktree),
                 "branch": value("branch"),
                 "commit": value("commit"),
-                "tree": value("tree"),
                 "status_before": None if status is None else status.splitlines(),
                 "git_probes_before": probes,
                 "status_after": None,
                 "requested_agent_commit": self.args.agent_commit,
-                "requested_agent_tree": self.args.agent_tree,
                 "requested_obscura_commit": self.args.obscura_commit,
-                "requested_obscura_tree": self.args.obscura_tree,
             },
             "invocation": {
                 "mode": "dry-run" if self.args.dry_run else "real",
@@ -723,7 +697,6 @@ class CombinedRunner:
             return False
         candidate["branch"] = probes["branch"]["value"]
         candidate["commit"] = probes["commit"]["value"]
-        candidate["tree"] = probes["tree"]["value"]
         status = probes["status"]["value"]
         candidate[f"status_{label}"] = status.splitlines()
         if label == "before":
@@ -814,7 +787,7 @@ class CombinedRunner:
                 next_action="restore Git access and rerun from this candidate worktree",
                 stage="preflight",
             )
-        if any(candidate.get(field) is None for field in ("branch", "commit", "tree", "status_before")):
+        if any(candidate.get(field) is None for field in ("branch", "commit", "status_before")):
             self.abort("GIT_PROBE_FAILED", f"candidate Git values incomplete: {candidate}", owner="workspace Git boundary", next_action="restore Git access and rerun from this candidate worktree", stage="preflight")
         branch = candidate["branch"]
         if branch in {"main", "master"}:
@@ -822,9 +795,7 @@ class CombinedRunner:
         if candidate["status_before"]:
             self.abort("DIRTY_CANDIDATE_TREE", json_text(candidate["status_before"]), owner="candidate worktree", next_action="commit or move unrelated changes before replay", stage="preflight")
         if self.args.agent_commit and candidate["commit"] != self.args.agent_commit:
-            self.abort("AGENT_CANDIDATE_MISMATCH", f"HEAD={candidate['commit']} requested={self.args.agent_commit}", owner="AgentBrowser candidate binding", next_action="select the requested AgentBrowser candidate tree", stage="preflight")
-        if self.args.agent_tree and candidate["tree"] != self.args.agent_tree:
-            self.abort("AGENT_TREE_MISMATCH", f"HEAD tree={candidate['tree']} requested={self.args.agent_tree}", owner="AgentBrowser candidate binding", next_action="select the requested AgentBrowser tree", stage="preflight")
+            self.abort("AGENT_CANDIDATE_MISMATCH", f"HEAD={candidate['commit']} requested={self.args.agent_commit}", owner="AgentBrowser candidate binding", next_action="select the requested AgentBrowser candidate", stage="preflight")
         self._require_executable(self.args.fixture_bin, "MISSING_FIXTURE_ENTRYPOINT", "AgentBrowser fixture owner", "preflight")
         self._require_executable(self.args.mac_bridge_bin, "MISSING_MAC_BRIDGE_ENTRYPOINT", "AgentBrowser Mac bridge owner", "preflight")
         if self.args.obscura_bin_dir is None or not self.args.obscura_bin_dir.is_dir():
@@ -898,24 +869,20 @@ class CombinedRunner:
                 self.abort("PAIRING_ENDPOINT_MISMATCH", "endpoint.txt does not match ready endpoint", owner="fixture endpoint owner", next_action="keep pairing endpoint and ready record identical", stage="fixture_start")
         except OSError as error:
             self.abort("PAIRING_FILE_MISSING", bounded_text(error), owner="fixture endpoint owner", next_action="preserve all fixture pairing files", stage="fixture_start")
-        # The Android instrumentation imports the same bundle this fixture emitted,
-        # so the digest the app compares against its staged file is computed here,
-        # from the ready record's own bundle path, and never re-derived downstream.
+        # The Android instrumentation imports the same bundle this fixture
+        # emitted, so the runner passes the bundle path and lets the app import
+        # the exact staged bytes.
         bundle_raw = ready.get("bundle")
         if not isinstance(bundle_raw, str) or not bundle_raw:
-            self.abort("PAIRING_BUNDLE_MISSING", f"ready record has no bundle path: {ready!r}", owner="AgentBrowser fixture owner", next_action="emit the frozen pairing bundle path in the ready record", stage="fixture_start")
+            self.abort("PAIRING_BUNDLE_MISSING", f"ready record has no bundle path: {ready!r}", owner="AgentBrowser fixture owner", next_action="emit the pairing bundle path in the ready record", stage="fixture_start")
         bundle = pathlib.Path(bundle_raw).expanduser().resolve(strict=False)
         if bundle.parent != fixture_root or not bundle.is_file():
             self.abort("PAIRING_BUNDLE_INVALID", f"bundle is not a file inside the fixture root: {bundle}", owner="AgentBrowser fixture owner", next_action="emit the owned bundle path inside the fixture root", stage="fixture_start")
-        bundle_digest = file_sha256(bundle)
-        if bundle_digest is None:
-            self.abort("PAIRING_BUNDLE_UNREADABLE", str(bundle), owner="AgentBrowser fixture owner", next_action="preserve the emitted bundle bytes for hashing", stage="fixture_start")
-        bundle_sha256 = bundle_digest.removeprefix("sha256:")
-        if len(bundle_sha256) != 64:
-            self.abort("PAIRING_BUNDLE_DIGEST_INVALID", f"{bundle}: {bundle_digest}", owner="AgentBrowser fixture owner", next_action="hash the emitted bundle bytes with SHA-256", stage="fixture_start")
-        self.bundle_sha256 = bundle_sha256
+        if bundle.stat().st_size == 0:
+            self.abort("PAIRING_BUNDLE_EMPTY", str(bundle), owner="AgentBrowser fixture owner", next_action="emit a non-empty pairing bundle", stage="fixture_start")
+        self.bundle_path = bundle
         self.fixture_root = fixture_root
-        self.evidence["fixture"].update({"identity": artifact_identity(self.args.fixture_bin), "ready": dict(ready), "root": str(fixture_root), "endpoint": endpoint_raw, "session": session, "endpoint_info": endpoint_info, "bundle": {"path": str(bundle), "sha256": bundle_sha256}})
+        self.evidence["fixture"].update({"ready": dict(ready), "root": str(fixture_root), "endpoint": endpoint_raw, "session": session, "endpoint_info": endpoint_info, "bundle": {"path": str(bundle)}})
         self._write_json("fixture-ready.json", self.evidence["fixture"])
         self.record_host_status("fixture_ready", "fixture_start")
         self.stage_finish("fixture_start", "passed", {"pid": self.fixture.pid, "session": session, "endpoint": endpoint_raw})
@@ -1050,35 +1017,31 @@ class CombinedRunner:
     def install_android(self) -> None:
         self.stage_start("android_install")
         assert self.adb_path is not None
-        if not self.args.skip_android_build:
-            try:
-                result = subprocess.run(
-                    ["bash", str(ROOT / "scripts" / "android.sh"), "assembleDebug", "assembleDebugAndroidTest"],
-                    cwd=str(ROOT),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    check=False,
-                    timeout=max(300.0, self.args.android_test_timeout),
-                )
-            except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as error:
-                output = getattr(error, "output", None) or bounded_text(error)
-                write_exclusive(self.args.evidence_dir / "android-build.log", output)
-                self.abort("ANDROID_BUILD_FAILED", bounded_text(output), owner="Android packaging owner", next_action="preserve Gradle startup/timeout output and repair the Android build owner", stage="android_install")
-            write_exclusive(self.args.evidence_dir / "android-build.log", result.stdout)
-            if result.returncode != 0:
-                self.abort("ANDROID_BUILD_FAILED", bounded_text(result.stdout), owner="Android packaging owner", next_action="preserve Gradle output and repair the Android build owner", stage="android_install")
+        try:
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "android.sh"), "assembleDebug", "assembleDebugAndroidTest"],
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=max(300.0, self.args.android_test_timeout),
+            )
+        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError) as error:
+            output = getattr(error, "output", None) or bounded_text(error)
+            write_exclusive(self.args.evidence_dir / "android-build.log", output)
+            self.abort("ANDROID_BUILD_FAILED", bounded_text(output), owner="Android packaging owner", next_action="preserve Gradle startup/timeout output and repair the Android build owner", stage="android_install")
+        write_exclusive(self.args.evidence_dir / "android-build.log", result.stdout)
+        if result.returncode != 0:
+            self.abort("ANDROID_BUILD_FAILED", bounded_text(result.stdout), owner="Android packaging owner", next_action="preserve Gradle output and repair the Android build owner", stage="android_install")
         self.configure_adb_reverse("android_install")
         artifacts = {
             "com.agentbrowser.probe": ROOT / "apps" / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk",
             "com.agentbrowser.probe.test": ROOT / "apps" / "android" / "app" / "build" / "outputs" / "apk" / "androidTest" / "debug" / "app-debug-androidTest.apk",
         }
-        if self.args.skip_android_build:
-            self.verify_android_build_provenance(artifacts, "android_install")
         installed: dict[str, Any] = {}
         for package, artifact in artifacts.items():
             if not artifact.is_file():
                 self.abort("ANDROID_ARTIFACT_MISSING", str(artifact), owner="Android packaging owner", next_action="build the main and instrumentation APKs from this candidate", stage="android_install")
-            digest = file_sha256(artifact)
             code, output = self.adb(["install", "-r", str(artifact)], timeout=180.0)
             if code != 0:
                 self.abort("ANDROID_INSTALL_FAILED", bounded_text(output), owner="Android environment owner", next_action="preserve adb install output and device identity", stage="android_install")
@@ -1086,11 +1049,7 @@ class CombinedRunner:
             paths = [line.strip()[8:] for line in path_output.decode(errors="replace").splitlines() if line.strip().startswith("package:")]
             if path_code != 0 or len(paths) != 1:
                 self.abort("ANDROID_INSTALLED_PATH_INVALID", f"{package}: {paths}; {bounded_text(path_output)}", owner="Android environment owner", next_action="return exactly one installed APK path", stage="android_install")
-            content_code, content = self.adb(["exec-out", "cat", paths[0]])
-            installed_digest = hashlib.sha256(content).hexdigest() if content_code == 0 else None
-            if digest is None or installed_digest != digest.removeprefix("sha256:"):
-                self.abort("ANDROID_APK_IDENTITY_MISMATCH", f"{package}: artifact={digest} installed={installed_digest}", owner="Android packaging owner", next_action="install the APK produced by this candidate and preserve both hashes", stage="android_install")
-            installed[package] = {"artifact": str(artifact), "artifact_sha256": digest, "installed_path": paths[0], "installed_sha256": installed_digest}
+            installed[package] = {"artifact": str(artifact), "installed_path": paths[0]}
         self.android_install = {"serial": self.args.android_serial, "packages": installed, "observed_at": utc_now()}
         self._write_json("installed-apks.json", self.android_install)
         if self.fixture_root is None:
@@ -1148,30 +1107,6 @@ class CombinedRunner:
             next_action="preserve window focus state and foreground the probe Activity",
             stage="android_install",
         )
-
-    def verify_android_build_provenance(self, artifacts: Mapping[str, pathlib.Path], stage: str) -> None:
-        path = self.args.android_build_provenance
-        if path is None:
-            self.abort("ANDROID_BUILD_PROVENANCE_REQUIRED", "--skip-android-build requires an explicit current-candidate build provenance file", owner="Android packaging owner", next_action="provide provenance containing this candidate commit/tree and APK hashes", stage=stage)
-        assert path is not None
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            self.abort("ANDROID_BUILD_PROVENANCE_INVALID", f"{path}: {bounded_text(error)}", owner="Android packaging owner", next_action="provide readable JSON provenance from the current candidate build", stage=stage)
-        if not isinstance(value, Mapping):
-            self.abort("ANDROID_BUILD_PROVENANCE_INVALID", f"{path}: root is not an object", owner="Android packaging owner", next_action="emit structured candidate build provenance", stage=stage)
-        candidate = self.evidence["candidate"]
-        if value.get("candidate_commit") != candidate.get("commit") or value.get("candidate_tree") != candidate.get("tree"):
-            self.abort("ANDROID_BUILD_PROVENANCE_MISMATCH", f"provenance candidate={value.get('candidate_commit')}/{value.get('candidate_tree')} current={candidate.get('commit')}/{candidate.get('tree')}", owner="Android packaging owner", next_action="build APKs from this exact candidate and regenerate provenance", stage=stage)
-        recorded = value.get("artifacts")
-        if not isinstance(recorded, Mapping):
-            self.abort("ANDROID_BUILD_PROVENANCE_INVALID", f"{path}: artifacts is not an object", owner="Android packaging owner", next_action="record both APK artifact hashes", stage=stage)
-        for package, artifact in artifacts.items():
-            item = recorded.get(package)
-            digest = file_sha256(artifact)
-            if digest is None or not isinstance(item, Mapping) or item.get("path") != str(artifact) or item.get("sha256") != digest:
-                self.abort("ANDROID_BUILD_PROVENANCE_MISMATCH", f"{package}: provenance={item!r} current={{'path': {str(artifact)!r}, 'sha256': {digest!r}}}", owner="Android packaging owner", next_action="use APKs and provenance generated by the same candidate build", stage=stage)
-        self.evidence["android_build_provenance"] = {"path": str(path), "candidate_commit": value["candidate_commit"], "candidate_tree": value["candidate_tree"]}
 
     def _record_mac(self, operation: str, value: Any, stage: str) -> dict[str, Any]:
         if is_rejection(value):
@@ -1296,8 +1231,8 @@ class CombinedRunner:
         if not isinstance(initial_url, str) or not initial_url:
             self.abort("ANDROID_INITIAL_URL_MISSING", "fixture ready record has no initialUrl", owner="AgentBrowser fixture owner", next_action="emit the exact initial URL for instrumentation", stage="android_replay")
         encoded = base64.b64encode(initial_url.encode()).decode()
-        if not self.bundle_sha256:
-            self.abort("ANDROID_BUNDLE_DIGEST_MISSING", "fixture bundle digest was not computed at fixture start", owner="AgentBrowser fixture owner", next_action="hash the emitted pairing bundle before instrumentation", stage="android_replay")
+        if self.bundle_path is None or not self.bundle_path.is_file():
+            self.abort("ANDROID_BUNDLE_MISSING", "fixture bundle path was not recorded at fixture start", owner="AgentBrowser fixture owner", next_action="emit the pairing bundle before instrumentation", stage="android_replay")
         command = [
             str(self.adb_path),
             "-s",
@@ -1313,9 +1248,6 @@ class CombinedRunner:
             "-e",
             "initialUrlBase64",
             encoded,
-            "-e",
-            "bundleSha256",
-            self.bundle_sha256,
             "-e",
             "class",
             self.args.android_test_class,

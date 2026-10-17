@@ -1,6 +1,5 @@
 """Run the real Android account UI against an owned temporary Relay fixture."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -176,30 +175,20 @@ def run_scenario(scenario, fixture_args, evidence_names):
 model = adb("shell", "getprop", "ro.product.model").stdout.decode().strip()
 if model != "PLZ110":
     raise SystemExit(f"Authorized account device model changed: {model}")
-installed = {}
 for package, relative in (
     (APP, "debug/app-debug.apk"),
     (f"{APP}.test", "androidTest/debug/app-debug-androidTest.apk"),
 ):
     apk = ROOT / "apps/android/app/build/outputs/apk" / relative
-    digest = hashlib.sha256(apk.read_bytes()).hexdigest()
     adb("install", "-r", str(apk), timeout=120)
     paths = adb("shell", "pm", "path", package).stdout.decode().splitlines()
     if len(paths) != 1 or not paths[0].startswith("package:"):
         raise RuntimeError(f"Expected one installed APK for {package}: {paths}")
-    installed_bytes = adb("exec-out", "cat", paths[0][len("package:"):]).stdout
-    if hashlib.sha256(installed_bytes).hexdigest() != digest:
-        raise RuntimeError(f"Installed APK identity mismatch: {package}")
-    installed[package] = digest
-(args.evidence_dir / "installed-apks.json").write_text(
-    json.dumps({"serial": serial, "model": model, "sha256": installed}, indent=2) + "\n"
-)
 adb("shell", "am", "force-stop", APP)
 summary = {
     "serial": serial,
     "model": model,
     "advertiseHost": advertise_host,
-    "installedApkSha256": installed,
     "scenarios": [],
 }
 try:

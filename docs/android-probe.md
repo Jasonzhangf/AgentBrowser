@@ -67,8 +67,8 @@ ADB installation alone is not the acceptance signal. Evidence is retained in
 the ignored task-local `evidence/` directory and the app's private files.
 
 For a committed candidate, `node scripts/validate-android.mjs` executes those
-checks in causal order, compares the installed APK bytes with the built APK,
-then writes project-owned lifecycle/evidence records and runs AppSDK review
+checks in causal order, requires exactly one installed APK path per package,
+then writes the project-owned lifecycle/evidence records and runs AppSDK review
 admission. It derives commit/tree/artifact/device identity; it accepts no
 hand-entered hashes or verdicts. Existing admission records are retained and
 never overwritten. Records and logs remain task-local; review is a subsequent

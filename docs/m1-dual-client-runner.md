@@ -72,15 +72,11 @@ tcp:<port>` mapping for the selected serial, verifies the mapping with
 mapping during cleanup. This keeps the fixture's exact loopback endpoint and
 initial URL unchanged for the Android client.
 
-The real entrypoint builds and installs both Android APKs unless
-`--skip-android-build` is supplied. That option only reuses APK files already
-present in this candidate's declared build output paths and requires
-`--android-build-provenance` pointing to a receipt whose AgentBrowser commit,
-tree, and APK SHA-256 values match the current candidate; it does not skip
-installation or installed-file SHA-256 verification. The selected `adb` can be
-provided with `ADB`. `ANDROID_SERIAL` is required for a real run and may not
-contain whitespace. `OBSCURA_ENDPOINT_BIND_IP` defaults to `127.0.0.1`, and
-the runner rejects non-loopback values.
+The real entrypoint always builds and installs both Android APKs from the
+current candidate, then requires exactly one installed APK path per package.
+The selected `adb` can be provided with `ADB`. `ANDROID_SERIAL` is required for
+a real run and may not contain whitespace. `OBSCURA_ENDPOINT_BIND_IP` defaults
+to `127.0.0.1`, and the runner rejects non-loopback values.
 
 The fixture owns `/tmp/an-*` pairing material and removes it through its own
 `quit` command. The runner installs and removes Android pairing only through
@@ -168,11 +164,12 @@ typed evidence. A `partial` result is not a full M1 pass.
 
 ## Evidence boundaries
 
-The runner can prove that the selected fixture, binaries, installed APK bytes,
-Mac framed bridge, Android instrumentation, and local cleanup participated in
+The runner can prove that the selected fixture, binaries, installed APKs, Mac
+framed bridge, Android instrumentation, and local cleanup participated in
 one run. It cannot promote any of those layers into another layer:
 
-- a build or installed APK hash does not prove the deployed UI entrypoint;
+- a build, install, or instrumentation result does not prove the deployed UI
+  entrypoint;
 - an Android emulator or device result does not prove a 15T, Tailscale, or
   public-network result;
 - a fixture status or signal does not prove real media display or operation
@@ -183,7 +180,6 @@ one run. It cannot promote any of those layers into another layer:
 - a source, configuration, or health record does not prove integration, review,
   merge, push, or release.
 
-Keep `evidence.json`, `android-result.json`, `correlation.json`, child logs,
-installed APK hashes, and any external build/admission receipts together when
-reviewing a run. Their candidate, tree, artifact, environment, and `run_id`
+Keep `evidence.json`, `android-result.json`, `correlation.json`, and child logs
+together when reviewing a run. Their candidate, environment, and `run_id`
 bindings must match before the evidence is reused.

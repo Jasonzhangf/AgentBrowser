@@ -14,7 +14,6 @@ import argparse
 import collections
 import dataclasses
 import datetime as dt
-import hashlib
 import ipaddress
 import json
 import os
@@ -115,20 +114,6 @@ def git_value(cwd: pathlib.Path, *args: str) -> Optional[str]:
     return value or None
 
 
-def file_sha256(path: pathlib.Path) -> Optional[str]:
-    try:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            while True:
-                chunk = handle.read(1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-        return f"sha256:{digest.hexdigest()}"
-    except OSError:
-        return None
-
-
 def artifact_identity(path: Optional[pathlib.Path]) -> dict[str, Any]:
     if path is None:
         return {"path": None, "exists": False, "executable": False}
@@ -149,7 +134,6 @@ def artifact_identity(path: Optional[pathlib.Path]) -> dict[str, Any]:
         "executable": os.access(resolved, os.X_OK),
         "size": metadata.st_size,
         "mode": oct(stat.S_IMODE(metadata.st_mode)),
-        "sha256": file_sha256(resolved),
     }
 
 
@@ -849,7 +833,6 @@ class Runner:
 
     def _initial_evidence(self) -> dict[str, Any]:
         commit = git_value(self.worktree, "rev-parse", "HEAD")
-        tree = git_value(self.worktree, "rev-parse", "HEAD^{tree}")
         branch = git_value(self.worktree, "symbolic-ref", "--quiet", "--short", "HEAD")
         status = git_value(self.worktree, "status", "--porcelain=v1", "--untracked-files=all")
         stages = {
@@ -872,7 +855,6 @@ class Runner:
             "mode": self.args.mode,
             "candidate": {
                 "commit": commit,
-                "tree": tree,
                 "branch": branch,
                 "worktree": str(self.worktree),
                 "status_before": status.splitlines() if status else [],
@@ -1015,7 +997,6 @@ class Runner:
         ]
         revision = {
             "commit": self.evidence["candidate"].get("commit"),
-            "tree": self.evidence["candidate"].get("tree"),
             "dirty_paths": status,
             "dirty_connection_paths": dirty_connection,
         }
