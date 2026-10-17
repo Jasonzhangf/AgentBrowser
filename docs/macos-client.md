@@ -120,21 +120,26 @@ The minimum Mac evidence records separately:
 6. Disconnect releases the native connection without stopping the Host, and a
    fresh connect creates a new generation instead of replaying old input.
 
-Formal AppSDK admission uses `scripts/macos-admission.mjs` on a committed owner
-candidate. It compiles the pinned module and its connection dependency, copies
-the exact zip into a private `/tmp` installation, launches only that extracted
-bundle, and records separate install and exact-PID restart receipts. The
-installed harness scope is only AppKit accessibility `打开菜单` → `连接`, Host
-session status, and restart. Media/codec, takeover, navigation, remote input,
-disconnect, and reconnect are explicitly outside this harness. Screenshots,
-process identities, artifact hashes, and raw command logs remain under the
-ignored task-local `evidence/` directory. The acceptance fixture and app
-processes are owned by the adapter; cleanup terminates only those exact PIDs.
+The installed replay entry is `scripts/macos-admission.mjs` on a committed owner
+candidate. It compiles the module and its connection dependency, copies the
+compiled zip into a private `/tmp` installation, launches only that extracted
+bundle, and records separate install and PID restart receipts. The installed
+replay scope is only AppKit accessibility `打开菜单` → `连接`, Host session
+status, and restart. Media/codec, takeover, navigation, remote input, disconnect,
+and reconnect are explicitly outside this entry. Screenshots, process identities,
+and raw command logs remain under the ignored task-local `evidence/` directory.
+The fixture and app processes are owned by the entry; cleanup terminates only
+those exact PIDs.
 
 This is a Mac/client vertical slice. It is not Android+Mac same-session proof,
 Relay proof, route-selection proof, final user/global package installation, or
 full M1 acceptance. Those remain integration-owner work.
 
-## Narrow admission scope
+The regression gate for this module is the real bridge consumer test,
+`cargo test -p agentbrowser-macos-bridge`. The Mac connect gate
+`scripts/mac-connect-gate.mjs` is the lifecycle entry that proves connect,
+session status, restart and the wrong-token rejection on the installed app.
 
-The current admission harness verifies only the ordinary AX menu-open and connect action, Host session status, and restart receipt. It does not claim media or codec coverage; `h264_display` is explicitly skipped. It also explicitly skips takeover, navigation, remote input, disconnect, and reconnect. The executable scope fixture is `scripts/macos-admission-scope.test.mjs`.
+## Narrow replay scope
+
+The installed replay entry verifies only the ordinary AX menu-open and connect action, Host session status, and restart receipt. It does not claim media or codec coverage; `h264_display` is explicitly skipped. It also explicitly skips takeover, navigation, remote input, disconnect, and reconnect. Those paths keep their own real-entry receipts.

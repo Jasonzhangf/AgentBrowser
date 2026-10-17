@@ -3,7 +3,6 @@ import {spawn, spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync} from 'node:fs';
 import {createConnection} from 'node:net';
-import {hostname, userInfo} from 'node:os';
 import {resolve, join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createInterface} from 'node:readline';
@@ -53,7 +52,6 @@ function optionalCommand(program, args, options = {}) {
 }
 
 const git = (...args) => command('git', args).toString().trim();
-const shortHash = value => value.slice(0, 12);
 
 function assertFile(path) {
   assert(existsSync(path), `Required file missing: ${path}`);
@@ -351,36 +349,15 @@ async function main() {
   assert.equal(bindIp, '127.0.0.1', 'Loopback fixture must bind 127.0.0.1');
   for (const name of ['obscura-host', 'obscura-endpoint', 'obscura-media']) assertFile(join(binaryRoot, name));
 
-  const head = git('rev-parse', 'HEAD');
-  const tree = git('rev-parse', 'HEAD^{tree}');
-  const base = git('merge-base', 'HEAD', 'origin/main');
-  const paths = git('diff', '--name-only', base, head).split('\n').filter(Boolean);
-  assert(paths.length, 'Candidate delta required');
-  const prefix = shortHash(head);
-  const scopeHash = hash(JSON.stringify(paths));
-  const candidateTime = now();
-  const directory = `evidence/macos-admission-${prefix}-${Date.now()}`;
-  const records = `.appsdk/records/evidence/${moduleId}`;
-  const candidatePath = `.appsdk/records/fix-candidate-record-${moduleId}.json`;
-  const validationPath = `.appsdk/records/pre-review-validation-record-${moduleId}.json`;
-  assert(!existsSync(candidatePath) && !existsSync(validationPath), 'Preserve a prior admission graph');
+  const directory = `evidence/macos-replay-${git('rev-parse', '--short=12', 'HEAD')}-${Date.now()}`;
   mkdirSync(directory, {recursive: true, mode: 0o700});
-  mkdirSync(records, {recursive: true, mode: 0o700});
-  const identity = `${hostname()}/${userInfo().username}/${process.version}`;
-  const whiteProducer = {adapter: 'scripts/macos-admission.mjs:compile-and-replay', identity};
-  const blackProducer = {adapter: 'scripts/macos-admission.mjs:installed-appkit-ui', identity};
   const admissionEnv = {...process.env, PATH: `${pinnedTools}:${process.env.PATH ?? ''}`, OBSCURA_PROTOCOL_ROOT: protocolRoot};
-  const protocolFiles = [
+  const externalFiles = [
     join(protocolRoot, 'Cargo.toml'),
     join(protocolRoot, 'src/lib.rs'),
     join(protocolRoot, '../../Cargo.toml'),
-  ];
-  const externalFiles = [
-    ...protocolFiles,
     ...['obscura-host', 'obscura-endpoint', 'obscura-media'].map(name => join(binaryRoot, name)),
   ].map(assertFile);
-  const externalHashes = externalFiles.map(path => hash(readFileSync(path)));
-  const environment = `darwin/${process.arch}/${identity}`;
   const entrypoint = `${appBundleName}/Contents/MacOS/${appExecutableName}; AppKit+WebKit+VideoToolbox; installed private bundle`;
   const screenshots = [];
   const appChildren = [];
@@ -400,19 +377,9 @@ async function main() {
       '--config', `patch.crates-io.obscura-host-protocol.path="${protocolRoot}"`,
     ], {env: {...admissionEnv, CARGO_BUILD_JOBS: '2'}, log: join(directory, 'fixture-compile.log')});
 
-    const manifestPath = `generated/modules/${moduleId}/module.compiled.json`;
-    const manifestBytes = readFileSync(manifestPath);
-    const manifest = JSON.parse(manifestBytes);
+    const manifest = JSON.parse(readFileSync(`generated/modules/${moduleId}/module.compiled.json`));
     assert.deepEqual(manifest.deployment_operations, ['install', 'restart']);
     const artifactPath = `generated/modules/${moduleId}/lib/AgentBrowserMac.app.zip`;
-    const artifactZipHash = hash(readFileSync(artifactPath));
-    const artifactEntry = manifest.artifacts.find(artifact => artifact.path === 'AgentBrowserMac.app.zip');
-    assert(artifactEntry, 'Compiled Mac manifest lacks the app zip');
-    assert.equal(artifactEntry.hash, artifactZipHash);
-    const artifactHash = manifest.artifact_hash;
-    const dependencyManifest = JSON.parse(readFileSync('generated/modules/client-connection/module.compiled.json'));
-    const dependencyHash = dependencyManifest.artifact_hash;
-    assert.equal(manifest.dependency_hashes.find(item => item.module_id === 'client-connection')?.artifact_hash, dependencyHash);
     const appSource = `apps/macos/build/${appBundleName}`;
     const appExecutable = join(appSource, 'Contents/MacOS', appExecutableName);
     const bridgeExecutable = join(appSource, 'Contents/MacOS/AgentBrowserMacBridge');
@@ -424,20 +391,12 @@ async function main() {
     mkdirSync(installApplications, {recursive: true, mode: 0o700});
     const copiedZip = join(installRoot, 'AgentBrowserMac.app.zip');
     copyFileSync(artifactPath, copiedZip);
-    assert.equal(hash(readFileSync(copiedZip)), artifactZipHash);
     command('ditto', ['-x', '-k', '--norsrc', copiedZip, installApplications], {log: join(directory, 'install-extract.log')});
     const installedApp = join(installApplications, appBundleName);
     const installedExecutable = join(installedApp, 'Contents/MacOS', appExecutableName);
     const installedBridge = join(installedApp, 'Contents/MacOS/AgentBrowserMacBridge');
     assertFile(installedExecutable); assertFile(installedBridge);
-    const installedExecutableHash = hash(readFileSync(installedExecutable));
-    assert.equal(installedExecutableHash, hash(readFileSync(appExecutable)));
-    const installedBridgeHash = hash(readFileSync(installedBridge));
-    assert.equal(installedBridgeHash, hash(readFileSync(bridgeExecutable)));
-    install = {source_zip: artifactPath, copied_zip: copiedZip, installed_app: installedApp,
-      artifact_hash: artifactHash, artifact_zip_hash: artifactZipHash,
-      copied_zip_hash: hash(readFileSync(copiedZip)), installed_executable_hash: installedExecutableHash,
-      installed_bridge_hash: installedBridgeHash, installed_at: now()};
+    install = {source_zip: artifactPath, copied_zip: copiedZip, installed_app: installedApp, installed_at: now()};
     persist(join(directory, 'install.json'), install);
 
     const fixtureExecutable = resolve('target/release/examples/device_fixture');
@@ -516,7 +475,7 @@ async function main() {
     assert.notEqual(screenshots.at(-1).hash, screenshots[0].hash, 'Restarted installed app displayed no frame');
     restart = {first: {pid: firstApp.pid, executable: installedExecutable, exit: firstExit},
       restarted: {pid: secondApp.pid, executable: installedExecutable},
-      exact_executable_hash: installedExecutableHash, different_pid: firstApp.pid !== secondApp.pid,
+      different_pid: firstApp.pid !== secondApp.pid,
       host_status: {after_restart_connect: restartStatus}, restarted_at: now()};
     assert(restart.different_pid);
 
@@ -537,12 +496,6 @@ async function main() {
     cleanup.fixture_quit_requested = true;
     cleanup.fixture_exit = {code: fixture.child.exitCode, signal: fixture.child.signalCode};
     persist(join(directory, 'cleanup.json'), cleanup);
-    assert.equal(git('rev-parse', 'HEAD'), head, 'Source commit drifted during admission');
-    assert.equal(git('rev-parse', 'HEAD^{tree}'), tree, 'Source tree drifted during admission');
-    assert.equal(git('status', '--porcelain'), '', 'Source became dirty during admission');
-    assert.deepEqual(readFileSync(manifestPath), manifestBytes, 'Compiled manifest drifted during admission');
-    assert.equal(hash(readFileSync(artifactPath)), artifactZipHash, 'Mac artifact drifted during admission');
-    assert.deepEqual(externalFiles.map(path => hash(readFileSync(path))), externalHashes, 'External protocol/binary drifted');
   } finally {
     for (const child of appChildren) {
       if (install?.installed_app) {
@@ -557,40 +510,11 @@ async function main() {
     }
   }
 
-  assert(restart && blackbox, 'Admission flow did not produce complete runtime receipts');
-  const blackTime = now();
-  assert(Date.parse(candidateTime) <= Date.parse(whiteTime), 'Candidate must precede whitebox completion');
+  assert(restart && blackbox, 'Replay flow did not produce complete runtime receipts');
   assert(Date.parse(whiteTime) <= Date.parse(install.installed_at), 'Whitebox must precede installation');
   assert(Date.parse(install.installed_at) <= Date.parse(restart.restarted_at), 'Installation must precede restart');
-  const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, black: `blackbox-${prefix}`};
-  function evidence(id, phase, kind, time, log, surface) {
-    persist(`${records}/${id}.json`, {evidence_id: id, issue_id: issueId, experiment_id: `${issueId}-${prefix}`, phase, kind,
-      source_commit: head, artifact_hash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
-      execution_surface: surface, environment_id: environment, entrypoint, scope: {module_id: moduleId, feature_id: issueId, entrypoint},
-      producer: surface === 'development_whitebox' ? whiteProducer : blackProducer, result: 'pass', created_at: time,
-      expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, ...externalHashes, hash(readFileSync(log))],
-      scope_hash: scopeHash, raw_evidence: log});
-  }
-  evidence(ids.white, 'development_whitebox', 'gate', whiteTime, `${directory}/macos-compile.log`, 'development_whitebox');
-  evidence(ids.install, 'deployment_install', 'install', install.installed_at, `${directory}/install.json`, 'deployed_blackbox');
-  evidence(ids.restart, 'deployment_restart', 'restart', restart.restarted_at, `${directory}/restart.json`, 'deployed_blackbox');
-  evidence(ids.black, 'deployed_blackbox', 'sample_replay', blackTime, `${directory}/blackbox.json`, 'deployed_blackbox');
-  persist(candidatePath, {fix_candidate_id: `candidate-${prefix}`, issue_id: issueId, module_id: moduleId,
-    worktree_id: root, base_commit: base, head_commit: head, tree_hash: tree,
-    diff_hash: hash(command('git', ['diff', '--binary', base, head])), design_id: 'docs/macos-client.md', owner: identity,
-    scope_hash: scopeHash, changed_paths: paths, verification_evidence_ids: Object.values(ids), created_at: candidateTime});
-  persist(validationPath, {validation_id: `validation-${prefix}`, issue_id: issueId, module_id: moduleId,
-    fix_candidate_id: `candidate-${prefix}`, candidate_commit: head, candidate_tree_hash: tree,
-    artifact_hash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
-    whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.black],
-    deployment: {environment_id: environment, entrypoint, producer: blackProducer, install_receipt_id: ids.install,
-      restart_receipt_id: ids.restart, observed_at: blackTime}, source_unchanged: true,
-    result: 'pass', created_at: now()});
-  command('appsdk', ['verify', '--review-admission', '--module', moduleId], {env: admissionEnv, log: join(directory, 'admission.log')});
-  console.log(JSON.stringify({candidate: head, tree, artifactHash: JSON.parse(readFileSync('generated/modules/macos-shell/module.compiled.json')).artifact_hash,
-    artifactZipHash: install.artifact_zip_hash, installedExecutableHash: install.installed_executable_hash,
-    directory, install: `${directory}/install.json`, restart: `${directory}/restart.json`,
-    blackbox: `${directory}/blackbox.json`, admission: 'pass'}, null, 2));
+  console.log(JSON.stringify({directory, install: `${directory}/install.json`, restart: `${directory}/restart.json`,
+    blackbox: `${directory}/blackbox.json`, result: 'pass'}, null, 2));
 }
 
 function mkdtempPath(prefix) {

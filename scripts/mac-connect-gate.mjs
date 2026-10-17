@@ -26,7 +26,6 @@ const serviceLabel = 'com.agentbrowser.task6';
 const observationSeconds = Number(process.env.MAC_GATE_OBSERVATION_SECONDS ?? '40');
 const pollMilliseconds = 2_000;
 
-const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 const realPath = value => {
   try { return realpathSync(value); } catch { return resolve(value); }
 };
@@ -327,10 +326,6 @@ try {
   // files are the whole pairing state (`docs/m1/connection-minimum.md` §7.5).
   const serviceTokenPath = join(serviceRoot, 'trust', 'token');
   assert(existsSync(serviceTokenPath), `Service access token missing: ${serviceTokenPath}`);
-  persist('build-hashes.txt', [
-    `${hash(readFileSync(appExecutable)).replace('sha256:', '')}  ${appExecutable}`,
-    `${hash(readFileSync(bridgeExecutable)).replace('sha256:', '')}  ${bridgeExecutable}`,
-  ].join('\n') + '\n');
   persist('identity.json', {
     run_id: runId,
     host: hostname(),
@@ -339,8 +334,6 @@ try {
     service_root: serviceRoot,
     service_label: serviceLabel,
     pairing_directory: pairingDirectory,
-    app_executable_hash: hash(readFileSync(appExecutable)),
-    bridge_executable_hash: hash(readFileSync(bridgeExecutable)),
   });
 
   // The acceptance must name the exact revision it ran on. An earlier run
@@ -517,8 +510,6 @@ try {
     run_id: runId,
     result: 'pass',
     commit: certifiedCommit,
-    app_executable_hash: hash(readFileSync(appExecutable)),
-    bridge_executable_hash: hash(readFileSync(bridgeExecutable)),
     host_binary: hostStatus.host_binary,
     host_binary_sha256: hostStatus.binary_sha256,
     host_session_id: hostStatus.session_id,

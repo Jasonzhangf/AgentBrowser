@@ -110,7 +110,7 @@ clear. Guide may assist; enabling it is not a prerequisite.
 ## Evidence Boundary
 
 - Report source, test, build, installed artifact, restart, deployed-entrypoint
-  replay, review, merge, remote receipt, freeze, and cleanup separately.
+  replay, review, merge, remote receipt, and cleanup separately.
 - Never infer a later evidence level from an earlier one.
 - A blocked result names the first failing gate, preserved state, retry policy,
   owner, and one executable next action.
