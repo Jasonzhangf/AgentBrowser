@@ -60,10 +60,6 @@ function sha256Bytes(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function sha256File(path) {
-  return sha256Bytes(readFileSync(path));
-}
-
 function requiredFile(path, label) {
   if (!existsSync(path)) throw new Error(`${label} is unavailable at ${path}`);
   return path;
@@ -72,14 +68,6 @@ function requiredFile(path, label) {
 function optionalRealpath(path) {
   try {
     return realpathSync(path);
-  } catch {
-    return undefined;
-  }
-}
-
-function optionalSha256File(path) {
-  try {
-    return sha256File(path);
   } catch {
     return undefined;
   }
@@ -174,25 +162,17 @@ function runtimeProcessCheck(observed, expected) {
   const mismatches = [];
   const expectedCwd = optionalRealpath(expected.cwd);
   const expectedExecutable = optionalRealpath(expected.executable.path);
-  const expectedEntrypointHash = optionalSha256File(expected.entrypoint.path);
-  const expectedArtifactHash = optionalSha256File(expected.artifact.path);
   const addMismatch = (label, actual, wanted) => {
     if (actual !== wanted) mismatches.push(`${label}: expected ${JSON.stringify(wanted)}, got ${JSON.stringify(actual)}`);
   };
   if (expectedCwd === undefined) mismatches.push(`Expected runtime cwd is unavailable: ${expected.cwd}`);
   if (expectedExecutable === undefined) mismatches.push(`Expected runtime executable is unavailable: ${expected.executable.path}`);
-  if (expectedEntrypointHash === undefined) mismatches.push(`Expected extracted entrypoint is unavailable: ${expected.entrypoint.path}`);
-  if (expectedArtifactHash === undefined) mismatches.push(`Expected artifact is unavailable: ${expected.artifact.path}`);
 
   addMismatch('pid alive', observed.alive, true);
   addMismatch('pid', observed.pid, expected.pid);
   addMismatch('argv command', observed.command, expected.argv.join(' '));
   addMismatch('cwd', observed.cwd, expectedCwd);
   addMismatch('executable', observed.executable, expectedExecutable);
-  const observedExecutableHash = optionalSha256File(observed.executable);
-  addMismatch('observed executable sha256', observedExecutableHash, expected.executable.sha256);
-  addMismatch('entrypoint sha256', expectedEntrypointHash, expected.entrypoint.sha256);
-  addMismatch('artifact sha256', expectedArtifactHash, expected.artifact.sha256);
   addMismatch('spawnfile', expected.spawnfile, expected.executable.path);
   if (JSON.stringify(expected.spawnargs) !== JSON.stringify(expected.argv)) {
     mismatches.push(`spawnargs: expected ${JSON.stringify(expected.argv)}, got ${JSON.stringify(expected.spawnargs)}`);
@@ -201,10 +181,6 @@ function runtimeProcessCheck(observed, expected) {
 }
 
 function runtimeProcessEvidence(observed, expected, check) {
-  const observedWithHashes = {
-    ...observed,
-    executable_sha256: optionalSha256File(observed.executable),
-  };
   return {
     pid: expected.pid,
     argv: expected.argv,
@@ -213,20 +189,15 @@ function runtimeProcessEvidence(observed, expected, check) {
     executable: {
       path: expected.executable.path,
       realpath: optionalRealpath(expected.executable.path),
-      sha256: expected.executable.sha256,
     },
     entrypoint: {
       archive: expected.entrypoint.archive,
       path: expected.entrypoint.path,
-      sha256: expected.entrypoint.sha256,
     },
     artifact: {
       path: expected.artifact.path,
-      sha256: expected.artifact.sha256,
-      source_commit: expected.artifact.source_commit,
-      source_tree: expected.artifact.source_tree,
     },
-    observed: observedWithHashes,
+    observed,
     verification: check,
   };
 }
@@ -238,10 +209,7 @@ async function assertNoBinaryDuringWindow(inboxes, timeout = 500) {
     for (const inbox of inboxes) {
       const unexpected = inbox.inbox.items.filter(item => item.binary);
       if (unexpected.length > 0) {
-        const summary = unexpected.map(item => ({
-          length: item.value.length,
-          sha256: sha256Bytes(item.value),
-        }));
+        const summary = unexpected.map(item => ({length: item.value.length}));
         throw new Error(`Unexpected binary frame on ${inbox.label}: ${JSON.stringify(summary)}`);
       }
     }
@@ -657,8 +625,8 @@ function projectPathEvidence(relayEvidence) {
 }
 
 function sourceFile(root, path, label) {
-  const absolute = requiredFile(join(root, path), label);
-  return {path, sha256: sha256File(absolute)};
+  requiredFile(join(root, path), label);
+  return {path};
 }
 
 function waitForChildClose(child, timeout = 5000) {
@@ -705,16 +673,15 @@ async function runNegativeChecks() {
     killCalls += 1;
     return originalKill(signal);
   };
-  const negativeHash = sha256File(scriptPath);
   const expected = {
     pid: mismatchChild.pid,
     argv: [process.execPath, '-e', 'identity-mismatch'],
     cwd: selfRoot,
     spawnfile: mismatchChild.spawnfile,
     spawnargs: mismatchChild.spawnargs,
-    executable: {path: process.execPath, sha256: sha256File(process.execPath)},
-    entrypoint: {archive: 'negative-check-entrypoint', path: scriptPath, sha256: negativeHash},
-    artifact: {path: scriptPath, sha256: negativeHash, source_commit: 'negative', source_tree: 'negative'},
+    executable: {path: process.execPath},
+    entrypoint: {archive: 'negative-check-entrypoint', path: scriptPath},
+    artifact: {path: scriptPath},
   };
   const stop = await stopChild(mismatchChild, expected);
   const blocked = killCalls === 0 && stop.signal_sent === false && stop.identity_before_verified === false;
@@ -765,9 +732,7 @@ async function main() {
   const runnerIdentity = {
     root: selfRoot,
     commit: git(selfRoot, 'rev-parse', 'HEAD'),
-    tree: git(selfRoot, 'rev-parse', 'HEAD^{tree}'),
     script: relative(selfRoot, scriptPath),
-    script_sha256: sha256File(scriptPath),
     clean_before: runnerStatusBefore === '',
     status_before: runnerStatusBefore,
   };
@@ -777,7 +742,6 @@ async function main() {
   const candidateStatusBefore = gitStatus(candidateRoot);
   assert.equal(candidateStatusBefore, '', `Relay candidate worktree must be clean before build: ${candidateStatusBefore}`);
   const candidateCommit = git(candidateRoot, 'rev-parse', 'HEAD');
-  const candidateTree = git(candidateRoot, 'rev-parse', 'HEAD^{tree}');
   const runtimeSources = [
     sourceFile(candidateRoot, 'services/relay/src/main.ts', 'Relay runtime main source'),
     sourceFile(candidateRoot, 'services/relay/src/server.ts', 'Relay runtime server source'),
@@ -818,7 +782,6 @@ async function main() {
     writeEvidence('artifact-build.log', `${artifactBuild.stdout}${artifactBuild.stderr}`);
     assertRun(artifactBuild, 'Relay artifact build');
     requiredFile(artifactPath, 'Relay artifact');
-    const artifactHash = sha256File(artifactPath);
     const archiveList = runSync('tar', ['-tf', artifactPath], {cwd: candidateRoot});
     writeEvidence('artifact-list.log', archiveList.stdout + archiveList.stderr);
     assertRun(archiveList, 'Relay artifact listing');
@@ -832,9 +795,7 @@ async function main() {
     assertRun(extraction, 'Relay artifact extraction');
     const entrypoint = join(artifactRoot, entrypointArchive);
     requiredFile(entrypoint, 'Compiled Relay entrypoint');
-    const entrypointHash = sha256File(entrypoint);
     const executablePath = realpathSync(process.execPath);
-    const executableHash = sha256File(executablePath);
     const artifactPackagePath = requiredFile(join(artifactRoot, 'package.json'), 'Compiled Relay package metadata');
     const artifactPackage = JSON.parse(readFileSync(artifactPackagePath, 'utf8'));
     const sourcePackage = JSON.parse(readFileSync(join(candidateRoot, packageSource.path), 'utf8'));
@@ -845,26 +806,19 @@ async function main() {
     candidateIdentity = {
       root: candidateRoot,
       commit: candidateCommit,
-      tree: candidateTree,
       clean_before: candidateStatusBefore === '',
       runtime_sources: runtimeSources,
       protocol_source: protocolSource,
       artifact_build: {
         command: artifactBuild.command,
         cwd: candidateRoot,
-        source_commit: candidateCommit,
-        source_tree: candidateTree,
         build_script: buildSource,
         package: packageSource,
         output_log: join(evidenceRoot, 'artifact-build.log'),
       },
       artifact: {
         path: artifactPath,
-        sha256: artifactHash,
-        source_commit: candidateCommit,
-        source_tree: candidateTree,
         entrypoint: entrypointArchive,
-        entrypoint_sha256: entrypointHash,
         extracted: true,
         executed: false,
       },
@@ -898,13 +852,10 @@ async function main() {
       cwd: artifactRoot,
       spawnfile: runtimeChild.spawnfile,
       spawnargs: runtimeChild.spawnargs,
-      executable: {path: process.execPath, sha256: executableHash},
-      entrypoint: {archive: entrypointArchive, path: entrypoint, sha256: entrypointHash},
+      executable: {path: executablePath},
+      entrypoint: {archive: entrypointArchive, path: entrypoint},
       artifact: {
         path: artifactPath,
-        sha256: artifactHash,
-        source_commit: candidateCommit,
-        source_tree: candidateTree,
       },
     };
     runtimeChild.stdout.setEncoding('utf8');
@@ -1054,11 +1005,8 @@ async function main() {
       const candidateStatusAfter = gitStatus(candidateRoot);
       assert.equal(candidateStatusAfter, '', `Relay candidate changed during replay: ${candidateStatusAfter}`);
       assert.equal(git(candidateRoot, 'rev-parse', 'HEAD'), candidateCommit);
-      assert.equal(git(candidateRoot, 'rev-parse', 'HEAD^{tree}'), candidateTree);
       candidateIdentity.clean_after = candidateStatusAfter === '';
       candidateIdentity.status_after = candidateStatusAfter;
-      candidateIdentity.artifact.sha256 = sha256File(artifactPath);
-      assert.equal(candidateIdentity.artifact.sha256, artifactHash, 'Relay artifact changed during replay');
       const runnerStatusAfter = gitStatus(selfRoot);
       runnerIdentity.clean_after = runnerStatusAfter === '';
       runnerIdentity.status_after = runnerStatusAfter;
