@@ -40,9 +40,8 @@ bottom. Media bytes remain in native memory and MediaCodec buffers.
 Run existing `npm run verify:local`, Android `testDebugUnitTest assembleDebug
 assembleDebugAndroidTest`, then `scripts/device.sh install|restart|replay` with
 explicit verified `ANDROID_SERIAL`. Replay now runs both the original MP4 and
-Annex B instrumentation flows. `scripts/validate-android.mjs` binds both flows
-to one committed candidate, exact built/installed APK and AppSDK admission.
-No new governance or memory system is introduced.
+Annex B instrumentation flows. `scripts/validate-android.mjs` binds both flows to one committed candidate and
+the real installed APK. No new governance or memory system is introduced.
 
 Test APK alone contains three real Host-produced H.264 fixtures, read-only copies
 from `/tmp/obscura-h264-host-proof/`. Before/after: 160x120; resized: coded392x846,

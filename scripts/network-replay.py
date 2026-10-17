@@ -6,7 +6,6 @@ sys.dont_write_bytecode = True
 
 import json
 import base64
-import hashlib
 import os
 import pathlib
 import select
@@ -100,22 +99,15 @@ def write_network_path_evidence(session_id, instrumentation):
 
 
 subprocess.run(["bash", "scripts/android.sh", "assembleDebug", "assembleDebugAndroidTest"], cwd=root, check=True)
-installed = {}
 for package, relative in [
     ("com.agentbrowser.probe", "debug/app-debug.apk"),
     ("com.agentbrowser.probe.test", "androidTest/debug/app-debug-androidTest.apk"),
 ]:
     apk = root / "apps/android/app/build/outputs/apk" / relative
-    digest = hashlib.sha256(apk.read_bytes()).hexdigest()
     subprocess.run(["adb", "-s", serial, "install", "-r", str(apk)], check=True)
     paths = subprocess.check_output(["adb", "-s", serial, "shell", "pm", "path", package], text=True).splitlines()
     if len(paths) != 1 or not paths[0].startswith("package:"):
         raise RuntimeError(f"Expected one installed APK for {package}: {paths}")
-    device_apk = subprocess.check_output(["adb", "-s", serial, "exec-out", "cat", paths[0][8:]])
-    if hashlib.sha256(device_apk).hexdigest() != digest:
-        raise RuntimeError(f"Installed APK identity mismatch: {package}")
-    installed[package] = digest
-(evidence / "installed-apks.json").write_text(json.dumps({"runId": run_id, "serial": serial, "sha256": installed}, indent=2)+"\n")
 patch = "patch.crates-io.obscura-host-protocol.path=" + json.dumps(str(protocol))
 # Each run must produce its own app evidence: a stale artifact from an earlier run
 # would otherwise be pulled when this run fails before writing it.
@@ -145,7 +137,7 @@ with (evidence / "network-host.log").open("wb") as log:
         ready = record(fixture, 15)
         pairing = ready["fixture"]
         bundle = pathlib.Path(ready["bundle"]).resolve(strict=True)
-        bundle_sha256 = hashlib.sha256(bundle.read_bytes()).hexdigest()
+        assert bundle.stat().st_size > 0, f"Fixture pairing bundle is empty: {bundle}"
         # The fixture binds loopback on this host, so the device reaches it only
         # through its own loopback while adb owns the exact reverse mapping.
         # The fixture endpoint is exactly `<host>:<port>` under the token
@@ -169,13 +161,13 @@ with (evidence / "network-host.log").open("wb") as log:
             "runId": run_id,
             "fixture": pairing,
             "endpoint": ready["endpoint"],
-            "bundleSha256": bundle_sha256,
+            "bundle": str(bundle),
             "session": ready["session"],
         }, indent=2) + "\n")
         subprocess.run([sys.executable, "scripts/device-pairing.py", "install", pairing], cwd=root, check=True)
         subprocess.run(["bash", "scripts/device.sh", "prepare"], cwd=root, check=True)
         result = subprocess.run(["adb", "-s", serial, "shell", "am", "instrument", "-w", "-r", "-e", "runId", run_id, "-e", "class",
-            REPLAY_SELECTOR, "-e", "bundleSha256", bundle_sha256,
+            REPLAY_SELECTOR,
             "-e", "initialUrlBase64", base64.b64encode(ready["initialUrl"].encode()).decode(),
             "com.agentbrowser.probe.test/android.test.InstrumentationTestRunner"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90, check=True)

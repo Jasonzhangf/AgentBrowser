@@ -70,11 +70,11 @@ operation sequence unchanged. Set `OBSCURA_BIN_DIR` and
 entrypoint; real Android and Mac display alignment still requires both clients.
 
 `scripts/network-replay.py` builds and installs both main and instrumentation
-APKs, compares each installed APK SHA-256 with its local artifact, then runs the
+APKs, requires exactly one installed APK path per package, then runs the
 current test. Every run uses a new `evidence/network/<run-id>` directory and
 passes that identifier into instrumentation. Admission supplies an exclusive
-`NETWORK_EVIDENCE_DIR` under its own run directory and checks matching identity.
-Failures retain their own logs and cannot reuse another run's PASS or images.
+`NETWORK_EVIDENCE_DIR` under its own run directory. Failures retain their own
+logs and cannot reuse another run's PASS or images.
 Acceptance exercises real Surface touches, observer denial, takeover, input
 focus without automatic fixture focus, busy declaration coalescing, restored
 stage dimensions, reconnect state preservation and background resource release.

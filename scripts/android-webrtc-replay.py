@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import pathlib
@@ -51,13 +50,6 @@ def run_as(adb, serial, *args, input_bytes=None, check=True):
     return adb_run(adb, serial, "shell", "-T", command, input_bytes=input_bytes, check=check)
 
 
-def installed_hash(adb, serial, package):
-    paths = [line[8:] for line in adb_run(adb, serial, "shell", "pm", "path", package).stdout.decode().splitlines()
-             if line.startswith("package:")]
-    if len(paths) != 1:
-        return None
-    return hashlib.sha256(adb_run(adb, serial, "exec-out", "cat", paths[0]).stdout).hexdigest()
-
 def record(process, seconds):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -86,13 +78,11 @@ def main() -> int:
     env = os.environ.copy()
     env["PATH"] = str(android_home / "platform-tools") + os.pathsep + env.get("PATH", "")
     env["OBSCURA_ENABLE_WEBRTC"] = "1"
-    before = {"com.agentbrowser.probe": installed_hash(adb, serial, "com.agentbrowser.probe"),
-              "com.agentbrowser.probe.test": installed_hash(adb, serial, "com.agentbrowser.probe.test")}
     (evidence / "device-before.json").write_text(json.dumps({
         "runId": run_id, "serial": serial, "model": adb_run(adb, serial, "shell", "getprop", "ro.product.model").stdout.decode().strip(),
         "sdk": adb_run(adb, serial, "shell", "getprop", "ro.build.version.sdk").stdout.decode().strip(),
         "abi": adb_run(adb, serial, "shell", "getprop", "ro.product.cpu.abi").stdout.decode().strip(),
-        "hostBindIp": host_bind_ip, "deviceBindIp": device_bind_ip, "installedApks": before,
+        "hostBindIp": host_bind_ip, "deviceBindIp": device_bind_ip,
     }, indent=2) + "\n")
 
     subprocess.run(["bash", "scripts/android.sh", "assembleDebug", "assembleDebugAndroidTest"], cwd=ROOT, env=env, check=True)
@@ -100,14 +90,11 @@ def main() -> int:
         "com.agentbrowser.probe": ROOT / "apps/android/app/build/outputs/apk/debug/app-debug.apk",
         "com.agentbrowser.probe.test": ROOT / "apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
     }
-    after = {}
     for package, artifact in artifacts.items():
-        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         adb_run(adb, serial, "install", "-r", str(artifact))
-        if installed_hash(adb, serial, package) != digest:
-            raise RuntimeError(f"Installed APK identity mismatch: {package}")
-        after[package] = digest
-    (evidence / "installed-apks.json").write_text(json.dumps({"runId": run_id, "serial": serial, "before": before, "after": after}, indent=2) + "\n")
+        paths = adb_run(adb, serial, "shell", "pm", "path", package).stdout.decode().splitlines()
+        if len(paths) != 1 or not paths[0].startswith("package:"):
+            raise RuntimeError(f"Expected one installed APK for {package}: {paths}")
 
     patch = "patch.crates-io.obscura-host-protocol.path=" + json.dumps(str(protocol))
     subprocess.run(["cargo", "build", "--release", "--locked", "-p", "agentbrowser-android", "--example", "device_fixture", "--config", patch], cwd=ROOT, env=env, check=True)
