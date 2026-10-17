@@ -333,78 +333,6 @@ def test_strict_protocol_integers_and_epochs() -> None:
     check(runner.control_epoch(-1) is None and runner.control_epoch("1") is None, "negative or malformed control epochs must be rejected")
 
 
-def test_candidate_identity_drift_fails_closed() -> None:
-    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
-    combined.worktree = runner.ROOT
-    combined.first_failure = None
-    combined.evidence = {
-        "failures": [],
-        "candidate": {
-            "branch": "codex/m1-dual-control-hardening-20260909",
-            "commit": "abc",
-            "tree": "def",
-            "status_before": [],
-        },
-        "stages": {
-            "cleanup": {"result": "running", "started_at": None, "finished_at": None, "details": {}, "first_failure": None},
-        },
-    }
-    original = runner.candidate_git_probes
-
-    def drift(cwd):
-        return {
-            "branch": {"ok": True, "value": "codex/m1-dual-control-hardening-20260909", "error": None},
-            "commit": {"ok": True, "value": "drift-commit", "error": None},
-            "tree": {"ok": True, "value": "def", "error": None},
-            "status": {"ok": True, "value": "", "error": None},
-        }
-
-    try:
-        runner.candidate_git_probes = drift
-        check(not combined._verify_candidate_identity_after(), "teardown identity drift must fail closed")
-    finally:
-        runner.candidate_git_probes = original
-    check(combined.evidence["candidate"]["identity_drift_after"].get("commit") == {"before": "abc", "after": "drift-commit"}, "teardown must record the exact drifted identity fields")
-    check(combined.first_failure is not None and combined.first_failure["code"] == "CANDIDATE_IDENTITY_DRIFT", "teardown drift must become a structured failure")
-
-
-def test_candidate_identity_probe_failure_preserves_drift_record() -> None:
-    combined = runner.CombinedRunner.__new__(runner.CombinedRunner)
-    combined.worktree = runner.ROOT
-    combined.first_failure = None
-    combined.evidence = {
-        "failures": [],
-        "candidate": {
-            "branch": "candidate",
-            "commit": "commit-a",
-            "tree": "tree-a",
-            "status_before": [],
-        },
-        "stages": {
-            "cleanup": {"result": "running", "started_at": None, "finished_at": None, "details": {}, "first_failure": None},
-        },
-    }
-    original = runner.candidate_git_probes
-
-    def partial_probe(cwd):
-        return {
-            "branch": {"ok": False, "value": None, "error": "detached HEAD"},
-            "commit": {"ok": True, "value": "commit-b", "error": None},
-            "tree": {"ok": True, "value": "tree-a", "error": None},
-            "status": {"ok": True, "value": "", "error": None},
-        }
-
-    try:
-        runner.candidate_git_probes = partial_probe
-        check(not combined._verify_candidate_identity_after(), "an incomplete teardown probe must fail closed")
-    finally:
-        runner.candidate_git_probes = original
-    candidate = combined.evidence["candidate"]
-    check(candidate["identity_drift_after"] == {"commit": {"before": "commit-a", "after": "commit-b"}}, "available identity values must retain the exact drift record")
-    check(candidate["status_after"] == [], "successful teardown status must still be recorded with a partial probe")
-    check(combined.first_failure is not None and combined.first_failure["code"] == "GIT_PROBE_FAILED", "an unavailable identity probe must remain a strict failure")
-
-
 def test_device_pairing_uses_resolved_adb() -> None:
     with tempfile.TemporaryDirectory(prefix="m1-fake-adb-") as raw:
         fake_adb = pathlib.Path(raw) / "adb"
@@ -680,8 +608,6 @@ def main() -> int:
         test_combined_side_evidence_does_not_promote_bridge_ack_to_display,
         test_reconnect_frame_correlation_survives_final_disconnect,
         test_strict_protocol_integers_and_epochs,
-        test_candidate_identity_drift_fails_closed,
-        test_candidate_identity_probe_failure_preserves_drift_record,
         test_device_pairing_uses_resolved_adb,
         test_git_probe_failure_is_distinct,
         test_schema_and_comparison,

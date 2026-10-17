@@ -50,7 +50,7 @@ UDP/WebRTC 和 Tailscale 优先、直接路径不可用时走已协商的 WSS Re
 | Relay | services/relay/、protocol/relay/，先核实实际目录 | 最小账号、设备绑定、目录/同步、信令及 WSS 数据面、跨账号隔离 |
 | Obscura Host/protocol | fork 中 protocol/browser/ 及 Host 实际入口 | Session/Profile 持久 owner、统一 viewport、原子 operation/控制权仲裁 |
 | Obscura render/JS/media | fork 中实际 DOM/JS/paint/media owner | 单一表单当前值、正确失效与绘制、共享原始帧直接编码 H.264 |
-| Verification | scripts/network-replay.py、scripts/validate-android.mjs、scripts/connection-admission.mjs、两仓相关测试 | 本轮产物、依赖、安装身份和实际入口证据可追溯 |
+| Verification | scripts/network-replay.py、scripts/validate-android.mjs、scripts/connection-admission.mjs、两仓相关测试 | 本轮产物和实际入口证据可追溯 |
 
 尚未存在的模块须按架构先绑定最小 owner/map，再实现；不复制 zterm 的终端
 生命周期或协议。两仓使用 Obscura 唯一 Browser ABI 的明确版本绑定。

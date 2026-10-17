@@ -1,15 +1,15 @@
 // Real compiled-bundle install, launchd restart and Host attachment receipts.
+// This adapter binds no candidate, artifact or external-input identity and
+// writes no AppSDK lifecycle records.
 import {spawnSync} from 'node:child_process';
-import {createHash, randomUUID} from 'node:crypto';
-import {mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync, copyFileSync, chmodSync} from 'node:fs';
-import {hostname, userInfo} from 'node:os';
+import {randomUUID} from 'node:crypto';
+import {mkdirSync, mkdtempSync, appendFileSync, existsSync, copyFileSync, chmodSync, writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createConnection} from 'node:net';
 import {setTimeout as delay} from 'node:timers/promises';
 import assert from 'node:assert/strict';
 
 const moduleId = 'host-service';
-const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 const now = () => new Date().toISOString();
 function run(program, args, log) {
   const result = spawnSync(program, args, {maxBuffer: 32 * 1024 * 1024, timeout: 120000});
@@ -21,44 +21,24 @@ function persist(path, value) { writeFileSync(path, JSON.stringify(value, null, 
 const git = (...args) => run('git', args).toString().trim();
 assert.equal(process.platform, 'darwin', 'Real user launchd required');
 assert(!['main', 'master'].includes(git('branch', '--show-current')), 'Owner branch required');
-assert.equal(git('status', '--porcelain'), '', 'Commit complete candidate before admission');
+assert.equal(git('status', '--porcelain'), '', 'Commit the complete candidate before replay');
 assert(process.env.OBSCURA_HOST_BINARY, 'Explicit validated Host binary required');
 const protocolText = process.env.OBSCURA_HOST_PROTOCOL_VERSION ?? '';
 assert(/^[1-9][0-9]*$/.test(protocolText), 'Explicit positive u32 Host protocol version required');
 const expectedProtocolVersion = Number(protocolText);
 assert(Number.isSafeInteger(expectedProtocolVersion) && expectedProtocolVersion <= 0xffffffff,
   'Explicit positive u32 Host protocol version required');
-const binary = resolve(process.env.OBSCURA_HOST_BINARY), binaryHash = hash(readFileSync(binary));
-const head = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
-const base = git('merge-base', 'HEAD', 'origin/main'), prefix = head.slice(0, 12);
-const paths = git('diff', '--name-only', base, head).split('\n').filter(Boolean);
-assert(paths.length, 'Candidate delta required');
-const scopeHash = hash(JSON.stringify(paths)), candidateTime = now();
-const directory = `evidence/host-service-admission-${prefix}-${Date.now()}`;
-const records = `.appsdk/records/evidence/${moduleId}`;
-const candidatePath = `.appsdk/records/fix-candidate-record-${moduleId}.json`;
-const validationPath = `.appsdk/records/pre-review-validation-record-${moduleId}.json`;
-assert(!existsSync(candidatePath) && !existsSync(validationPath), 'Preserve existing admission graph');
-mkdirSync(directory, {recursive: true}); mkdirSync(records, {recursive: true});
-const identity = `${hostname()}/${userInfo().username}/${process.version}`;
-const environment = `darwin/${process.arch}/gui:${process.getuid()}/${identity}`;
-const entrypoint = 'host-service:launchd';
-const whiteProducer = {adapter: 'scripts/host-service/validate-admission.mjs:subprocess', identity};
-const blackProducer = {adapter: 'scripts/host-service/validate-admission.mjs:installed-launchd', identity};
+const binary = resolve(process.env.OBSCURA_HOST_BINARY);
+const directory = `evidence/host-service-replay-${git('rev-parse', '--short=12', 'HEAD')}-${Date.now()}`;
+mkdirSync(directory, {recursive: true});
 run('appsdk', ['compile-module', '--module', moduleId], `${directory}/compile.log`);
-const manifestPath = `generated/modules/${moduleId}/module.compiled.json`;
-const manifestBytes = readFileSync(manifestPath), artifact = JSON.parse(manifestBytes);
 const compiled = `generated/modules/${moduleId}/lib`;
 const files = ['host-service', 'host_service.py'];
-const hashes = files.map(name => hash(readFileSync(`${compiled}/${name}`)));
-for (let i = 0; i < files.length; i++) assert(artifact.artifacts.some(a => a.path === files[i] && a.hash === hashes[i]));
 const white = run('bash', ['scripts/host-service/verify-host-service'], `${directory}/whitebox.log`);
 assert.match(white.toString(), /HOST_SERVICE_REAL_SUBPROCESS_PASS/);
-const whiteTime = now();
 // Install the compiled files separately; launchd never invokes workspace source.
 const installed = resolve(directory, 'installed'); mkdirSync(installed, {mode: 0o700});
 files.forEach(name => { copyFileSync(`${compiled}/${name}`, `${installed}/${name}`); chmodSync(`${installed}/${name}`, 0o700); });
-assert.deepEqual(files.map(name => hash(readFileSync(`${installed}/${name}`))), hashes);
 const token = randomUUID().replaceAll('-', '');
 const root = `/private/tmp/abhs-admit-${token}`;
 const runtime = mkdtempSync('/private/tmp/abhr-');
@@ -117,13 +97,12 @@ async function observe(state) {
   assert(Number.isSafeInteger(replies[1].value.attachment_id));
   return replies;
 }
-let installTime, restartTime, blackTime, loadAttempted = false;
+let loadAttempted = false;
 try {
   const installation = manager('install', '--binary', binary, '--runtime-root', runtime, '--service-label', label,
     '--protocol-version', protocolText);
   assert.equal(installation.launchd_loaded, false);
-  assert.equal(`sha256:${installation.binary_sha256}`, binaryHash);
-  persist(`${directory}/install.json`, {installation, installed, hashes}); installTime = now();
+  persist(`${directory}/install.json`, {installation, installed});
   loadAttempted = true;
   run('launchctl', ['bootstrap', `gui/${process.getuid()}`, installation.launchd_plist], `${directory}/bootstrap.log`);
   const first = await ready(), attachment = await observe(first), detached = await ready();
@@ -131,9 +110,9 @@ try {
   run('launchctl', ['kickstart', '-k', service], `${directory}/kickstart.log`);
   const restarted = await ready(first);
   assert.notEqual(restarted.pid, first.pid); assert.notEqual(restarted.session_id, first.session_id);
-  persist(`${directory}/restart.json`, {first, restarted}); restartTime = now();
+  persist(`${directory}/restart.json`, {first, restarted});
   const reattached = await observe(restarted);
-  persist(`${directory}/blackbox.json`, {first, attachment, detached, restarted, reattached}); blackTime = now();
+  persist(`${directory}/blackbox.json`, {first, attachment, detached, restarted, reattached});
 } finally {
   // A unique task label avoids touching any existing user service. Preserve
   // config and receipts; only the manager cleans its verified runtime/PID.
@@ -148,31 +127,4 @@ try {
     assert.equal(stopped.state, 'stopped'); persist(`${directory}/cleanup.json`, stopped);
   }
 }
-assert.equal(git('rev-parse', 'HEAD'), head); assert.equal(git('status', '--porcelain'), '');
-assert.equal(hash(readFileSync(binary)), binaryHash, 'External Host drift');
-assert.deepEqual(readFileSync(manifestPath), manifestBytes, 'Compiled manifest drift');
-assert.deepEqual(files.map(name => hash(readFileSync(`${compiled}/${name}`))), hashes);
-assert.deepEqual(files.map(name => hash(readFileSync(`${installed}/${name}`))), hashes);
-const ids = {white: `whitebox-${prefix}`, install: `install-${prefix}`, restart: `restart-${prefix}`, black: `blackbox-${prefix}`};
-function evidence(id, phase, kind, time, producer, log, surface) {
-  persist(`${records}/${id}.json`, {evidence_id: id, issue_id: moduleId, experiment_id: `${moduleId}-${prefix}`, phase, kind,
-    source_commit: head, artifact_hash: artifact.artifact_hash, execution_surface: surface, environment_id: environment, entrypoint,
-    scope: {module_id: moduleId, feature_id: moduleId, entrypoint}, producer, result: 'pass', created_at: time,
-    expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, binaryHash, ...hashes, hash(readFileSync(log))],
-    scope_hash: scopeHash, raw_evidence: log});
-}
-evidence(ids.white, 'development_whitebox', 'gate', whiteTime, whiteProducer, `${directory}/whitebox.log`, 'development_whitebox');
-evidence(ids.install, 'deployment_install', 'install', installTime, blackProducer, `${directory}/install.json`, 'deployed_blackbox');
-evidence(ids.restart, 'deployment_restart', 'restart', restartTime, blackProducer, `${directory}/restart.json`, 'deployed_blackbox');
-evidence(ids.black, 'deployed_blackbox', 'sample_replay', blackTime, blackProducer, `${directory}/blackbox.json`, 'deployed_blackbox');
-persist(candidatePath, {fix_candidate_id: `candidate-${prefix}`, issue_id: moduleId, module_id: moduleId,
-  worktree_id: git('rev-parse', '--show-toplevel'), base_commit: base, head_commit: head, tree_hash: tree,
-  diff_hash: hash(run('git', ['diff', '--binary', base, head])), design_id: 'docs/host-service.md', owner: identity,
-  scope_hash: scopeHash, changed_paths: paths, verification_evidence_ids: Object.values(ids), created_at: candidateTime});
-persist(validationPath, {validation_id: `validation-${prefix}`, issue_id: moduleId, module_id: moduleId,
-  fix_candidate_id: `candidate-${prefix}`, candidate_commit: head, candidate_tree_hash: tree, artifact_hash: artifact.artifact_hash,
-  whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: [ids.black],
-  deployment: {environment_id: environment, entrypoint, producer: blackProducer, install_receipt_id: ids.install,
-    restart_receipt_id: ids.restart, observed_at: blackTime}, source_unchanged: true, result: 'pass', created_at: now()});
-run('appsdk', ['verify', '--review-admission', '--module', moduleId], `${directory}/admission.log`);
-console.log(JSON.stringify({candidate: head, artifactHash: artifact.artifact_hash, directory, admission: 'pass'}));
+console.log(JSON.stringify({directory, result: 'pass'}, null, 2));

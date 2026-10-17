@@ -478,7 +478,7 @@ steps without the verifier: compile the manager sources, create
 with preserved permissions, and record both source hashes. This proves only
 source syntax and bundle construction, not Host lifecycle behavior.
 
-For formal installed-bundle admission on macOS, commit the complete candidate on
+For formal installed-bundle replay on macOS, commit the complete candidate on
 its owner branch, select the validated AppSDK executable on `PATH`, and run:
 
 ```sh
@@ -487,16 +487,15 @@ OBSCURA_HOST_PROTOCOL_VERSION=11 \
   node scripts/host-service/validate-admission.mjs
 ```
 
-This adapter compiles the module, copies and hashes the emitted runtime bundle,
-installs a unique private service configuration, and bootstraps the user's real
-launchd domain with that bundle. It attaches through the real Unix entrypoint,
-waits for the observer socket to close, checks that the daemon Session survives,
-then restarts the exact service and waits for a new PID and Session before
-reattaching. It boots out only its unique label and stops its owned runtime;
-configuration and raw receipts remain under the recorded evidence paths. This
-private acceptance installation does not replace the user's default Host service
-or establish full M1 acceptance. Existing admission records are preserved: the
-adapter refuses to overwrite a candidate/validation graph.
+This adapter compiles the module, copies the emitted runtime bundle into a
+private install directory, installs a unique private service configuration, and
+bootstraps the user's real launchd domain with that bundle. It attaches through
+the real Unix entrypoint, waits for the observer socket to close, checks that the
+daemon Session survives, then restarts the exact service and waits for a new PID
+and Session before reattaching. It boots out only its unique label and stops its
+owned runtime; configuration and raw receipts remain under the recorded evidence
+path. This private replay installation does not replace the user's default Host
+service or establish full M1 acceptance.
 
 ## Ownership and non-goals
 

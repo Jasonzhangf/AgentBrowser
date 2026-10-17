@@ -63,8 +63,7 @@ descriptor shape is rejected rather than adapted.
 Set `OBSCURA_PROTOCOL_ROOT` to the Obscura owner's `protocol/browser` directory
 and `OBSCURA_BIN_DIR` to its validated release binaries (Host, endpoint, media).
 The protocol is an explicit Cargo development patch, not a published dependency.
-No protocol definitions are copied here. Freeze must replace this mutable local
-binding with an actual immutable source/version; no milestone is admitted yet.
+No protocol definitions are copied here. No milestone is admitted yet.
 
 ```sh
 npm --prefix services/relay ci

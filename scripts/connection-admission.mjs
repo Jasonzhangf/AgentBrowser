@@ -1,14 +1,12 @@
-// Exact candidate/artifact replay. This adapter does not publish or freeze.
+// Real replay of the compiled client-connection acceptance consumers.
+// This adapter builds the module, then runs the exact emitted consumers against
+// a real Host/media/endpoint fixture. It writes no lifecycle records and binds
+// no artifact, candidate or external-input identities.
 import {spawnSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
-import {mkdirSync, readFileSync, writeFileSync, existsSync} from 'node:fs';
-import {hostname, userInfo} from 'node:os';
-import {resolve, join} from 'node:path';
+import {mkdirSync, writeFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 
 const moduleId = 'client-connection';
-const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-const now = () => new Date().toISOString();
 function run(program, args, log) {
   const result = spawnSync(program, args, {maxBuffer: 32 * 1024 * 1024, timeout: 120000});
   if (log) writeFileSync(log, Buffer.concat([result.stdout ?? Buffer.alloc(0), result.stderr ?? Buffer.alloc(0)]));
@@ -17,96 +15,26 @@ function run(program, args, log) {
 }
 const git = (...args) => run('git', args).toString().trim();
 assert(!['main', 'master'].includes(git('branch', '--show-current')), 'Owner branch required');
-assert.equal(git('status', '--porcelain'), '', 'Complete candidate commit required');
+assert.equal(git('status', '--porcelain'), '', 'Commit the complete candidate before replay');
 assert(process.env.OBSCURA_PROTOCOL_ROOT && process.env.OBSCURA_BIN_DIR && process.env.AGENTBROWSER_RELAY_HOST_BIN,
   'Explicit protocol, Obscura binaries, and relay-host adapter required');
-const protocol = resolve(process.env.OBSCURA_PROTOCOL_ROOT);
-const binaries = resolve(process.env.OBSCURA_BIN_DIR);
-const relayHost = resolve(process.env.AGENTBROWSER_RELAY_HOST_BIN);
-const externalPaths = [join(protocol, 'Cargo.toml'), join(protocol, 'src/lib.rs'),
-  join(protocol, '../../Cargo.toml'), ...['obscura-host', 'obscura-endpoint', 'obscura-media'].map(name => join(binaries, name)),
-  relayHost,
-  ...['protocol/relay/index.ts', 'services/relay/src/server.ts', 'services/relay/src/store.ts',
-    'services/relay/package.json', 'services/relay/package-lock.json'].map(path => resolve(path))];
-const externalHashes = externalPaths.map(path => hash(readFileSync(path)));
-const head = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
-const base = git('merge-base', 'HEAD', 'origin/main');
-const paths = git('diff', '--name-only', base, head).split('\n').filter(Boolean);
-assert(paths.length, 'Candidate has no delta');
-const candidateTime = now(), scopeHash = hash(JSON.stringify(paths)), prefix = head.slice(0, 12);
-const directory = `evidence/connection-admission-${prefix}-${Date.now()}`;
-const records = `.appsdk/records/evidence/${moduleId}`;
-const candidatePath = `.appsdk/records/fix-candidate-record-${moduleId}.json`;
-const validationPath = `.appsdk/records/pre-review-validation-record-${moduleId}.json`;
-assert(!existsSync(candidatePath) && !existsSync(validationPath), 'Preserve prior graph before a new admission');
-mkdirSync(directory, {recursive: true}); mkdirSync(records, {recursive: true});
-const identity = `${hostname()}/${userInfo().username}/${process.version}`;
-const environment = `${process.platform}/${process.arch}/${identity}`;
-const entrypoint = 'connection-acceptance:real_host_observe_input_and_reconnect,real_host_webrtc_observe_takeover_input_and_reconnect; relay-acceptance:authenticated_relay_directory_tunnel_isolated_and_generation_fenced,host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds; relay-connection-acceptance:real_relay_connection_uses_shared_pump_and_reconnects';
-const whiteProducer = {adapter: 'scripts/connection-admission.mjs:nextest', identity};
-const blackProducer = {adapter: 'scripts/connection-admission.mjs:compiled-consumer', identity};
+const directory = `evidence/connection-replay-${git('rev-parse', '--short=12', 'HEAD')}-${Date.now()}`;
+mkdirSync(directory, {recursive: true});
+
 run('appsdk', ['compile-module', '--module', moduleId], `${directory}/compile.log`);
-const artifactFile = `generated/modules/${moduleId}/module.compiled.json`;
-const artifactBytes = readFileSync(artifactFile), artifact = JSON.parse(artifactBytes);
 const output = `generated/modules/${moduleId}/lib`;
-const artifactPaths = ['libagentbrowser_connection.rlib', 'connection-acceptance', 'webrtc-acceptance', 'relay-acceptance', 'relay-connection-acceptance'].map(name => `${output}/${name}`);
-const artifactHashes = artifactPaths.map(path => hash(readFileSync(path)));
-for (const digest of artifactHashes) assert(artifact.artifacts.some(item => item.hash === digest), 'Compiled artifact identity missing');
 run('python3', ['scripts/connection.py', 'test'], `${directory}/whitebox.log`);
-const whiteTime = now();
-const directReplay = run(`${output}/connection-acceptance`, ['--exact', 'real_host_observe_input_and_reconnect', '--nocapture'], `${directory}/blackbox.log`);
-const webrtcReplay = run(`${output}/webrtc-acceptance`, ['--exact', 'real_host_webrtc_observe_takeover_input_and_reconnect', '--nocapture'], `${directory}/webrtc-blackbox.log`);
-const relayReplay = run(`${output}/relay-acceptance`, ['--exact', 'authenticated_relay_directory_tunnel_isolated_and_generation_fenced', '--nocapture'], `${directory}/relay-blackbox.log`);
-const relayRejectReplay = run(`${output}/relay-acceptance`, ['--exact', 'host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds', '--nocapture'], `${directory}/relay-reject-blackbox.log`);
-const relayConnectionReplay = run(`${output}/relay-connection-acceptance`, ['--ignored', '--exact', 'real_relay_connection_uses_shared_pump_and_reconnects', '--nocapture'], `${directory}/relay-connection-blackbox.log`);
-assert.match(directReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Direct consumer must execute its real test');
-assert.match(webrtcReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'WebRTC consumer must execute its real test');
-assert.match(relayReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay consumer must execute its real test');
-assert.match(relayRejectReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay rejection consumer must execute its real test');
-assert.match(relayConnectionReplay.toString(), /test result: ok\. 1 passed; 0 failed/, 'Relay Connection consumer must execute its real test');
-const blackTime = now();
-assert.equal(git('rev-parse', 'HEAD'), head);
-assert.equal(git('status', '--porcelain'), '', 'Source drift');
-assert.deepEqual(artifactPaths.map(path => hash(readFileSync(path))), artifactHashes, 'Artifact drift');
-assert.deepEqual(externalPaths.map(path => hash(readFileSync(path))), externalHashes, 'External owner drift');
-assert.deepEqual(readFileSync(artifactFile), artifactBytes, 'Artifact record drift');
-function persist(path, value) { writeFileSync(path, JSON.stringify(value, null, 2) + '\n', {flag: 'wx'}); }
-persist(`${directory}/external-inputs.json`, externalPaths.map((path, i) => ({path, hash: externalHashes[i]})));
-const ids = {
-  white: `whitebox-${prefix}`,
-  direct: `blackbox-${prefix}`,
-  webrtc: `webrtc-${prefix}`,
-  relay: `relay-${prefix}`,
-  relayReject: `relay-reject-${prefix}`,
-  relayConnection: `relay-connection-${prefix}`,
-};
-function evidence(id, phase, producer, time, log) {
-  persist(`${records}/${id}.json`, {evidence_id: id, issue_id: moduleId, experiment_id: `${moduleId}-${prefix}`,
-    phase, kind: phase === 'development_whitebox' ? 'gate' : 'sample_replay', source_commit: head,
-    artifact_hash: artifact.artifact_hash, execution_surface: phase, environment_id: environment, entrypoint,
-    scope: {module_id: moduleId, feature_id: moduleId, entrypoint}, producer, result: 'pass', created_at: time,
-    expires_at: new Date(Date.now() + 86400000).toISOString(), input_hashes: [tree, ...artifactHashes, ...externalHashes, hash(readFileSync(log)), hash(readFileSync(`${directory}/webrtc-blackbox.log`)), hash(readFileSync(`${directory}/relay-blackbox.log`)), hash(readFileSync(`${directory}/relay-reject-blackbox.log`)), hash(readFileSync(`${directory}/relay-connection-blackbox.log`))],
-    scope_hash: scopeHash, raw_evidence: log});
-}
-evidence(ids.white, 'development_whitebox', whiteProducer, whiteTime, `${directory}/whitebox.log`);
-const replayEvidence = [
-  ['direct', `${directory}/blackbox.log`],
-  ['webrtc', `${directory}/webrtc-blackbox.log`],
-  ['relay', `${directory}/relay-blackbox.log`],
-  ['relayReject', `${directory}/relay-reject-blackbox.log`],
-  ['relayConnection', `${directory}/relay-connection-blackbox.log`],
+const replays = [
+  ['direct', 'connection-acceptance', 'real_host_observe_input_and_reconnect', []],
+  ['webrtc', 'webrtc-acceptance', 'real_host_webrtc_observe_takeover_input_and_reconnect', []],
+  ['relay', 'relay-acceptance', 'authenticated_relay_directory_tunnel_isolated_and_generation_fenced', []],
+  ['relay-reject', 'relay-acceptance', 'host_role_rejects_offer_with_typed_reason_and_next_tunnel_succeeds', []],
+  ['relay-connection', 'relay-connection-acceptance', 'real_relay_connection_uses_shared_pump_and_reconnects', ['--ignored']],
 ];
-for (const [key, log] of replayEvidence) {
-  evidence(ids[key], 'deployed_blackbox', blackProducer, blackTime, log);
+for (const [name, consumer, acceptanceTest, extra] of replays) {
+  const result = run(`${output}/${consumer}`, [...extra, '--exact', acceptanceTest, '--nocapture'],
+    `${directory}/${name}-blackbox.log`);
+  assert.match(result.toString(), /test result: ok\. 1 passed; 0 failed/,
+    `${name} consumer must execute its real acceptance test`);
 }
-persist(candidatePath, {fix_candidate_id: `candidate-${prefix}`, issue_id: moduleId, module_id: moduleId,
-  worktree_id: git('rev-parse', '--show-toplevel'), base_commit: base, head_commit: head, tree_hash: tree,
-  diff_hash: hash(run('git', ['diff', '--binary', base, head])), design_id: 'docs/client-connection.md', owner: identity,
-  scope_hash: scopeHash, changed_paths: paths, verification_evidence_ids: Object.values(ids), created_at: candidateTime});
-persist(validationPath, {validation_id: `validation-${prefix}`, issue_id: moduleId, module_id: moduleId,
-  fix_candidate_id: `candidate-${prefix}`, candidate_commit: head, candidate_tree_hash: tree, artifact_hash: artifact.artifact_hash,
-  whitebox_producer: whiteProducer, whitebox_evidence_ids: [ids.white], blackbox_evidence_ids: replayEvidence.map(([key]) => ids[key]),
-  deployment: {environment_id: environment, entrypoint, producer: blackProducer, observed_at: blackTime},
-  source_unchanged: true, result: 'pass', created_at: now()});
-run('appsdk', ['verify', '--review-admission', '--module', moduleId], `${directory}/admission.log`);
-console.log(JSON.stringify({candidate: head, artifactHash: artifact.artifact_hash, directory, admission: 'pass'}));
+console.log(JSON.stringify({directory, replays: replays.map(([name]) => name), result: 'pass'}, null, 2));

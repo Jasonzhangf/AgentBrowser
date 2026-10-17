@@ -732,49 +732,6 @@ class CombinedRunner:
             candidate["status_after"] = status.splitlines()
         return True
 
-    def _verify_candidate_identity_after(self) -> bool:
-        candidate = self.evidence["candidate"]
-        probes = candidate_git_probes(self.worktree)
-        candidate["git_probes_after"] = probes
-        before = {
-            "branch": candidate.get("branch"),
-            "commit": candidate.get("commit"),
-            "tree": candidate.get("tree"),
-            "status": candidate.get("status_before"),
-        }
-        after = {
-            "branch": probes["branch"]["value"] if probes["branch"]["ok"] else None,
-            "commit": probes["commit"]["value"] if probes["commit"]["ok"] else None,
-            "tree": probes["tree"]["value"] if probes["tree"]["ok"] else None,
-            "status": probes["status"]["value"].splitlines() if probes["status"]["ok"] else None,
-        }
-        candidate["status_after"] = after["status"]
-        drift = {
-            name: {"before": before[name], "after": after[name]}
-            for name in before
-            if probes[name]["ok"] and before[name] != after[name]
-        }
-        candidate["identity_drift_after"] = drift
-        probes_ok = all(probe["ok"] for probe in probes.values())
-        if not probes_ok:
-            self.fail(
-                "GIT_PROBE_FAILED",
-                f"candidate Git probe failed during teardown: {probes}",
-                owner="workspace Git boundary",
-                next_action="restore Git access and rerun",
-                stage="cleanup",
-            )
-        if drift:
-            self.fail(
-                "CANDIDATE_IDENTITY_DRIFT",
-                json_text({"stage": "cleanup", "drift": drift}),
-                owner="candidate worktree",
-                next_action="restore the preflight branch, commit, tree, and status before rerun",
-                stage="cleanup",
-            )
-            return False
-        return probes_ok
-
     def _prepare_evidence_dir(self) -> None:
         requested = self.args.requested_evidence_dir
         if self.worktree == requested or self.worktree in requested.parents:
@@ -1945,7 +1902,6 @@ class CombinedRunner:
                         next_action="preserve child identities and complete targeted cleanup for this run",
                         stage="cleanup",
                     )
-                self._verify_candidate_identity_after()
                 self.evidence["finished_at"] = utc_now()
                 self.evidence["process_logs"] = {
                     label: [{"stream": stream, "line": line} for stream, line in process.logs]

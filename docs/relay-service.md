@@ -31,7 +31,7 @@ appsdk verify
 
 当前测试覆盖真实 HTTPS/WSS 和解包后 CLI 的账号、双通道转发、撤销授权及 Host typed rejection；ABI envelope、旧 wire 拒绝、Host identity binding、control 帧上限负例已验证，慢接收方队列压力尚未做负载验收。当前证据不代表手机到浏览器端到端联调，也不单独证明 inner mTLS、TunnelHello、Obscura endpoint replay 或安装后的产品入口。`packages/client-connection` 与 Android fixture 仍需单独迁移到该 ABI，Relay service 的绿测不替代下游适配证据。
 
-AppSDK 模块已绑定真实 build、6 项 regression、唯一 owner 和 `relay.tar`。`deployment_operations: []` 对应临时 CLI 消费者，无安装/重启常驻服务的交付范围。正式 admission 适配器为 `node services/relay/validate-admission.mjs`，要求干净 owner 候选提交；它实际编译、测试并再次解包调用 HTTPS/WSS 入口后生成记录，任何失败不产出 PASS。现阶段候选提交和 admission/AGY 尚未完成，不能将普通 verify 等同于 review PASS。
+AppSDK 模块已绑定真实 build、6 项 regression、唯一 owner 和 `relay.tar`。`deployment_operations: []` 对应临时 CLI 消费者，无安装/重启常驻服务的交付范围。正式回放入口为 `node services/relay/validate-admission.mjs`，要求干净 owner 候选提交；它实际编译、测试并再次解包调用 HTTPS/WSS 入口，任何失败即退出非零、不产出 PASS。它只把原始日志写到 evidence 目录，不再写任何 lifecycle 记录。现阶段候选提交和 AGY 尚未完成，不能将普通 verify 等同于 review PASS。
 
 ## M1 network evidence projection
 
