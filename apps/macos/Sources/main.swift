@@ -1952,7 +1952,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
     private var appliedLayout: AppliedLayout?
     private var lastAdvertisedViewport: NSRect?
     private var viewportTimer: Timer?
-    private var webViewAboveVideo = true
     private var connectionStatusSurface: NSTextField!
     private var pairingImportInFlight = false
     private var hasAttemptedAutoConnect = false
@@ -2324,14 +2323,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         videoView.frame = contentRect
         webView.frame = webRect
         videoView.isHidden = !videoVisible
-        setWebViewAboveVideo(!videoVisible)
+        // The WebView stays above the video surface in every presentation. The
+        // two rects never overlap, and ordering the WebView below the video
+        // stops WebKit from painting the page into the 56pt chrome strip: the
+        // strip then shows the window background as a black bar and the address
+        // field disappears in takeover.
         videoView.setPresentationInteractive(videoVisible)
-    }
-
-    private func setWebViewAboveVideo(_ above: Bool) {
-        guard webViewAboveVideo != above else { return }
-        webViewAboveVideo = above
-        contentView.addSubview(webView, positioned: above ? .above : .below, relativeTo: videoView)
     }
 
     /// Visibility is owned by the displayed frame identity plus the local

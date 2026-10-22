@@ -270,7 +270,9 @@ setup above first so `OBSCURA_PROTOCOL_ROOT` and `OBSCURA_BIN_DIR` are set.
    stream reports growing `renderedFrames`.
 
 5. Press `接管`. The expected status is `controlMode=control`,
-   `inputReady=true`, and `visibleContent=native-video`.
+   `inputReady=true`, and `visibleContent=native-video`. The 56pt chrome strip
+   at the top must stay painted: the address field, the mode badge and the
+   toolbar buttons are visible, and typing in the address field works.
 
 6. Verify native input in the video area:
    - Click the red `touch` button. It should turn lime.
@@ -315,7 +317,9 @@ The minimum Mac evidence records these levels separately:
    unit, decodes it through VideoToolbox, paints a frame, and reports
    `renderedFrames>0`.
 4. Takeover reports `controlMode=control`, `inputReady=true`, and
-   `visibleContent=native-video`.
+   `visibleContent=native-video`, and the chrome strip is painted rather than a
+   flat dark bar. The automated receipt captures that strip and asserts it has
+   real content.
 5. Return to observation, then a fixture `inspect` matches the pre-connect
    baseline. This proves the automated path did not modify the page.
 6. Native click, text, scroll and Chinese IME are still `PENDING_HUMAN` until a
