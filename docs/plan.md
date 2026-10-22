@@ -1,12 +1,25 @@
 # 讨论与实施计划
 
-当前阶段：Android 本地兼容性探针；完整产品仍按下表分阶段推进。步骤状态只说明计划进展，PASS 以各仓规范证据为准。
+当前阶段：Android 本地兼容性探针。编排者已在 Mac 客户端实测连接、真实画面
+和接管可用，本轮新增了把这些步骤写成 fail-loud 自动 gate 的验收入口；该入口
+已在该环境跑通一次，回执为 `PASS_AUTOMATED`。完整产品仍按下表分阶段推进。步骤状态只说明计划
+进展，PASS 以各仓规范证据为准。
 
 2026-09-05 Android 切片：独占 `playground/android-cordis-h264`、基线 `eed395c`。
 真实构建、安装及重放命令见 [android-probe.md](android-probe.md)。15T 已通过
 360 帧 H.264 自然播放、Surface 动态像素、坏样本、Cordis 卸载/重载和原生释放。
 此结果仅覆盖本地客户端；不推进 P2a/P3/P4 的网络、Host、输入语义状态。
 下方“当前证据与限制”保留为设计 bootstrap 历史；其无 Git/无安装描述已被本段取代。
+
+2026-10-21 Mac 用户路径：在独占
+`playground/agentbrowser/mac-user-test-r1-20261021` 上，用构建后的
+`AgentBrowserMac.app` 和隔离 `device_fixture` Host 验证 `打开菜单` → `连接` →
+`connectionState=connected` 且 `renderedFrames>0` → `接管` →
+`controlMode=control`、`inputReady=true`、`visibleContent=native-video` →
+`返回观察`。新增自动入口 `scripts/mac-user-acceptance.mjs` 把这条路径和
+`返回观察` 后 fixture `inspect` 与连接前基线一致作为 fail-loud gate；该 DOM
+不变 gate 已在本机运行并通过（`PASS_AUTOMATED`）；换环境需重新运行。原生点击、键盘、
+滚动和中文 IME 仍是 `PENDING_HUMAN`，本轮不声明 P5/P6 或 M1 通过。
 
 | 阶段 | Owner / 范围 | 前置 | 验收证据 | 当前状态 |
 | --- | --- | --- | --- | --- |
@@ -17,7 +30,7 @@
 | P2a 连接与 Relay 纵向闭环 | AB-05/06、OB-04，配合平台 host | P1a 的协议绑定、P2 媒体探针 | 账号登录/设备注册/目录、UDP/Tailscale、强制阻断直连后 WSS 输入与视频 | 未开始 |
 | P3 持久 Host | Obscura Session owner | P1、Obscura 干净工作树 | UI 断开后 JS/请求继续，重连无页面重建 | 未开始 |
 | P4 Android 主流程 | 两仓：统一帧、H.264、触控、IME | P2、P2a、P3 | 触摸、中文组合输入、横竖屏、重连真机证据 | 未开始 |
-| P5 Mac 观察与控制交接 | AgentBrowser Mac；Host 仲裁 | P4 | 双端同 layout/buffer，旧输入拒绝，Agent/人工交接 | 未开始 |
+| P5 Mac 观察与控制交接 | AgentBrowser Mac；Host 仲裁 | P4 | 双端同 layout/buffer，旧输入拒绝，Agent/人工交接 | 部分验证：连接、真实画面、接管可用；原生输入待人工验证 |
 | P6 首版交付 | 两仓各自验证/review | P3-P5 | 各仓 commit/构建身份、必要安装、同入口回放、review 分别通过 | 未开始 |
 
 ## 核心实际入口验收
