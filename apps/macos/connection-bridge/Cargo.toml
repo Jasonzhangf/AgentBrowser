@@ -6,5 +6,6 @@ license = "Apache-2.0"
 
 [dependencies]
 agentbrowser-connection = { path = "../../../packages/client-connection" }
+serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }

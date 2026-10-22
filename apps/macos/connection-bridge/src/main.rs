@@ -488,6 +488,58 @@ fn offer_frame(
     Ok(())
 }
 
+struct StrictCommandObject(serde_json::Map<String, serde_json::Value>);
+
+impl<'de> serde::Deserialize<'de> for StrictCommandObject {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = serde_json::Map<String, serde_json::Value>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON command object without duplicate keys")
+            }
+
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut object = serde_json::Map::new();
+                while let Some((key, value)) = access.next_entry::<String, serde_json::Value>()? {
+                    if object.insert(key.clone(), value).is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "DUPLICATE_COMMAND_FIELD:{key}"
+                        )));
+                    }
+                }
+                Ok(object)
+            }
+        }
+
+        deserializer.deserialize_map(Visitor).map(StrictCommandObject)
+    }
+}
+
+fn parse_command_object(raw: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let parsed = serde_json::from_str::<StrictCommandObject>(raw).map_err(|error| {
+        // serde_json appends its own line and column to a custom message; the
+        // rejection code must stay one stable token.
+        let message = error.to_string();
+        match message.strip_prefix("DUPLICATE_COMMAND_FIELD:") {
+            Some(rest) => {
+                let field = rest.split(" at line").next().unwrap_or(rest);
+                format!("DUPLICATE_COMMAND_FIELD:{field}")
+            }
+            None => "INVALID_COMMAND_JSON".to_string(),
+        }
+    })?;
+    Ok(parsed.0)
+}
+
 async fn dispatch(
     app: &mut AppState,
     raw: &str,
@@ -497,9 +549,13 @@ async fn dispatch(
     if raw.len() > MAX_COMMAND_BYTES {
         return Err("COMMAND_SIZE".into());
     }
-    let value = serde_json::from_str::<serde_json::Value>(raw)
-        .map_err(|_| "INVALID_COMMAND_JSON".to_string())?;
-    let object = value.as_object().ok_or("COMMAND_OBJECT_REQUIRED")?;
+    // The WebView and this process must agree on what `op` means. A duplicate
+    // top-level key makes them disagree: JSONSerialization keeps the first
+    // value while serde keeps the last, so a page could hide `import_connection`
+    // behind a first `status` key and still reach the file import. Rejecting
+    // duplicates keeps one meaning per command.
+    let object = parse_command_object(raw)?;
+    let object = &object;
     let op = object
         .get("op")
         .and_then(serde_json::Value::as_str)
@@ -1605,6 +1661,10 @@ fn store_pairing(root: &Path, endpoint: &str, token: &str) -> Result<(), String>
     fs::set_permissions(root, fs::Permissions::from_mode(0o700))
         .map_err(|_| "PAIRING_STORE_UNAVAILABLE".to_string())?;
 
+    // A crashed import can leave a private temp file behind. Removing stale
+    // temps keeps the store directory clean; each one is mode 0600 and never
+    // became the real pairing file.
+    remove_stale_pairing_temps(root);
     let nonce = temp_nonce();
     let endpoint_temp = root.join(format!(".endpoint.txt.tmp-{nonce}"));
     let token_temp = root.join(format!(".token.tmp-{nonce}"));
@@ -1621,6 +1681,19 @@ fn store_pairing(root: &Path, endpoint: &str, token: &str) -> Result<(), String>
         return Err("PAIRING_WRITE_FAILED".into());
     }
     Ok(())
+}
+
+fn remove_stale_pairing_temps(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(".endpoint.txt.tmp-") || name.starts_with(".token.tmp-") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn write_pairing_files(

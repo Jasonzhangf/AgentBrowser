@@ -94,28 +94,48 @@ every later launch connects by itself.
 1. Open the app and choose the `连接` menu, then `导入本机配对…`.
 2. Select the exported `.abconnection` file in the native open panel.
 3. The bridge validates the bundle and writes the store: directory mode `0700`,
-   `endpoint.txt` and `token` mode `0600`. It writes a temporary file first and
-   renames it, so an interrupted import never leaves a half store.
+   `endpoint.txt` and `token` mode `0600`. Each file is written to a temp file,
+   synced, and renamed into place, so no file is ever half written.
 4. Close and reopen `AgentBrowserMac.app` with no argument. The app connects to
    the saved Host one time and shows frames.
 
 The import panel is owned by native code. The page may request
 `import_connection` or `open_connection_setup`, but native always replaces any
 page-supplied path with the human's open-panel selection, so page content can
-never choose the imported file.
+never choose the imported file. A command with a duplicate top-level key is
+refused as `DUPLICATE_COMMAND_FIELD:<key>`, because the page's parser and the
+bridge parser would otherwise pick different `op` values.
 
-Import rejects a bundle with a typed error and keeps the previous store
-unchanged: `PAIRING_BUNDLE_INVALID` (not JSON, or `endpoint`/`token` missing,
-empty or larger than 4096 bytes), `PAIRING_BUNDLE_READ_FAILED` (unreadable path,
-not a regular file, or larger than 8192 bytes), and `PAIRING_STORE_UNAVAILABLE`
-(no home directory to resolve the store). A rejection names the reason only; it
-never echoes the token.
+Import rejects a bundle with a typed error and keeps the previous store:
+`BUNDLE_INVALID` (not JSON, or `endpoint`/`token` missing, not a string, empty,
+or longer than 4096 bytes), `BUNDLE_PATH_INVALID` (missing `path`, or a path
+that is not absolute), `BUNDLE_READ_FAILED` (unreadable path, or not a regular
+file), `BUNDLE_TOO_LARGE` (larger than 8192 bytes), `PAIRING_STORE_UNAVAILABLE`
+(a store path that exists but is not a directory, a directory that cannot be
+created or has no home directory to resolve), and `PAIRING_WRITE_FAILED` (a
+failed write or rename). A rejection names the reason only; it never echoes the
+token.
+
+Two known limits stay explicit. First, the store is two files, so a process
+death between the two renames can leave a new `endpoint.txt` with the old
+`token`. That state fails at connect with a Host authentication error, never a
+silent success, and one more import repairs it. Second, an interrupted import
+can leave a private temp file (`.endpoint.txt.tmp-*` or `.token.tmp-*`, mode
+`0600`) in the store; the next import removes stale temps before it writes.
 
 Auto-connect runs at most once per launch and only for a default-store launch:
 it needs `connectionSetup.state=configured` and an idle or stopped connection.
 An explicit `--pairing-dir` keeps manual control, because it is a test and
-developer override. After the first attempt the human owns every further
-connect, disconnect, and retry, and a real connect error stays visible.
+developer override; a launch that sets only `AGENTBROWSER_MAC_PAIRING` still
+auto-connects, because the bridge sees a configured store. After the first
+attempt the human owns every further connect, disconnect, and retry, and a real
+connect error stays visible.
+
+The frozen M1 note in section 7.1 of `docs/m1/connection-minimum.md` says an
+import performs no local validation and reports one failure code. This bridge
+does validate and reports the codes above. The validation was required for this
+milestone, so the note is now out of date; updating the frozen M1 document
+needs a user decision and is not done here.
 
 Build the app bundle with the selected protocol owner and a writable Swift
 module cache:

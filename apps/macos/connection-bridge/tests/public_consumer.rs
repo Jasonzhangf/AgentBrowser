@@ -454,6 +454,61 @@ fn import_rejections_are_typed_and_keep_the_store() {
 }
 
 #[test]
+fn duplicate_command_keys_are_rejected_before_any_import() {
+    let home = unique_path("duplicate-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let bundle = write_bundle(
+        &home,
+        "duplicate.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50998", "token": "duplicate-token"}),
+    );
+    let mut bridge = Bridge::start_with_home(&home, |_| {});
+    // The page can send two `op` keys. Swift keeps the first and this process
+    // would keep the last, so the raw text must be refused as ambiguous
+    // instead of letting the hidden import win.
+    let ambiguous = format!(
+        "{{\"op\":\"status\",\"op\":\"import_connection\",\"path\":{}}}",
+        serde_json::Value::String(bundle.to_string_lossy().into_owned())
+    );
+    assert_eq!(
+        rejection(&bridge.request(&ambiguous)),
+        Some("DUPLICATE_COMMAND_FIELD:op".to_owned())
+    );
+    assert!(
+        !home_store(&home).join("token").exists(),
+        "a duplicate-key command must not write the pairing store"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn stale_pairing_temps_are_removed_by_the_next_import() {
+    let home = unique_path("temp-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let store = home_store(&home);
+    std::fs::create_dir_all(&store).expect("create store");
+    let stale = store.join(".token.tmp-1-2-3");
+    std::fs::write(&stale, "leftover").expect("write stale temp");
+    let bundle = write_bundle(
+        &home,
+        "clean.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50997", "token": "clean-token"}),
+    );
+    let mut bridge = Bridge::start_with_home(&home, |_| {});
+    let command = serde_json::json!({"op": "import_connection", "path": bundle.to_string_lossy()});
+    assert_eq!(rejection(&bridge.request(&command.to_string())), None);
+    assert!(
+        !stale.exists(),
+        "a stale temp file must not survive the next import"
+    );
+    assert_eq!(
+        std::fs::read_to_string(store.join("token")).expect("token"),
+        "clean-token"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
 fn explicit_pairing_override_wins_over_the_home_store() {
     let home = unique_path("override-home");
     std::fs::create_dir_all(&home).expect("create home");

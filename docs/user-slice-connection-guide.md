@@ -45,17 +45,26 @@ node scripts/mac-user-acceptance.mjs
 4. 关闭应用，再次打开。不需要参数，也不需要重新配对。
 
 导入写入默认存储 `~/Library/Application Support/AgentBrowser/mac-pairing/`：
-目录权限 `0700`，`endpoint.txt` 与 `token` 权限 `0600`。先写临时文件再改名，
-中途失败不会留下半个存储。默认存储同时有这两个文件才算已配置。
+目录权限 `0700`，`endpoint.txt` 与 `token` 权限 `0600`。每个文件先写临时文件
+再改名，所以不会出现写了一半的文件。默认存储同时有这两个文件才算已配置。
+
+两个已知边界照实写清。第一，存储是两个文件；两次改名之间进程若被杀，可能留下
+新地址配旧令牌。这种状态在连接时以 Host 认证错误暴露，不会静默成功，再导入一次
+即可修复。第二，导入中断可能在存储目录留下 `0600` 的临时文件；下一次导入会先
+清掉旧的临时文件。
 
 存储解析顺序是：先看 `AGENTBROWSER_MAC_PAIRING`（应用带的 `--pairing-dir`
 只为测试设它），再看默认存储。自动连接每次启动最多一次，只在默认存储路径下
 发生，且要求 `connectionSetup.state=configured` 与空闲状态。带 `--pairing-dir`
-的启动保持手动连接，因为它是测试和开发入口。第一次自动连接之后，断开、重连和
+的启动保持手动连接，因为它是测试和开发入口；只设 `AGENTBROWSER_MAC_PAIRING`
+而不带参数的启动仍会自动连接。第一次自动连接之后，断开、重连和
 重试都由人决定，真实连接错误照常显示。
 
-导入失败会给出类型化原因并保留原来的存储：`PAIRING_BUNDLE_INVALID`、
-`PAIRING_BUNDLE_READ_FAILED`、`PAIRING_STORE_UNAVAILABLE`。原因里不含令牌。
+导入失败会给出类型化原因并保留原来的存储：`BUNDLE_INVALID`、
+`BUNDLE_PATH_INVALID`、`BUNDLE_READ_FAILED`、`BUNDLE_TOO_LARGE`、
+`PAIRING_STORE_UNAVAILABLE`、`PAIRING_WRITE_FAILED`。原因里不含令牌。重复顶层
+键的命令会被拒绝为 `DUPLICATE_COMMAND_FIELD`，避免页面和桥进程对 `op` 有不同
+理解。
 
 自动化复现命令：
 

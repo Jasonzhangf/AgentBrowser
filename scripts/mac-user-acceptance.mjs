@@ -8,7 +8,7 @@
 // Native click, keyboard, scroll and IME are not automatable in this
 // environment. They are written to the receipt as PENDING_HUMAN, never PASS.
 import {spawn, spawnSync} from 'node:child_process';
-import {accessSync, constants, createWriteStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {accessSync, chmodSync, constants, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -38,6 +38,10 @@ Options:
   --persisted-pairing    prove the one-time import path: import the fixture
                          bundle into a throwaway HOME's default store, then
                          launch the app with no pairing argument at all
+  --persisted-unreachable
+                         prove the failure path: a throwaway HOME store points
+                         at a closed port, so the launch must show one visible
+                         error and must not retry
   --self-test            run the fixture-cleanup decision cases and exit
   -h, --help             show this help and exit
 
@@ -54,6 +58,7 @@ function parseArguments(argv) {
     help: false,
     selfTest: false,
     persistedPairing: false,
+    persistedUnreachable: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -67,6 +72,10 @@ function parseArguments(argv) {
     }
     if (argument === '--persisted-pairing') {
       options.persistedPairing = true;
+      continue;
+    }
+    if (argument === '--persisted-unreachable') {
+      options.persistedUnreachable = true;
       continue;
     }
     const next = () => {
@@ -93,6 +102,9 @@ function parseArguments(argv) {
   }
   if (!Number.isFinite(options.observeSeconds) || options.observeSeconds < 0) {
     throw new Error('--observe-seconds must be zero or a positive number');
+  }
+  if (options.persistedPairing && options.persistedUnreachable) {
+    throw new Error('--persisted-pairing and --persisted-unreachable are separate runs');
   }
   return options;
 }
@@ -456,6 +468,28 @@ function rememberFixtureStderr(line) {
   fixtureStderrBuffer += `${line}\n`;
 }
 
+const unreachableEndpoint = '127.0.0.1:1';
+
+// The negative case needs a configured store that cannot work: a closed port.
+// It is written directly here, because a bundle import must stay honest.
+function writeUnreachableStore() {
+  mkdirSync(persistedStore, {recursive: true, mode: 0o700});
+  writeFileSync(join(persistedStore, 'endpoint.txt'), unreachableEndpoint, {mode: 0o600});
+  writeFileSync(join(persistedStore, 'token'), 'unreachable-token', {mode: 0o600});
+  chmodSync(persistedStore, 0o700);
+  chmodSync(join(persistedStore, 'endpoint.txt'), 0o600);
+  chmodSync(join(persistedStore, 'token'), 0o600);
+}
+
+// Every native command is logged once as `MAC_NATIVE_SEND op=<op> raw=...`.
+function countNativeCommands(op) {
+  const path = join(runDirectory, 'app.log');
+  if (!existsSync(path)) return 0;
+  const text = readFileSync(path, {encoding: 'utf8', flag: 'r'});
+  const pattern = new RegExp(`MAC_NATIVE_SEND op=${op} raw=`, 'g');
+  return (text.match(pattern) ?? []).length;
+}
+
 function bridgeExecutable() {
   return join(root, 'apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMacBridge');
 }
@@ -562,10 +596,11 @@ function launchApp() {
   // The persisted mode is the ordinary user case: no `--pairing-dir`, no
   // `AGENTBROWSER_MAC_PAIRING`. Only the scratch HOME differs from a real
   // double-click, so this run never touches the developer's own store.
-  const arguments_ = options.persistedPairing ? [] : ['--pairing-dir', observations.fixture_info.fixture];
+  const persistedLaunch = options.persistedPairing || options.persistedUnreachable;
+  const arguments_ = persistedLaunch ? [] : ['--pairing-dir', observations.fixture_info.fixture];
   const child = spawn(appExecutable, arguments_, {
     cwd: root,
-    env: {...process.env, ...(options.persistedPairing ? {HOME: persistedHome, AGENTBROWSER_MAC_PAIRING: ''} : {})},
+    env: {...process.env, ...(persistedLaunch ? {HOME: persistedHome, AGENTBROWSER_MAC_PAIRING: ''} : {})},
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appChild = child;
@@ -578,7 +613,12 @@ function launchApp() {
   if (!child.pid) {
     failGate('APP_LAUNCH', 'spawn returned no app pid');
   }
-  passGate('APP_LAUNCH', `pid ${child.pid}`, {pairing_directory: observations.fixture_info.fixture});
+  // Record the arguments this launch really used, so a persisted run cannot be
+  // read as a `--pairing-dir` run.
+  passGate('APP_LAUNCH', `pid ${child.pid}`, {
+    arguments: arguments_,
+    ...(persistedLaunch ? {home: persistedHome} : {pairing_directory: observations.fixture_info.fixture}),
+  });
 }
 
 async function startFixture() {
@@ -824,6 +864,46 @@ async function waitForSnapshot(gate, fromSnapshot, fromRejection, predicate, des
     }
     const found = candidates.find(predicate);
     if (found) return found;
+    await sleep(100);
+  }
+  failGate(gate, `${description} timed out after ${timeoutMilliseconds} ms`, {
+    last_snapshot: trimSnapshot(latestSnapshot(fromSnapshot)),
+    recent_snapshots: serializedSnapshots.slice(fromSnapshot).slice(-5).map(trimSnapshot),
+    app_tail: appTailLines.slice(-40),
+  });
+}
+
+// The failure path expects the error that `waitForSnapshot` refuses. It waits
+// for a typed visible error and never accepts a connection success.
+async function waitForFailureSnapshot(gate, fromSnapshot, fromRejection, description) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    checkInterrupted();
+    if (childExited(appChild)) {
+      failGate(gate, `app exited before ${description}`, {
+        exit: appChild?.exitCode ?? null,
+        signal: appChild?.signalCode ?? null,
+        app_tail: appTailLines.slice(-40),
+        recent_snapshots: serializedSnapshots.slice(fromSnapshot).slice(-5).map(trimSnapshot),
+      });
+    }
+    const newRejections = rejections.slice(fromRejection);
+    if (newRejections.length) {
+      failGate(gate, `${description} was rejected instead of failing at connect: ${newRejections[0].rejection}`, {
+        rejection: newRejections[0],
+      });
+    }
+    const candidates = serializedSnapshots.slice(fromSnapshot);
+    const connected = candidates.find(snapshot => snapshot.connectionState === 'connected');
+    if (connected) {
+      failGate(gate, `${description} connected, but the store points at a closed port`, {
+        snapshot: trimSnapshot(connected),
+      });
+    }
+    const failed = candidates.find(
+      snapshot => snapshot.connectionState === 'error' || (typeof snapshot.error === 'string' && snapshot.error),
+    );
+    if (failed) return failed;
     await sleep(100);
   }
   failGate(gate, `${description} timed out after ${timeoutMilliseconds} ms`, {
@@ -1147,7 +1227,11 @@ function writeReceipt(cleanupReceipt, result) {
     run_id: runId,
     result,
     scope: {
-      automated: 'build fixture and app, isolated Host, AX connect, rendered frame, takeover, release, independent DOM unchanged check',
+      automated: options.persistedUnreachable
+        ? 'build fixture and app, throwaway HOME store with a closed port, one visible connect error, no retry'
+        : options.persistedPairing
+          ? 'build fixture and app, throwaway HOME store, one-time import, no-argument launch, auto connect, rendered frame, takeover, release, human disconnect without reconnect, independent DOM unchanged check'
+          : 'build fixture and app, isolated Host, AX connect, rendered frame, takeover, release, independent DOM unchanged check',
       manual: 'native click, ASCII text, scroll and Chinese IME',
       not_claimed: 'P5, P6 or M1 completion',
     },
@@ -1192,6 +1276,23 @@ function writeReceipt(cleanupReceipt, result) {
   return path;
 }
 
+// One place closes both app processes, writes the receipt and sets the exit code,
+// so every mode reports cleanup the same way.
+async function finishRun(message) {
+  const cleanupReceipt = await cleanup();
+  receiptPath = writeReceipt(cleanupReceipt, cleanupFailed ? 'FAIL' : 'PASS_AUTOMATED');
+  if (cleanupFailed) {
+    process.stderr.write('FAIL CLEANUP: one or more child resources did not close cleanly\n');
+    process.stderr.write(`receipt: ${receiptPath}\n`);
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`${message}\n`);
+    process.stdout.write(`receipt: ${receiptPath}\n`);
+    process.stdout.write('manual: native click/text/scroll/IME PENDING_HUMAN\n');
+    process.exitCode = 0;
+  }
+}
+
 let receiptPath = null;
 try {
   preflight();
@@ -1217,6 +1318,9 @@ try {
   if (options.persistedPairing) {
     await importPairingThroughBridge(observations.fixture_info.bundle);
   }
+  if (options.persistedUnreachable) {
+    writeUnreachableStore();
+  }
   launchApp();
   recordedAppChildren = await recordOwnedChildren(appChild, 1);
   observations.app_children_at_start = recordedAppChildren;
@@ -1241,113 +1345,174 @@ try {
     // The drawer holds the takeover control; the connect itself came from the app.
     await pressAxButton(appChild.pid, '打开菜单', 'AX_OPEN_MENU');
     await sleep(750);
-  } else {
+  } else if (!options.persistedUnreachable) {
     await pressAxButton(appChild.pid, '打开菜单', 'AX_OPEN_MENU');
     await sleep(750);
     await pressAxButton(appChild.pid, '连接', 'AX_CONNECT');
   }
-  const connected = await waitForSnapshot(
-    'CONNECT',
-    connectSnapshotStart,
-    connectRejectionStart,
-    snapshot => snapshot.connectionState === 'connected' && Number(snapshot.renderedFrames) > 0,
-    'connectionState=connected with renderedFrames>0',
-  );
-  observations.connect_snapshot = trimSnapshot(connected);
-  if (connected.sessionId !== observations.fixture_info.session) {
-    failGate('SESSION_IDENTITY', `app session ${connected.sessionId ?? 'missing'} does not match fixture session ${observations.fixture_info.session}`, {
-      app_snapshot: trimSnapshot(connected),
-      fixture_session: observations.fixture_info.session,
+  if (options.persistedUnreachable) {
+    // A configured store that points at a closed port must fail loudly once.
+    const failedSnapshot = await waitForFailureSnapshot(
+      'PERSISTED_UNREACHABLE',
+      connectSnapshotStart,
+      connectRejectionStart,
+      'a visible connection error after a no-argument launch',
+    );
+    observations.persisted_failure = trimSnapshot(failedSnapshot);
+    if (String(failedSnapshot.error).includes('unreachable-token')) {
+      failGate('PERSISTED_UNREACHABLE_ERROR', 'the connection error exposed the store token', {
+        error: failedSnapshot.error,
+      });
+    }
+    passGate('PERSISTED_UNREACHABLE_ERROR', `visible error: ${failedSnapshot.error}`, {
+      connection_state: failedSnapshot.connectionState ?? null,
+      error: failedSnapshot.error,
+      store: persistedStore,
+      endpoint: unreachableEndpoint,
+      launch_arguments: [],
     });
-  }
-  passGate('CONNECT', `connected with renderedFrames=${connected.renderedFrames}`, {
-    session: connected.sessionId,
-    renderedFrames: connected.renderedFrames,
-  });
-
-  const observeStart = serializedSnapshots.length;
-  observations.observe_before_takeover = await observeFor(options.observeSeconds, observeStart, 'OBSERVE_BEFORE_TAKEOVER');
-  passGate('OBSERVE_BEFORE_TAKEOVER', `held observation for ${options.observeSeconds}s`, {
-    samples: observations.observe_before_takeover.length,
-  });
-
-  const takeoverSnapshotStart = serializedSnapshots.length;
-  const takeoverRejectionStart = rejections.length;
-  await pressAxButton(appChild.pid, '接管', 'AX_TAKEOVER');
-  const takeover = await waitForSnapshot(
-    'TAKEOVER',
-    takeoverSnapshotStart,
-    takeoverRejectionStart,
-    snapshot => snapshot.connectionState === 'connected' && snapshot.controlMode === 'control' && snapshot.inputReady === true,
-    'controlMode=control with inputReady=true',
-  );
-  observations.takeover_snapshot = trimSnapshot(takeover);
-  observations.visible_content = takeover.layout?.visibleContent ?? takeover.visibleContent ?? null;
-  if (observations.visible_content !== 'native-video') {
-    failGate('NATIVE_VIDEO', `takeover snapshot did not report native-video content: ${observations.visible_content ?? 'missing'}`, {
-      snapshot: trimSnapshot(takeover),
+    await sleep(4000);
+    const attempts = countNativeCommands('connect');
+    observations.connect_attempts = attempts;
+    if (attempts !== 1) {
+      failGate('PERSISTED_NO_RETRY', `expected exactly one connect attempt, saw ${attempts}`, {
+        attempts,
+        held_seconds: 4,
+      });
+    }
+    passGate('PERSISTED_NO_RETRY', 'the failed launch connected once and did not retry', {
+      attempts,
+      held_seconds: 4,
     });
-  }
-  passGate('TAKEOVER', 'controlMode=control, inputReady=true', {
-    controlMode: takeover.controlMode,
-    inputReady: takeover.inputReady,
-    visibleContent: observations.visible_content,
-  });
-  passGate('NATIVE_VIDEO', 'visibleContent=native-video', {layout: takeover.layout ?? null});
-
-  const releaseSnapshotStart = serializedSnapshots.length;
-  const releaseRejectionStart = rejections.length;
-  await pressAxButton(appChild.pid, '返回观察', 'AX_RELEASE');
-  const released = await waitForSnapshot(
-    'RELEASE',
-    releaseSnapshotStart,
-    releaseRejectionStart,
-    snapshot => snapshot.connectionState === 'connected' && snapshot.controlMode === 'observe',
-    'controlMode=observe after returning observation',
-  );
-  observations.release_snapshot = trimSnapshot(released);
-  passGate('RELEASE', 'controlMode=observe', {controlMode: released.controlMode});
-
-  const observeAfterStart = serializedSnapshots.length;
-  observations.observe_after_release = await observeFor(options.observeSeconds, observeAfterStart, 'OBSERVE_AFTER_RELEASE');
-  passGate('OBSERVE_AFTER_RELEASE', `held observation for ${options.observeSeconds}s`, {
-    samples: observations.observe_after_release.length,
-  });
-
-  await sleep(500);
-  const afterRaw = await fixtureCommand('inspect', 'FIXTURE_INSPECT_AFTER');
-  const after = findInspectSnapshot(afterRaw);
-  if (!after) {
-    failGate('FIXTURE_INSPECT_AFTER', `fixture inspect did not contain clicked/text/scrollY/maxScroll: ${JSON.stringify(afterRaw)}`, {
-      fixture_inspect: afterRaw,
+    await finishRun('PASS_AUTOMATED persisted pairing failure path');
+  } else {
+    const connected = await waitForSnapshot(
+      'CONNECT',
+      connectSnapshotStart,
+      connectRejectionStart,
+      snapshot => snapshot.connectionState === 'connected' && Number(snapshot.renderedFrames) > 0,
+      'connectionState=connected with renderedFrames>0',
+    );
+    observations.connect_snapshot = trimSnapshot(connected);
+    if (connected.sessionId !== observations.fixture_info.session) {
+      failGate('SESSION_IDENTITY', `app session ${connected.sessionId ?? 'missing'} does not match fixture session ${observations.fixture_info.session}`, {
+        app_snapshot: trimSnapshot(connected),
+        fixture_session: observations.fixture_info.session,
+      });
+    }
+    passGate('CONNECT', `connected with renderedFrames=${connected.renderedFrames}`, {
+      session: connected.sessionId,
+      renderedFrames: connected.renderedFrames,
     });
-  }
-  observations.after_inspect = after;
-  const changedFields = ['clicked', 'text', 'scrollY', 'maxScroll', 'scrollTrace', 'editorEvents']
-    .filter(field => !isDeepStrictEqual(after[field], baseline[field]));
-  if (changedFields.length) {
-    failGate('OBSERVATION_UNCHANGED', `Host page changed during observe/takeover/release: ${changedFields.join(', ')}`, {
+
+    const observeStart = serializedSnapshots.length;
+    observations.observe_before_takeover = await observeFor(options.observeSeconds, observeStart, 'OBSERVE_BEFORE_TAKEOVER');
+    passGate('OBSERVE_BEFORE_TAKEOVER', `held observation for ${options.observeSeconds}s`, {
+      samples: observations.observe_before_takeover.length,
+    });
+
+    const takeoverSnapshotStart = serializedSnapshots.length;
+    const takeoverRejectionStart = rejections.length;
+    await pressAxButton(appChild.pid, '接管', 'AX_TAKEOVER');
+    const takeover = await waitForSnapshot(
+      'TAKEOVER',
+      takeoverSnapshotStart,
+      takeoverRejectionStart,
+      snapshot => snapshot.connectionState === 'connected' && snapshot.controlMode === 'control' && snapshot.inputReady === true,
+      'controlMode=control with inputReady=true',
+    );
+    observations.takeover_snapshot = trimSnapshot(takeover);
+    observations.visible_content = takeover.layout?.visibleContent ?? takeover.visibleContent ?? null;
+    if (observations.visible_content !== 'native-video') {
+      failGate('NATIVE_VIDEO', `takeover snapshot did not report native-video content: ${observations.visible_content ?? 'missing'}`, {
+        snapshot: trimSnapshot(takeover),
+      });
+    }
+    passGate('TAKEOVER', 'controlMode=control, inputReady=true', {
+      controlMode: takeover.controlMode,
+      inputReady: takeover.inputReady,
+      visibleContent: observations.visible_content,
+    });
+    passGate('NATIVE_VIDEO', 'visibleContent=native-video', {layout: takeover.layout ?? null});
+
+    const releaseSnapshotStart = serializedSnapshots.length;
+    const releaseRejectionStart = rejections.length;
+    await pressAxButton(appChild.pid, '返回观察', 'AX_RELEASE');
+    const released = await waitForSnapshot(
+      'RELEASE',
+      releaseSnapshotStart,
+      releaseRejectionStart,
+      snapshot => snapshot.connectionState === 'connected' && snapshot.controlMode === 'observe',
+      'controlMode=observe after returning observation',
+    );
+    observations.release_snapshot = trimSnapshot(released);
+    passGate('RELEASE', 'controlMode=observe', {controlMode: released.controlMode});
+
+    const observeAfterStart = serializedSnapshots.length;
+    observations.observe_after_release = await observeFor(options.observeSeconds, observeAfterStart, 'OBSERVE_AFTER_RELEASE');
+    passGate('OBSERVE_AFTER_RELEASE', `held observation for ${options.observeSeconds}s`, {
+      samples: observations.observe_after_release.length,
+    });
+
+    await sleep(500);
+    const afterRaw = await fixtureCommand('inspect', 'FIXTURE_INSPECT_AFTER');
+    const after = findInspectSnapshot(afterRaw);
+    if (!after) {
+      failGate('FIXTURE_INSPECT_AFTER', `fixture inspect did not contain clicked/text/scrollY/maxScroll: ${JSON.stringify(afterRaw)}`, {
+        fixture_inspect: afterRaw,
+      });
+    }
+    observations.after_inspect = after;
+    const changedFields = ['clicked', 'text', 'scrollY', 'maxScroll', 'scrollTrace', 'editorEvents']
+      .filter(field => !isDeepStrictEqual(after[field], baseline[field]));
+    if (changedFields.length) {
+      failGate('OBSERVATION_UNCHANGED', `Host page changed during observe/takeover/release: ${changedFields.join(', ')}`, {
+        baseline,
+        after,
+        changed_fields: changedFields,
+      });
+    }
+    passGate('OBSERVATION_UNCHANGED', 'fixture inspect matches the pre-connect baseline after release', {
       baseline,
       after,
-      changed_fields: changedFields,
     });
-  }
-  passGate('OBSERVATION_UNCHANGED', 'fixture inspect matches the pre-connect baseline after release', {
-    baseline,
-    after,
-  });
 
-  const cleanupReceipt = await cleanup();
-  receiptPath = writeReceipt(cleanupReceipt, cleanupFailed ? 'FAIL' : 'PASS_AUTOMATED');
-  if (cleanupFailed) {
-    process.stderr.write('FAIL CLEANUP: one or more child resources did not close cleanly\n');
-    process.stderr.write(`receipt: ${receiptPath}\n`);
-    process.exitCode = 1;
-  } else {
-    process.stdout.write('PASS_AUTOMATED connect/frame/takeover/release/inspect\n');
-    process.stdout.write(`receipt: ${receiptPath}\n`);
-    process.stdout.write('manual: native click/text/scroll/IME PENDING_HUMAN\n');
-    process.exitCode = 0;
+    if (options.persistedPairing) {
+      // The once-only auto-connect must not turn into a reconnect loop. A human
+      // disconnect has to stay disconnected with no further connect command.
+      const disconnectStart = serializedSnapshots.length;
+      const disconnectRejectionStart = rejections.length;
+      await pressAxButton(appChild.pid, '断开', 'AX_DISCONNECT');
+      await waitForSnapshot(
+        'PERSISTED_DISCONNECT',
+        disconnectStart,
+        disconnectRejectionStart,
+        snapshot => snapshot.connectionState === 'stopped' || snapshot.connectionState === 'idle',
+        'connectionState=stopped after a human disconnect',
+      );
+      await sleep(3000);
+      const attempts = countNativeCommands('connect');
+      observations.connect_attempts = attempts;
+      const latestState = serializedSnapshots.at(-1)?.connectionState ?? null;
+      if (attempts !== 1) {
+        failGate('PERSISTED_NO_RECONNECT', `the app issued ${attempts} connect commands; a human disconnect must not reconnect`, {
+          attempts,
+        });
+      }
+      if (latestState === 'connected' || latestState === 'connecting') {
+        failGate('PERSISTED_NO_RECONNECT', `the app reconnected after a human disconnect: ${latestState}`, {
+          connection_state: latestState,
+          latest_snapshot: trimSnapshot(serializedSnapshots.at(-1) ?? {}),
+        });
+      }
+      passGate('PERSISTED_NO_RECONNECT', 'a human disconnect stayed disconnected', {
+        attempts,
+        held_seconds: 3,
+        connection_state: latestState,
+      });
+    }
+
+    await finishRun('PASS_AUTOMATED connect/frame/takeover/release/inspect');
   }
 } catch (error) {
   failure = {
