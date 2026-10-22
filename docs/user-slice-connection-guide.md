@@ -1,23 +1,52 @@
 # AgentBrowser 用户切片连接指南
 
-本文说明当前的普通连接步骤。范围只覆盖已交付的用户切片。完整 M1 仍未交付。
+本文说明当前的普通连接步骤。当前有两条客户端主线：Mac 本地连接/接管路径和
+Android 导入/浏览路径。范围只覆盖已交付的用户切片，完整 M1 仍未交付。
+
+## Mac 主线当前状态
+
+2026-10-21 编排者在独占 worktree 上用隔离 fixture Host 和构建后的
+`AgentBrowserMac.app` 实测了真实入口：`打开菜单` → `连接` 进入
+`connectionState=connected` 和 `renderedFrames>0`；`接管` 后
+`controlMode=control`、`inputReady=true`、`visibleContent=native-video`；
+然后 `返回观察`。连接入口本身没有缺陷。新增自动入口把 `返回观察` 后 fixture
+`inspect` 与连接前基线一致作为 fail-loud gate；该 gate 已在本机运行并通过
+（`PASS_AUTOMATED`），换环境需重新运行。
+
+这还不是完整 P5/P6 或 M1 通过。原生点击、键盘、滚动和中文 IME 仍需人工
+验证；自动脚本把这些步骤写入回执的 `manual` 段，状态为 `PENDING_HUMAN`。
+
+自动入口需要图形会话和 Accessibility 权限：
+
+```sh
+export OBSCURA_SRC=/absolute/path/to/obscura
+export OBSCURA_PROTOCOL_ROOT="$OBSCURA_SRC/protocol/browser"
+export OBSCURA_BIN_DIR="$OBSCURA_SRC/target/release"
+node scripts/mac-user-acceptance.mjs
+```
+
+回执在 `evidence/mac-user-acceptance/<run>/receipt.json`。自动化通过时
+`result` 是 `PASS_AUTOMATED`，不是完整用户路径 PASS。完整人工步骤见
+[docs/macos-client.md](macos-client.md)。
 
 ## 已交付的产物
 
 | 产物 | 位置 | 身份 |
 | --- | --- | --- |
-| Android APK | `/Volumes/Intel/playground/agentbrowser/m1-android-navigation-fix-r1-20261009/apps/android/app/build/outputs/apk/debug/app-debug.apk`（本集成 worktree 不含 APK） | 包名 `com.agentbrowser.probe`，versionCode `2`，versionName `0.2.0-probe`，SHA-256 `8eceb55e404791484451499aac38cce70a2d6fcdd2aa2d1ed72f872a7d63cb45` |
-| Mac 应用 | `apps/macos/build/AgentBrowserMac.app` | 可执行文件 SHA-256 `053adf8ad875a384605181dac38217dc30c2bb4e371af6d7448cae57209cd00c` |
+| Android APK | 历史构建结果；旧 worktree 路径已失效，本 worktree 不含 APK | 包名 `com.agentbrowser.probe`，versionCode `2`，versionName `0.2.0-probe`；按 `docs/android-probe.md` 重新构建 |
+| Mac 应用 | `apps/macos/build/AgentBrowserMac.app` | 由 `scripts/build-macos.sh build` 生成；不固定 SHA |
 | Mac ZIP | `generated/modules/macos-shell/lib/AgentBrowserMac.app.zip` | 由 `scripts/build-macos.sh` 生成 |
 | Host 服务 | `scripts/host-service/host-service` | 协议版本 `11`，由本项目生命周期入口启动 |
 
-## 第一步：安装 Android 应用
+## 第一步：构建并安装 Android 应用
 
 ```sh
+bash scripts/android.sh assembleDebug
 adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-升级安装保持签名不变，因此可以覆盖旧版本。
+升级安装保持签名不变，因此可以覆盖旧版本。旧 worktree 的 APK 路径和 SHA 只是
+历史结果，不能当作当前 worktree 的产物。
 
 ## 第二步：安装并启动 Host 服务
 
@@ -84,10 +113,12 @@ scripts/host-service/host-service trust export --root "$ROOT" \
 - Host 范围：配对与准入在服务生命周期 Host 上验证；本地浏览在 fixture 启动的同一 r8 Host 上验证。
 - 独立 DOM 回读：服务生命周期 Host 不提供独立 DOM 回读通道。Tailscale 浏览中的点击由 Host 应用的画面重绘证明，不由独立 DOM 读取证明。
 - 稳定性：`testRealNetworkControlAndFrames` 在本环境中出现过两次与断言无关的失败后通过。浏览门禁当前不稳定。
+- Mac 原生输入：Mac 客户端已通过连接、真实画面、接管和返回观察；原生点击、键盘、滚动和中文 IME 仍需人工验证，自动回执只标记 `PENDING_HUMAN`。
 
-## 已通过的浏览范围
+## 已通过的 Android 浏览范围（历史结果）
 
 在 fixture 启动的 r8 Host 上，远端视频、真实点击、拖动滚动和观察/接管均已通过。
+以下点击和滚动证据来自 Android 客户端，不是 Mac 原生输入。
 
 - 远端视频：`frameAck.renderedFrames=3`，`displayed=true`。
 - 真实点击：独立 Host DOM 记录 `clicked=1`。
@@ -115,4 +146,4 @@ scripts/host-service/host-service trust export --root "$ROOT" \
 
 ## 完整 M1 状态
 
-完整 M1 未交付。仍未完成的验收包括：BB01–BB14 全量、真实 HTTPS 登录与配置文件重启、弱网与画质行为、本地/LAN/Tailscale/Relay 矩阵、核心回归、最新 main 端到端、独立评审、双仓库远端交付、版本包与 OTA、基线与项目记忆、资源清理。
+完整 M1 未交付。仍未完成的验收包括：BB01–BB14 全量、真实 HTTPS 登录与配置文件重启、弱网与画质行为、本地/LAN/Tailscale/Relay 矩阵、核心回归、最新 main 端到端、独立评审、双仓库远端交付、版本包与 OTA、基线与项目记忆、资源清理。Mac 原生点击、键盘、滚动和中文 IME 也仍需人工验证。
