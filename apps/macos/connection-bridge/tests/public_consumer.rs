@@ -16,18 +16,24 @@
 use std::{
     io::{Read, Write},
     os::unix::net::UnixListener,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 struct Bridge {
     child: std::process::Child,
     next_id: u64,
+    home: PathBuf,
+    cleanup_home: bool,
 }
 
 impl Bridge {
     fn start() -> Self {
-        Self::start_with(|command| {
+        // Every test owns a private HOME so the developer's real persistent
+        // pairing store never influences a test result.
+        let home = unique_path("home");
+        std::fs::create_dir_all(&home).expect("create isolated home");
+        Self::start_with_home(&home, |command| {
             // A real authority path is never inherited by accident; the
             // availability tests below set it explicitly.
             command.env_remove("AGENTBROWSER_MAC_ADMIN_SOCKET");
@@ -35,14 +41,33 @@ impl Bridge {
     }
 
     fn start_with(configure: impl FnOnce(&mut Command)) -> Self {
+        let home = unique_path("home");
+        std::fs::create_dir_all(&home).expect("create isolated home");
+        Self::start_with_home(&home, configure)
+    }
+
+    /// Owns `home` on drop. A test that must survive the bridge process keeps
+    /// the directory with `keep_home` so its own assertions can read it.
+    fn start_with_home(home: &Path, configure: impl FnOnce(&mut Command)) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_agentbrowser-macos-bridge"));
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            .env("HOME", home)
+            .env_remove("AGENTBROWSER_MAC_PAIRING");
         configure(&mut command);
         let child = command.spawn().expect("spawn bridge");
-        Self { child, next_id: 0 }
+        Self {
+            child,
+            next_id: 0,
+            home: home.to_path_buf(),
+            cleanup_home: true,
+        }
+    }
+
+    fn keep_home(&mut self) {
+        self.cleanup_home = false;
     }
 
     fn request(&mut self, command: &str) -> String {
@@ -74,6 +99,9 @@ impl Drop for Bridge {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
         let _ = self.child.wait();
+        if self.cleanup_home {
+            let _ = std::fs::remove_dir_all(&self.home);
+        }
     }
 }
 
@@ -234,6 +262,8 @@ fn connection_setup_projection_matches_the_frozen_client_contract() {
 
     let pairing = unique_path("connection-setup");
     std::fs::create_dir_all(&pairing).expect("create pairing dir");
+    std::fs::write(pairing.join("endpoint.txt"), "127.0.0.1:50123").expect("write endpoint");
+    std::fs::write(pairing.join("token"), "fixture-token").expect("write token");
     let mut paired = Bridge::start_with(|command| {
         command.env("AGENTBROWSER_MAC_PAIRING", &pairing);
     });
@@ -288,4 +318,212 @@ fn provisioning_available_requires_connectable_authority() {
     assert_eq!(snapshot["provisioningAvailable"], serde_json::json!(true));
     drop(listener);
     let _ = std::fs::remove_file(&path);
+}
+
+fn home_store(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("AgentBrowser")
+        .join("mac-pairing")
+}
+
+fn write_bundle(home: &Path, name: &str, value: &serde_json::Value) -> PathBuf {
+    let path = home.join(name);
+    std::fs::write(&path, serde_json::to_vec(value).expect("bundle json")).expect("write bundle");
+    path
+}
+
+fn status_snapshot(bridge: &mut Bridge) -> serde_json::Value {
+    let value = bridge.request("{\"op\":\"status\"}");
+    serde_json::from_str(&value).expect("snapshot json")
+}
+
+#[test]
+fn import_persists_pairing_for_a_later_launch_without_arguments() {
+    let home = unique_path("persist-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let bundle = write_bundle(
+        &home,
+        "pairing.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50999", "token": "persisted-token"}),
+    );
+    {
+        let mut bridge = Bridge::start_with_home(&home, |_| {});
+        assert_eq!(
+            status_snapshot(&mut bridge)["connectionSetup"]["state"],
+            "unconfigured"
+        );
+        let command = serde_json::json!({"op": "import_connection", "path": bundle.to_string_lossy()});
+        let value = bridge.request(&command.to_string());
+        assert_eq!(rejection(&value), None, "import must succeed: {value}");
+        assert!(
+            !value.contains("persisted-token"),
+            "the import response must never carry the token"
+        );
+        let snapshot = status_snapshot(&mut bridge);
+        assert_eq!(snapshot["connectionSetup"]["state"], "configured");
+        assert_eq!(snapshot["networkConfigured"], serde_json::json!(true));
+        // The store is asserted after this bridge exits, so keep its HOME.
+        bridge.keep_home();
+    }
+
+    let store = home_store(&home);
+    assert_eq!(
+        std::fs::read_to_string(store.join("endpoint.txt")).expect("endpoint"),
+        "127.0.0.1:50999"
+    );
+    let mode = |path: &Path| {
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path).expect("metadata").permissions())
+            & 0o777
+    };
+    assert_eq!(mode(&store), 0o700, "store directory must be private");
+    assert_eq!(mode(&store.join("endpoint.txt")), 0o600);
+    assert_eq!(
+        mode(&store.join("token")),
+        0o600,
+        "the token file must be private"
+    );
+
+    // A second process with the same HOME and no pairing argument is the
+    // ordinary "user double-clicks the app later" case.
+    let mut relaunched = Bridge::start_with_home(&home, |_| {});
+    let snapshot = status_snapshot(&mut relaunched);
+    assert_eq!(
+        snapshot["connectionSetup"]["state"], "configured",
+        "a later launch must find the persisted pairing without any argument"
+    );
+    let value = relaunched.request("{\"op\":\"connect\"}");
+    assert!(
+        !value.contains("PAIRING_"),
+        "a persisted pairing must reach the network boundary instead of a pairing error: {value}"
+    );
+    let snapshot: serde_json::Value = serde_json::from_str(&value).expect("connect snapshot");
+    assert_eq!(snapshot["connectionState"], "connecting");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn import_rejections_are_typed_and_keep_the_store() {
+    let home = unique_path("reject-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let good = write_bundle(
+        &home,
+        "good.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50999", "token": "kept-token"}),
+    );
+    let mut bridge = Bridge::start_with_home(&home, |_| {});
+    let command = serde_json::json!({"op": "import_connection", "path": good.to_string_lossy()});
+    assert_eq!(rejection(&bridge.request(&command.to_string())), None);
+
+    let missing = write_bundle(
+        &home,
+        "missing.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50999"}),
+    );
+    let command = serde_json::json!({"op": "import_connection", "path": missing.to_string_lossy()});
+    assert_eq!(
+        rejection(&bridge.request(&command.to_string())),
+        Some("BUNDLE_INVALID".to_owned())
+    );
+
+    let absent = home.join("absent.abconnection");
+    let command = serde_json::json!({"op": "import_connection", "path": absent.to_string_lossy()});
+    assert_eq!(
+        rejection(&bridge.request(&command.to_string())),
+        Some("BUNDLE_READ_FAILED".to_owned())
+    );
+
+    let relative = serde_json::json!({"op": "import_connection", "path": "pairing.abconnection"});
+    assert_eq!(
+        rejection(&bridge.request(&relative.to_string())),
+        Some("BUNDLE_READ_FAILED".to_owned())
+    );
+
+    let unknown = serde_json::json!({"op": "import_connection", "path": good.to_string_lossy(), "extra": 1});
+    assert_eq!(
+        rejection(&bridge.request(&unknown.to_string())),
+        Some("UNKNOWN_COMMAND_FIELD".to_owned())
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(home_store(&home).join("token")).expect("token"),
+        "kept-token",
+        "a rejected import must not replace the working store"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn duplicate_command_keys_are_rejected_before_any_import() {
+    let home = unique_path("duplicate-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let bundle = write_bundle(
+        &home,
+        "duplicate.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50998", "token": "duplicate-token"}),
+    );
+    let mut bridge = Bridge::start_with_home(&home, |_| {});
+    // The page can send two `op` keys. Swift keeps the first and this process
+    // would keep the last, so the raw text must be refused as ambiguous
+    // instead of letting the hidden import win.
+    let ambiguous = format!(
+        "{{\"op\":\"status\",\"op\":\"import_connection\",\"path\":{}}}",
+        serde_json::Value::String(bundle.to_string_lossy().into_owned())
+    );
+    assert_eq!(
+        rejection(&bridge.request(&ambiguous)),
+        Some("DUPLICATE_COMMAND_FIELD:op".to_owned())
+    );
+    assert!(
+        !home_store(&home).join("token").exists(),
+        "a duplicate-key command must not write the pairing store"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn stale_pairing_temps_are_removed_by_the_next_import() {
+    let home = unique_path("temp-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let store = home_store(&home);
+    std::fs::create_dir_all(&store).expect("create store");
+    let stale = store.join(".token.tmp-1-2-3");
+    std::fs::write(&stale, "leftover").expect("write stale temp");
+    let bundle = write_bundle(
+        &home,
+        "clean.abconnection",
+        &serde_json::json!({"endpoint": "127.0.0.1:50997", "token": "clean-token"}),
+    );
+    let mut bridge = Bridge::start_with_home(&home, |_| {});
+    let command = serde_json::json!({"op": "import_connection", "path": bundle.to_string_lossy()});
+    assert_eq!(rejection(&bridge.request(&command.to_string())), None);
+    assert!(
+        !stale.exists(),
+        "a stale temp file must not survive the next import"
+    );
+    assert_eq!(
+        std::fs::read_to_string(store.join("token")).expect("token"),
+        "clean-token"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn explicit_pairing_override_wins_over_the_home_store() {
+    let home = unique_path("override-home");
+    std::fs::create_dir_all(&home).expect("create home");
+    let override_dir = unique_path("override-dir");
+    std::fs::create_dir_all(&override_dir).expect("create override");
+    std::fs::write(override_dir.join("endpoint.txt"), "127.0.0.1:1234").expect("endpoint");
+    std::fs::write(override_dir.join("token"), "override-token").expect("token");
+    let mut bridge = Bridge::start_with_home(&home, |command| {
+        command.env("AGENTBROWSER_MAC_PAIRING", &override_dir);
+    });
+    assert_eq!(status_snapshot(&mut bridge)["connectionSetup"]["state"], "configured");
+    assert!(
+        !home_store(&home).exists(),
+        "the override must not touch the home store"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&override_dir);
 }

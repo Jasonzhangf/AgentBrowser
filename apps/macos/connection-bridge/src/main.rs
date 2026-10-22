@@ -5,11 +5,19 @@
 //! Browser ABI, TLS and Host control remain owned by client-connection/Obscura.
 
 use std::{
-    io::{self, BufRead, BufReader, BufWriter, Write},
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
+    io::{self, BufRead, BufReader, BufWriter, Read, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
-    sync::{mpsc as std_mpsc, Arc},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc as std_mpsc,
+        Arc,
+    },
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use agentbrowser_connection::{
@@ -28,6 +36,8 @@ use tokio::{
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PAIRING_BUNDLE_BYTES: u64 = 8192;
+const MAX_PAIRING_FIELD_BYTES: usize = 4096;
 
 struct BridgeRequest {
     id: u64,
@@ -116,7 +126,6 @@ struct AppState {
     generation: u64,
     lifecycle: Lifecycle,
     error: Option<String>,
-    pairing_available: bool,
     provisioning_available: bool,
 }
 
@@ -128,7 +137,6 @@ impl AppState {
             generation: 0,
             lifecycle: Lifecycle::Idle,
             error: None,
-            pairing_available: pairing_dir().is_some_and(|path| path.is_dir()),
             provisioning_available: admin_socket_available(),
         }
     }
@@ -480,6 +488,58 @@ fn offer_frame(
     Ok(())
 }
 
+struct StrictCommandObject(serde_json::Map<String, serde_json::Value>);
+
+impl<'de> serde::Deserialize<'de> for StrictCommandObject {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = serde_json::Map<String, serde_json::Value>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON command object without duplicate keys")
+            }
+
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut object = serde_json::Map::new();
+                while let Some((key, value)) = access.next_entry::<String, serde_json::Value>()? {
+                    if object.insert(key.clone(), value).is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "DUPLICATE_COMMAND_FIELD:{key}"
+                        )));
+                    }
+                }
+                Ok(object)
+            }
+        }
+
+        deserializer.deserialize_map(Visitor).map(StrictCommandObject)
+    }
+}
+
+fn parse_command_object(raw: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let parsed = serde_json::from_str::<StrictCommandObject>(raw).map_err(|error| {
+        // serde_json appends its own line and column to a custom message; the
+        // rejection code must stay one stable token.
+        let message = error.to_string();
+        match message.strip_prefix("DUPLICATE_COMMAND_FIELD:") {
+            Some(rest) => {
+                let field = rest.split(" at line").next().unwrap_or(rest);
+                format!("DUPLICATE_COMMAND_FIELD:{field}")
+            }
+            None => "INVALID_COMMAND_JSON".to_string(),
+        }
+    })?;
+    Ok(parsed.0)
+}
+
 async fn dispatch(
     app: &mut AppState,
     raw: &str,
@@ -489,9 +549,13 @@ async fn dispatch(
     if raw.len() > MAX_COMMAND_BYTES {
         return Err("COMMAND_SIZE".into());
     }
-    let value = serde_json::from_str::<serde_json::Value>(raw)
-        .map_err(|_| "INVALID_COMMAND_JSON".to_string())?;
-    let object = value.as_object().ok_or("COMMAND_OBJECT_REQUIRED")?;
+    // The WebView and this process must agree on what `op` means. A duplicate
+    // top-level key makes them disagree: JSONSerialization keeps the first
+    // value while serde keeps the last, so a page could hide `import_connection`
+    // behind a first `status` key and still reach the file import. Rejecting
+    // duplicates keeps one meaning per command.
+    let object = parse_command_object(raw)?;
+    let object = &object;
     let op = object
         .get("op")
         .and_then(serde_json::Value::as_str)
@@ -506,6 +570,27 @@ async fn dispatch(
             fields(object, &["op"], &["op"])?;
             app.provisioning_available = admin_socket_available();
             refresh_status(app).await;
+            Ok(snapshot(app))
+        }
+        "import_connection" => {
+            fields(object, &["op", "path"], &["op", "path"])?;
+            let path = object
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or("BUNDLE_PATH_INVALID")?;
+            let root = pairing_dir().ok_or("PAIRING_STORE_UNAVAILABLE".to_string())?;
+            import_connection_into(&root, Path::new(path))?;
+            // A stale pairing failure must not survive a successful import. Other
+            // failures keep their own truth and are never cleared here.
+            if app
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("PAIRING_"))
+            {
+                app.lifecycle = Lifecycle::Idle;
+                app.error = None;
+            }
             Ok(snapshot(app))
         }
         "connect" => {
@@ -1080,6 +1165,7 @@ fn command_failure(app: &mut AppState, error: Failure) -> String {
 }
 
 fn snapshot(app: &AppState) -> String {
+    let configured = pairing_available();
     let (
         state,
         connection_state,
@@ -1202,25 +1288,25 @@ fn snapshot(app: &AppState) -> String {
         "connectionState": connection_state,
         "controlMode": control_mode,
         "pending": pending,
-        "transport": if app.pairing_available { "wss" } else { "unknown" },
-        "path": if app.pairing_available { "direct" } else { "unknown" },
+        "transport": if configured { "wss" } else { "unknown" },
+        "path": if configured { "direct" } else { "unknown" },
         "connectionSetup": {
             // Frozen projection, `docs/m1/connection-minimum.md` §7.6: exactly
             // `state`, `error`, `label`, with `state` in {configured, unconfigured}.
             // The client-domain consumer rejects any other key or state, so this
             // snapshot must not grow fields.
-            "state": if app.pairing_available { "configured" } else { "unconfigured" },
+            "state": if configured { "configured" } else { "unconfigured" },
             "error": null,
-            "label": if app.pairing_available { Some("Local pairing") } else { None }
+            "label": if configured { Some("Local pairing") } else { None }
         },
         "capabilities": {
-            "navigation": app.pairing_available,
-            "tabs": app.pairing_available,
-            "profiles": app.pairing_available,
+            "navigation": configured,
+            "tabs": configured,
+            "profiles": configured,
             "connectionSetup": true,
-            "quality": app.pairing_available
+            "quality": configured
         },
-        "networkConfigured": app.pairing_available,
+        "networkConfigured": configured,
         "provisioningAvailable": app.provisioning_available,
         "inputReady": input_ready,
         "epoch": epoch,
@@ -1485,7 +1571,166 @@ fn account_snapshot(state: &str, error: Option<&str>) -> String {
 }
 
 fn pairing_dir() -> Option<PathBuf> {
-    std::env::var_os("AGENTBROWSER_MAC_PAIRING").map(PathBuf::from)
+    resolve_pairing_dir(
+        std::env::var_os("HOME"),
+        std::env::var_os("AGENTBROWSER_MAC_PAIRING"),
+    )
+}
+
+fn resolve_pairing_dir(home: Option<OsString>, override_dir: Option<OsString>) -> Option<PathBuf> {
+    if let Some(path) = override_dir.filter(|path| !path.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
+    let home = home.filter(|path| !path.is_empty())?;
+    Some(
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("AgentBrowser")
+            .join("mac-pairing"),
+    )
+}
+
+fn pairing_available() -> bool {
+    pairing_dir().is_some_and(|root| pairing_files_present(&root))
+}
+
+fn pairing_files_present(root: &Path) -> bool {
+    ["endpoint.txt", "token"]
+        .iter()
+        .all(|name| fs::metadata(root.join(name)).is_ok_and(|metadata| metadata.is_file()))
+}
+
+/// Read one `.abconnection` bundle and replace the pairing store files.
+/// The caller owns the store boundary and this function never echoes bundle
+/// contents. A failure before the first rename keeps the previous store; the
+/// two renames are not one atomic step, so a failure between them or a crash
+/// can leave the new `endpoint.txt` beside the old `token`. Temporary files are
+/// removed on failure, and the next import clears any stale ones.
+fn import_connection_into(root: &Path, bundle_path: &Path) -> Result<(), String> {
+    let bytes = read_bundle(bundle_path)?;
+    let (endpoint, token) = parse_bundle(&bytes)?;
+    store_pairing(root, &endpoint, &token)
+}
+
+fn read_bundle(path: &Path) -> Result<Vec<u8>, String> {
+    if !path.is_absolute() {
+        return Err("BUNDLE_READ_FAILED".into());
+    }
+    let metadata = fs::metadata(path).map_err(|_| "BUNDLE_READ_FAILED".to_string())?;
+    if !metadata.is_file() {
+        return Err("BUNDLE_READ_FAILED".into());
+    }
+    if metadata.len() > MAX_PAIRING_BUNDLE_BYTES {
+        return Err("BUNDLE_TOO_LARGE".into());
+    }
+    let file = File::open(path).map_err(|_| "BUNDLE_READ_FAILED".to_string())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_PAIRING_BUNDLE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "BUNDLE_READ_FAILED".to_string())?;
+    if bytes.len() as u64 > MAX_PAIRING_BUNDLE_BYTES {
+        return Err("BUNDLE_TOO_LARGE".into());
+    }
+    Ok(bytes)
+}
+
+fn parse_bundle(bytes: &[u8]) -> Result<(String, String), String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| "BUNDLE_INVALID".to_string())?;
+    let object = value.as_object().ok_or("BUNDLE_INVALID".to_string())?;
+    let endpoint = bundle_field(object, "endpoint")?;
+    let token = bundle_field(object, "token")?;
+    Ok((endpoint.to_owned(), token.to_owned()))
+}
+
+fn bundle_field<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty() && value.len() <= MAX_PAIRING_FIELD_BYTES)
+        .ok_or_else(|| "BUNDLE_INVALID".to_string())
+}
+
+fn store_pairing(root: &Path, endpoint: &str, token: &str) -> Result<(), String> {
+    if root.exists() && !root.is_dir() {
+        return Err("PAIRING_STORE_UNAVAILABLE".into());
+    }
+    fs::create_dir_all(root).map_err(|_| "PAIRING_STORE_UNAVAILABLE".to_string())?;
+    fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+        .map_err(|_| "PAIRING_STORE_UNAVAILABLE".to_string())?;
+
+    // A crashed import can leave a private temp file behind. Removing stale
+    // temps keeps the store directory clean; each one is mode 0600 and never
+    // became the real pairing file.
+    remove_stale_pairing_temps(root);
+    let nonce = temp_nonce();
+    let endpoint_temp = root.join(format!(".endpoint.txt.tmp-{nonce}"));
+    let token_temp = root.join(format!(".token.tmp-{nonce}"));
+    let result = write_pairing_files(
+        root,
+        endpoint,
+        token,
+        &endpoint_temp,
+        &token_temp,
+    );
+    if result.is_err() {
+        let _ = fs::remove_file(&endpoint_temp);
+        let _ = fs::remove_file(&token_temp);
+        return Err("PAIRING_WRITE_FAILED".into());
+    }
+    Ok(())
+}
+
+fn remove_stale_pairing_temps(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(".endpoint.txt.tmp-") || name.starts_with(".token.tmp-") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn write_pairing_files(
+    root: &Path,
+    endpoint: &str,
+    token: &str,
+    endpoint_temp: &Path,
+    token_temp: &Path,
+) -> io::Result<()> {
+    write_private_file(endpoint_temp, endpoint.as_bytes())?;
+    write_private_file(token_temp, token.as_bytes())?;
+    fs::rename(endpoint_temp, root.join("endpoint.txt"))?;
+    fs::rename(token_temp, root.join("token"))?;
+    Ok(())
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+fn temp_nonce() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos:x}-{count}", std::process::id())
 }
 
 /// Real declared local-authority probe for the new local-provisioning
@@ -1755,5 +2000,171 @@ mod tests {
             assert_eq!(snapshot["pending"], false);
             assert_eq!(snapshot["hosts"], serde_json::json!([]));
         }
+    }
+
+    fn pairing_test_root(tag: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "agentbrowser-bridge-pairing-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("create test root");
+        path
+    }
+
+    fn write_bundle(root: &Path, name: &str, value: &serde_json::Value) -> PathBuf {
+        let path = root.join(name);
+        fs::write(&path, serde_json::to_vec(value).expect("bundle json")).expect("write bundle");
+        path
+    }
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[test]
+    fn pairing_dir_resolution_prefers_override_then_home_store() {
+        assert_eq!(
+            resolve_pairing_dir(
+                Some(OsString::from("/Users/example")),
+                Some(OsString::from("/tmp/explicit"))
+            ),
+            Some(PathBuf::from("/tmp/explicit")),
+            "an explicit override must win"
+        );
+        assert_eq!(
+            resolve_pairing_dir(
+                Some(OsString::from("/Users/example")),
+                Some(OsString::new())
+            ),
+            Some(
+                PathBuf::from("/Users/example")
+                    .join("Library")
+                    .join("Application Support")
+                    .join("AgentBrowser")
+                    .join("mac-pairing")
+            ),
+            "an empty override must fall back to the home store"
+        );
+        assert_eq!(
+            resolve_pairing_dir(None, None),
+            None,
+            "without a home there is no implicit store"
+        );
+    }
+
+    #[test]
+    fn import_writes_private_pairing_files() {
+        let root = pairing_test_root("import");
+        let store = root.join("mac-pairing");
+        let bundle = write_bundle(
+            &root,
+            "pairing.abconnection",
+            &serde_json::json!({"endpoint": "127.0.0.1:50123", "token": "secret-token"}),
+        );
+        import_connection_into(&store, &bundle).expect("import");
+        assert_eq!(
+            fs::read_to_string(store.join("endpoint.txt")).expect("endpoint file"),
+            "127.0.0.1:50123"
+        );
+        assert_eq!(
+            fs::read_to_string(store.join("token")).expect("token file"),
+            "secret-token"
+        );
+        assert_eq!(mode(&store), 0o700, "store directory must be private");
+        assert_eq!(mode(&store.join("endpoint.txt")), 0o600);
+        assert_eq!(mode(&store.join("token")), 0o600);
+        assert!(pairing_files_present(&store));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn partial_store_is_not_configured() {
+        let root = pairing_test_root("partial");
+        fs::write(root.join("endpoint.txt"), "127.0.0.1:50123").expect("endpoint only");
+        assert!(
+            !pairing_files_present(&root),
+            "a store without its token must not report configured"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_rejects_invalid_bundle_and_keeps_previous_store() {
+        let root = pairing_test_root("invalid");
+        let store = root.join("mac-pairing");
+        let valid = write_bundle(
+            &root,
+            "valid.abconnection",
+            &serde_json::json!({"endpoint": "127.0.0.1:50123", "token": "first-token"}),
+        );
+        import_connection_into(&store, &valid).expect("import valid bundle");
+
+        let missing_token = write_bundle(
+            &root,
+            "missing-token.abconnection",
+            &serde_json::json!({"endpoint": "127.0.0.1:50124"}),
+        );
+        assert_eq!(
+            import_connection_into(&store, &missing_token),
+            Err("BUNDLE_INVALID".to_owned())
+        );
+
+        let broken = root.join("broken.abconnection");
+        fs::write(&broken, b"not json").expect("write broken bundle");
+        assert_eq!(
+            import_connection_into(&store, &broken),
+            Err("BUNDLE_INVALID".to_owned())
+        );
+
+        let relative = Path::new("pairing.abconnection");
+        assert_eq!(
+            import_connection_into(&store, relative),
+            Err("BUNDLE_READ_FAILED".to_owned())
+        );
+
+        let oversized = root.join("oversized.abconnection");
+        fs::write(&oversized, vec![b'x'; MAX_PAIRING_BUNDLE_BYTES as usize + 1])
+            .expect("write oversized bundle");
+        assert_eq!(
+            import_connection_into(&store, &oversized),
+            Err("BUNDLE_TOO_LARGE".to_owned())
+        );
+
+        assert_eq!(
+            fs::read_to_string(store.join("token")).expect("token file"),
+            "first-token",
+            "a rejected import must not replace the working store"
+        );
+        assert_eq!(
+            fs::read_to_string(store.join("endpoint.txt")).expect("endpoint file"),
+            "127.0.0.1:50123"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_leaves_no_temporary_files_behind() {
+        let root = pairing_test_root("temporary");
+        let store = root.join("mac-pairing");
+        let bundle = write_bundle(
+            &root,
+            "pairing.abconnection",
+            &serde_json::json!({"endpoint": "127.0.0.1:50123", "token": "secret-token"}),
+        );
+        import_connection_into(&store, &bundle).expect("import");
+        let names: Vec<String> = fs::read_dir(&store)
+            .expect("store dir")
+            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        let mut names = names;
+        names.sort();
+        assert_eq!(names, vec!["endpoint.txt".to_owned(), "token".to_owned()]);
+        let _ = fs::remove_dir_all(&root);
     }
 }

@@ -64,6 +64,13 @@ private struct Snapshot: Decodable {
     let provisioningAvailable: Bool?
     let transport: String?
     let path: String?
+    let connectionSetup: ConnectionSetup?
+}
+
+private struct ConnectionSetup: Decodable {
+    let state: String
+    let error: String?
+    let label: String?
 }
 
 
@@ -1947,11 +1954,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
     private var viewportTimer: Timer?
     private var webViewAboveVideo = true
     private var connectionStatusSurface: NSTextField!
+    private var pairingImportInFlight = false
+    private var hasAttemptedAutoConnect = false
+    // The one-time-configured store is the ordinary user case. An explicit
+    // `--pairing-dir` is a test/developer override and keeps manual control.
+    private var pairingOverrideProvided = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
         installMainMenu()
         let pairingDirectory = commandLineValue("--pairing-dir")
+        pairingOverrideProvided = pairingDirectory != nil
         let helperURL = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("AgentBrowserMacBridge")
         // The local-provisioning capability is projected from the service's own
         // typed `status` socket directory and a real `host-admin.sock` connect
@@ -2043,6 +2056,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
                 self?.connectionStatusSurface?.stringValue = "Connection: \(state) | Transport: \(transport) | Path: \(path)\(error)"
                 self?.provisioningMenuItem?.isEnabled = snapshot.provisioningAvailable ?? false
                 self?.videoView.apply(snapshot: snapshot)
+                self?.autoConnectWhenPairingIsReady()
                 self?.applyLayout(revision: true)
             }
         }
@@ -2107,6 +2121,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         // available; the bridge never sets this true from a guessed path.
         provisionItem.isEnabled = false
         connectionMenu.addItem(provisionItem)
+        let importItem = NSMenuItem(title: "导入本机配对…", action: #selector(importMacPairing(_:)), keyEquivalent: "i")
+        importItem.target = self
+        connectionMenu.addItem(importItem)
         connectionItem.submenu = connectionMenu
         provisioningMenuItem = provisionItem
 
@@ -2126,6 +2143,94 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
         window.beginSheet(sheet, completionHandler: nil)
     }
 
+    /// One-time pairing: a persisted store in the default location is enough for
+    /// later launches, so a normal double-click connects without any argument.
+    /// The guard keeps the attempt to exactly one connect, so a user `断开`, a
+    /// connect failure, or a reconnect stays a human action with its own error.
+    private func autoConnectWhenPairingIsReady() {
+        guard !hasAttemptedAutoConnect else { return }
+        guard !pairingOverrideProvided else { return }
+        guard let snapshot = latestSnapshot else { return }
+        guard snapshot.connectionSetup?.state == "configured" else { return }
+        guard snapshot.connectionState == nil || snapshot.connectionState == "idle" || snapshot.connectionState == "stopped" else {
+            return
+        }
+        hasAttemptedAutoConnect = true
+        macDiagnostic("MAC_AUTO_CONNECT pairing=configured\\n")
+        _ = bridge?.request("{\"op\":\"connect\"}")
+    }
+
+    @objc private func importMacPairing(_ sender: Any?) {
+        presentPairingImport(completion: nil)
+    }
+
+    private func presentPairingImport(completion: ((String) -> Void)?) {
+        guard !pairingImportInFlight else {
+            completion?(rejection("PAIRING_IMPORT_IN_FLIGHT"))
+            return
+        }
+        guard let window else {
+            completion?(rejection("WINDOW_UNAVAILABLE"))
+            return
+        }
+        pairingImportInFlight = true
+        let panel = NSOpenPanel()
+        panel.title = "选择配对文件"
+        panel.message = "选择本机导出的 .abconnection 配对文件。导入后启动应用即可连接。"
+        // No type filter: `.abconnection` has no registered UTI on a clean Mac,
+        // so a restricted panel would hide the very file the user exports.
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            defer { self.pairingImportInFlight = false }
+            guard response == .OK, let selected = panel.url else {
+                completion?(self.bridge?.request("{\"op\":\"status\"}") ?? rejection("NATIVE_BRIDGE_UNAVAILABLE"))
+                return
+            }
+            let result = self.submitPairingBundle(path: selected.path)
+            completion?(result)
+        }
+    }
+
+    /// Native owns the source path: any path chosen by JS is replaced by the
+    /// open-panel selection, so page content can never pick the imported file.
+    private func submitPairingBundle(path: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["op": "import_connection", "path": path]),
+              let command = String(data: data, encoding: .utf8) else {
+            return rejection("IMPORT_COMMAND_ENCODING")
+        }
+        macDiagnostic("MAC_PAIRING_IMPORT selected=\(path)\\n")
+        let response = bridge?.request(command) ?? rejection("NATIVE_BRIDGE_UNAVAILABLE")
+        if let rejection = pairingImportRejection(response) {
+            macDiagnostic("MAC_PAIRING_IMPORT_FAILED reason=\(rejection)\\n")
+            presentPairingImportFailure(reason: rejection)
+        } else {
+            macDiagnostic("MAC_PAIRING_IMPORT_OK\\n")
+            autoConnectWhenPairingIsReady()
+        }
+        return response
+    }
+
+    private func pairingImportRejection(_ response: String) -> String? {
+        guard let data = response.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return value["rejection"] as? String
+    }
+
+    private func presentPairingImportFailure(reason: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "配对文件导入失败"
+        alert.informativeText = "\(reason)。请重新导出 .abconnection 文件后再试。"
+        alert.addButton(withTitle: "好")
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
         guard prompt == nativePrompt, let defaultText else {
             completionHandler(nil)
@@ -2137,6 +2242,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
                 return
             }
             completionHandler(result)
+            return
+        }
+        if let op = nativeCommandOp(defaultText), op == "import_connection" || op == "open_connection_setup" {
+            // Both ordinary UI entries converge on the same native import panel.
+            presentPairingImport { response in completionHandler(response) }
             return
         }
         // Stay on the main thread so the presentation projection in
@@ -2255,6 +2365,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, 
 
     private func shouldRouteNativeVideoInput() -> Bool {
         return presentationState == .browsing && shouldUseNativeVideo()
+    }
+
+    private func nativeCommandOp(_ raw: String) -> String? {
+        guard let data = raw.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return value["op"] as? String
     }
 
     private func parsePresentationRequest(_ raw: String) -> PresentationRequest? {
