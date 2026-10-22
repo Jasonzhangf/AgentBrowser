@@ -1601,10 +1601,12 @@ fn pairing_files_present(root: &Path) -> bool {
         .all(|name| fs::metadata(root.join(name)).is_ok_and(|metadata| metadata.is_file()))
 }
 
-/// Read one `.abconnection` bundle and replace the pairing store atomically.
-/// The caller owns the store boundary; this function never echoes bundle
-/// contents and every failure leaves the previous store files untouched or
-/// removes the temporary files it created.
+/// Read one `.abconnection` bundle and replace the pairing store files.
+/// The caller owns the store boundary and this function never echoes bundle
+/// contents. A failure before the first rename keeps the previous store; the
+/// two renames are not one atomic step, so a failure between them or a crash
+/// can leave the new `endpoint.txt` beside the old `token`. Temporary files are
+/// removed on failure, and the next import clears any stale ones.
 fn import_connection_into(root: &Path, bundle_path: &Path) -> Result<(), String> {
     let bytes = read_bundle(bundle_path)?;
     let (endpoint, token) = parse_bundle(&bytes)?;

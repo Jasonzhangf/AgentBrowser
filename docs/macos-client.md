@@ -106,25 +106,34 @@ never choose the imported file. A command with a duplicate top-level key is
 refused as `DUPLICATE_COMMAND_FIELD:<key>`, because the page's parser and the
 bridge parser would otherwise pick different `op` values.
 
-Import rejects a bundle with a typed error and keeps the previous store:
-`BUNDLE_INVALID` (not JSON, or `endpoint`/`token` missing, not a string, empty,
-or longer than 4096 bytes), `BUNDLE_PATH_INVALID` (missing `path`, or a path
-that is not absolute), `BUNDLE_READ_FAILED` (unreadable path, or not a regular
-file), `BUNDLE_TOO_LARGE` (larger than 8192 bytes), `PAIRING_STORE_UNAVAILABLE`
-(a store path that exists but is not a directory, a directory that cannot be
-created or has no home directory to resolve), and `PAIRING_WRITE_FAILED` (a
-failed write or rename). A rejection names the reason only; it never echoes the
-token.
+Import rejects a bundle with a typed error and keeps the previous store. Each
+code has one condition, verified against the built bridge:
 
-Two known limits stay explicit. First, the store is two files, so a process
-death between the two renames can leave a new `endpoint.txt` with the old
-`token`. That state fails at connect with a Host authentication error, never a
-silent success, and one more import repairs it. Second, an interrupted import
+- `MISSING_COMMAND_FIELD`: the command has no `path` field.
+- `BUNDLE_PATH_INVALID`: `path` is empty or not a string.
+- `UNKNOWN_COMMAND_FIELD`: the command has a field other than `op` and `path`.
+- `BUNDLE_READ_FAILED`: `path` is relative, unreadable, or not a regular file.
+- `BUNDLE_TOO_LARGE`: the bundle is larger than 8192 bytes.
+- `BUNDLE_INVALID`: the bytes are not JSON, or `endpoint`/`token` is missing,
+  not a string, empty, or longer than 4096 bytes.
+- `PAIRING_STORE_UNAVAILABLE`: the store path exists but is not a directory, or
+  the directory cannot be created or resolved from the home directory.
+- `PAIRING_WRITE_FAILED`: a temporary file or a rename failed.
+- `DUPLICATE_COMMAND_FIELD:<key>`: a top-level key repeats.
+
+A rejection names the reason only; it never echoes the token.
+
+Two known limits stay explicit. First, the store is two files, so a crash or a
+failed rename between the two renames can leave a new `endpoint.txt` with the
+old `token`. That state fails at connect with a Host authentication error, never
+a silent success, and one more import repairs it. Second, an interrupted import
 can leave a private temp file (`.endpoint.txt.tmp-*` or `.token.tmp-*`, mode
 `0600`) in the store; the next import removes stale temps before it writes.
 
-Auto-connect runs at most once per launch and only for a default-store launch:
-it needs `connectionSetup.state=configured` and an idle or stopped connection.
+Auto-connect runs at most once per launch and only when the bridge resolves a
+configured store, which is the default store or an env-only
+`AGENTBROWSER_MAC_PAIRING` launch. It needs `connectionSetup.state=configured`
+and an idle or stopped connection.
 An explicit `--pairing-dir` keeps manual control, because it is a test and
 developer override; a launch that sets only `AGENTBROWSER_MAC_PAIRING` still
 auto-connects, because the bridge sees a configured store. After the first

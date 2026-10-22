@@ -54,17 +54,28 @@ node scripts/mac-user-acceptance.mjs
 清掉旧的临时文件。
 
 存储解析顺序是：先看 `AGENTBROWSER_MAC_PAIRING`（应用带的 `--pairing-dir`
-只为测试设它），再看默认存储。自动连接每次启动最多一次，只在默认存储路径下
-发生，且要求 `connectionSetup.state=configured` 与空闲状态。带 `--pairing-dir`
-的启动保持手动连接，因为它是测试和开发入口；只设 `AGENTBROWSER_MAC_PAIRING`
-而不带参数的启动仍会自动连接。第一次自动连接之后，断开、重连和
-重试都由人决定，真实连接错误照常显示。
+只为测试设它），再看默认存储。自动连接每次启动最多一次，只在桥进程解析到已配置
+存储时发生，即默认存储，或只设 `AGENTBROWSER_MAC_PAIRING` 的启动；它要求
+`connectionSetup.state=configured` 与空闲状态。带 `--pairing-dir` 的启动保持手动连接，因为它是测试和开发
+入口。第一次自动连接之后，断开、重连和重试都由人决定，真实连接错误照常显示。
 
-导入失败会给出类型化原因并保留原来的存储：`BUNDLE_INVALID`、
-`BUNDLE_PATH_INVALID`、`BUNDLE_READ_FAILED`、`BUNDLE_TOO_LARGE`、
-`PAIRING_STORE_UNAVAILABLE`、`PAIRING_WRITE_FAILED`。原因里不含令牌。重复顶层
-键的命令会被拒绝为 `DUPLICATE_COMMAND_FIELD`，避免页面和桥进程对 `op` 有不同
-理解。
+导入失败会给出类型化原因并保留原来的存储。每个码只有一个条件，已用构建后的
+bridge 核对：
+
+- `MISSING_COMMAND_FIELD`：命令缺少 `path` 字段。
+- `BUNDLE_PATH_INVALID`：`path` 为空，或不是字符串。
+- `UNKNOWN_COMMAND_FIELD`：命令带了 `op` 与 `path` 之外的字段。
+- `BUNDLE_READ_FAILED`：`path` 是相对路径、读不出，或不是普通文件。
+- `BUNDLE_TOO_LARGE`：文件超过 8192 字节。
+- `BUNDLE_INVALID`：内容不是 JSON，或 `endpoint`/`token` 缺失、不是字符串、
+  为空、超过 4096 字节。
+- `PAIRING_STORE_UNAVAILABLE`：存储路径存在但不是目录，或目录无法创建、无法
+  从主目录解析。
+- `PAIRING_WRITE_FAILED`：临时文件写入或改名失败。
+- `DUPLICATE_COMMAND_FIELD:<key>`：顶层键重复，避免页面和桥进程对 `op` 有不同
+  理解。
+
+原因里不含令牌。
 
 自动化复现命令：
 
