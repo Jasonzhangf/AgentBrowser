@@ -297,6 +297,115 @@ function runHelper(program, args, timeout = 30_000) {
   });
 }
 
+// The chrome strip is the one user-visible control that the accessibility tree
+// cannot vouch for: it reported the toolbar and the address field with the
+// correct geometry while the strip itself painted as a flat dark bar. The gates
+// below therefore capture the screen region that AX names and check that it
+// holds real content.
+function chromeStripRect(pid) {
+  const swift = `
+import AppKit
+import ApplicationServices
+let pid: pid_t = ${pid}
+let app = AXUIElementCreateApplication(pid)
+func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var result: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success ? result : nil
+}
+func find(_ element: AXUIElement, _ depth: Int) -> AXUIElement? {
+    if depth > 12 { return nil }
+    let labels = [value(element, kAXTitleAttribute), value(element, kAXDescriptionAttribute)].compactMap { $0 as? String }
+    if labels.contains("浏览器工具栏") { return element }
+    for child in value(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+        if let match = find(child, depth + 1) { return match }
+    }
+    return nil
+}
+_ = NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
+if let windows = value(app, kAXWindowsAttribute) as? [AXUIElement], let window = windows.first {
+    _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+}
+guard let strip = find(app, 0),
+      let positionValue = value(strip, kAXPositionAttribute),
+      let sizeValue = value(strip, kAXSizeAttribute) else { exit(2) }
+var origin = CGPoint.zero
+var extent = CGSize.zero
+guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin),
+      AXValueGetValue(sizeValue as! AXValue, .cgSize, &extent),
+      extent.width > 200, extent.height >= 40 else { exit(3) }
+print("{\\"x\\":\\(Int(origin.x)),\\"y\\":\\(Int(origin.y)),\\"width\\":\\(Int(extent.width)),\\"height\\":\\(Int(extent.height))}")
+`;
+  const result = runHelper('swift', ['-e', swift]);
+  if (result.status !== 0) return null;
+  try {
+    return JSON.parse(String(result.stdout).trim());
+  } catch {
+    return null;
+  }
+}
+
+function chromeStripStats(path) {
+  const swift = `
+import AppKit
+guard let image = NSImage(contentsOfFile: ${JSON.stringify(path)}),
+      let tiff = image.tiffRepresentation,
+      let rep = NSBitmapImageRep(data: tiff) else { exit(2) }
+var distinct = Set<Int>()
+var bright = 0
+var total = 0
+var y = 0
+while y < rep.pixelsHigh {
+    var x = 0
+    while x < rep.pixelsWide {
+        if let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+            let r = Int((color.redComponent * 255).rounded())
+            let g = Int((color.greenComponent * 255).rounded())
+            let b = Int((color.blueComponent * 255).rounded())
+            distinct.insert((r << 16) | (g << 8) | b)
+            if (r * 299 + g * 587 + b * 114) / 1000 > 200 { bright += 1 }
+            total += 1
+        }
+        x += 2
+    }
+    y += 2
+}
+print("{\\"distinct\\":\\(distinct.count),\\"bright\\":\\(bright),\\"total\\":\\(total)}")
+`;
+  const result = runHelper('swift', ['-e', swift]);
+  if (result.status !== 0) return null;
+  try {
+    return JSON.parse(String(result.stdout).trim());
+  } catch {
+    return null;
+  }
+}
+
+async function assertChromeStripPainted(pid) {
+  const strip = chromeStripRect(pid);
+  if (!strip) {
+    failGate('CHROME_PAINTED', 'the accessibility tree did not expose the chrome strip rectangle', {pid});
+  }
+  await sleep(600);
+  const path = join(runDirectory, 'takeover-chrome.png');
+  runSync('CHROME_CAPTURE', 'screencapture', ['-x', '-R', `${strip.x},${strip.y},${strip.width},${strip.height}`, path]);
+  const stats = chromeStripStats(path);
+  const brightShare = stats && stats.total ? stats.bright / stats.total : 0;
+  if (!stats || stats.distinct < 6 || brightShare < 0.2) {
+    failGate('CHROME_PAINTED', `the chrome strip is not painted: ${JSON.stringify({strip, stats, brightShare})}`, {
+      strip,
+      stats,
+      bright_share: brightShare,
+      screenshot: path,
+    });
+  }
+  passGate('CHROME_PAINTED', 'the native-video chrome strip shows the toolbar', {
+    strip,
+    stats,
+    bright_share: brightShare,
+    screenshot: path,
+  });
+}
+
 function preflight() {
   checkInterrupted();
   if (process.platform !== 'darwin') {
@@ -1434,6 +1543,7 @@ try {
       visibleContent: observations.visible_content,
     });
     passGate('NATIVE_VIDEO', 'visibleContent=native-video', {layout: takeover.layout ?? null});
+    await assertChromeStripPainted(appChild.pid);
 
     const releaseSnapshotStart = serializedSnapshots.length;
     const releaseRejectionStart = rejections.length;
