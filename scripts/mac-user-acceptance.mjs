@@ -8,7 +8,7 @@
 // Native click, keyboard, scroll and IME are not automatable in this
 // environment. They are written to the receipt as PENDING_HUMAN, never PASS.
 import {spawn, spawnSync} from 'node:child_process';
-import {accessSync, constants, createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
+import {accessSync, constants, createWriteStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -35,6 +35,9 @@ Options:
   --timeout <seconds>    per runtime gate timeout (default: 60)
   --observe-seconds <n>  observation hold before takeover and before release
                          (default: 2)
+  --persisted-pairing    prove the one-time import path: import the fixture
+                         bundle into a throwaway HOME's default store, then
+                         launch the app with no pairing argument at all
   --self-test            run the fixture-cleanup decision cases and exit
   -h, --help             show this help and exit
 
@@ -50,6 +53,7 @@ function parseArguments(argv) {
     observeSeconds: 2,
     help: false,
     selfTest: false,
+    persistedPairing: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -59,6 +63,10 @@ function parseArguments(argv) {
     }
     if (argument === '--self-test') {
       options.selfTest = true;
+      continue;
+    }
+    if (argument === '--persisted-pairing') {
+      options.persistedPairing = true;
       continue;
     }
     const next = () => {
@@ -114,9 +122,16 @@ const protocolRoot = process.env.OBSCURA_PROTOCOL_ROOT
 const binDirectory = process.env.OBSCURA_BIN_DIR
   ? resolve(process.env.OBSCURA_BIN_DIR)
   : null;
+// A throwaway HOME keeps the one-time import proof away from the real store.
+const persistedHome = join(root, `target/persisted-home-${runId}`);
+const persistedStore = join(persistedHome, 'Library/Application Support/AgentBrowser/mac-pairing');
 const moduleCache = join(root, 'target/abn-swift-modcache');
 mkdirSync(moduleCache, {recursive: true});
 mkdirSync(join(runDirectory, 'ax'), {recursive: true});
+const persistedHomeRoot = dirname(persistedHome);
+mkdirSync(persistedHomeRoot, {recursive: true});
+rmSync(persistedHome, {recursive: true, force: true});
+mkdirSync(persistedHome, {recursive: true, mode: 0o700});
 
 const fixtureExecutable = join(root, 'target/release/examples/device_fixture');
 const appExecutable = join(root, 'apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMac');
@@ -162,6 +177,7 @@ const observations = {
   takeover_snapshot: null,
   release_snapshot: null,
   visible_content: null,
+  persisted_pairing: null,
 };
 
 let appChild = null;
@@ -440,14 +456,116 @@ function rememberFixtureStderr(line) {
   fixtureStderrBuffer += `${line}\n`;
 }
 
+function bridgeExecutable() {
+  return join(root, 'apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMacBridge');
+}
+
+// One line-framed text response: 1 kind byte, u32be header length, header
+// JSON, u32be body length, body. Returns null until a whole frame is buffered.
+function takeTextResponse(buffer) {
+  if (buffer.length < 5) return null;
+  if (buffer[0] !== 0) throw new Error(`unexpected bridge frame kind ${buffer[0]}`);
+  const headerLength = buffer.readUInt32BE(1);
+  if (buffer.length < 5 + headerLength + 4) return null;
+  const header = JSON.parse(buffer.subarray(5, 5 + headerLength).toString('utf8'));
+  const bodyLengthOffset = 5 + headerLength;
+  const bodyLength = buffer.readUInt32BE(bodyLengthOffset);
+  const bodyStart = bodyLengthOffset + 4;
+  if (buffer.length < bodyStart + bodyLength) return null;
+  return {
+    header,
+    value: header.value,
+    rest: buffer.subarray(bodyStart + bodyLength),
+  };
+}
+
+async function bridgeRequestOnce(environment, command) {
+  const child = spawn(bridgeExecutable(), [], {cwd: root, env: environment, stdio: ['pipe', 'pipe', 'pipe']});
+  try {
+    return await new Promise((resolvePromise, rejectPromise) => {
+      let buffer = Buffer.alloc(0);
+      const timer = setTimeout(() => rejectPromise(new Error('bridge response timeout')), 20_000);
+      const finish = value => { clearTimeout(timer); resolvePromise(value); };
+      child.stdout.on('data', chunk => {
+        buffer = Buffer.concat([buffer, chunk]);
+        let frame;
+        try {
+          frame = takeTextResponse(buffer);
+        } catch (error) {
+          clearTimeout(timer);
+          rejectPromise(error);
+          return;
+        }
+        if (frame) finish(frame.value);
+      });
+      child.on('error', error => { clearTimeout(timer); rejectPromise(error); });
+      child.stdin.write(`${JSON.stringify({id: 1, command})}\n`);
+    });
+  } finally {
+    try { child.stdin.end(); } catch {}
+    try { child.kill('SIGTERM'); } catch {}
+  }
+}
+
+// The one-time configuration step: import the fixture bundle into a throwaway
+// HOME's default store through the same bridge op the native panel uses.
+async function importPairingThroughBridge(bundlePath) {
+  const environment = {...process.env, HOME: persistedHome};
+  delete environment.AGENTBROWSER_MAC_PAIRING;
+  const raw = await bridgeRequestOnce(environment, JSON.stringify({op: 'import_connection', path: bundlePath}));
+  let snapshot = null;
+  try {
+    snapshot = JSON.parse(raw);
+  } catch {
+    failGate('PERSISTED_IMPORT', `import response is not JSON: ${raw}`, {raw});
+  }
+  if (snapshot.rejection) {
+    failGate('PERSISTED_IMPORT', `import rejected: ${snapshot.rejection}`, {raw});
+  }
+  if (snapshot.connectionSetup?.state !== 'configured') {
+    failGate('PERSISTED_IMPORT', `import did not report a configured store: ${raw}`, {raw});
+  }
+  const endpointPath = join(persistedStore, 'endpoint.txt');
+  const tokenPath = join(persistedStore, 'token');
+  if (!existsSync(endpointPath) || !existsSync(tokenPath)) {
+    failGate('PERSISTED_IMPORT', 'import did not write endpoint.txt and token into the default store', {
+      store: persistedStore,
+      exists: {endpoint: existsSync(endpointPath), token: existsSync(tokenPath)},
+    });
+  }
+  const modes = {
+    store: statSync(persistedStore).mode & 0o777,
+    endpoint: statSync(endpointPath).mode & 0o777,
+    token: statSync(tokenPath).mode & 0o777,
+  };
+  if (modes.store !== 0o700 || modes.endpoint !== 0o600 || modes.token !== 0o600) {
+    failGate('PERSISTED_IMPORT', `store modes are not private: ${JSON.stringify(modes)}`, {modes});
+  }
+  observations.persisted_pairing = {
+    home: persistedHome,
+    store: persistedStore,
+    modes,
+    launch_arguments: [],
+    auto_connect: 'pending',
+  };
+  passGate('PERSISTED_IMPORT', 'bundle imported into the default store with private modes', {
+    store: persistedStore,
+    modes,
+  });
+}
+
 function launchApp() {
   checkInterrupted();
   appStdoutStream = createWriteStream(join(runDirectory, 'app.stdout.log'));
   appStderrStream = createWriteStream(join(runDirectory, 'app.stderr.log'));
   appCombinedStream = createWriteStream(join(runDirectory, 'app.log'));
-  const child = spawn(appExecutable, ['--pairing-dir', observations.fixture_info.fixture], {
+  // The persisted mode is the ordinary user case: no `--pairing-dir`, no
+  // `AGENTBROWSER_MAC_PAIRING`. Only the scratch HOME differs from a real
+  // double-click, so this run never touches the developer's own store.
+  const arguments_ = options.persistedPairing ? [] : ['--pairing-dir', observations.fixture_info.fixture];
+  const child = spawn(appExecutable, arguments_, {
     cwd: root,
-    env: {...process.env},
+    env: {...process.env, ...(options.persistedPairing ? {HOME: persistedHome, AGENTBROWSER_MAC_PAIRING: ''} : {})},
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appChild = child;
@@ -1003,6 +1121,17 @@ async function cleanup() {
     cleanupReceipt.fixture = {status: 'failed', detail: error.message};
     gates.push({name: 'CLEANUP_FIXTURE', status: 'FAIL', detail: error.message, at: now()});
   }
+  if (existsSync(persistedHome)) {
+    rmSync(persistedHome, {recursive: true, force: true});
+  }
+  const homeRemoved = !existsSync(persistedHome);
+  cleanupReceipt.scratch_home = {path: persistedHome, removed: homeRemoved};
+  if (homeRemoved) {
+    passGate('CLEANUP_SCRATCH_HOME', 'throwaway HOME removed', cleanupReceipt.scratch_home);
+  } else {
+    cleanupFailed = true;
+    gates.push({name: 'CLEANUP_SCRATCH_HOME', status: 'FAIL', detail: `scratch HOME still exists at ${persistedHome}`, at: now()});
+  }
   appCombinedStream?.end();
   appStdoutStream?.end();
   appStderrStream?.end();
@@ -1085,14 +1214,38 @@ try {
   observations.baseline_inspect = baseline;
   passGate('FIXTURE_INSPECT_BASELINE', 'fixture page is pristine before connect', {fixture_inspect: baseline});
 
+  if (options.persistedPairing) {
+    await importPairingThroughBridge(observations.fixture_info.bundle);
+  }
   launchApp();
   recordedAppChildren = await recordOwnedChildren(appChild, 1);
   observations.app_children_at_start = recordedAppChildren;
   const connectSnapshotStart = serializedSnapshots.length;
   const connectRejectionStart = rejections.length;
-  await pressAxButton(appChild.pid, '打开菜单', 'AX_OPEN_MENU');
-  await sleep(750);
-  await pressAxButton(appChild.pid, '连接', 'AX_CONNECT');
+  if (options.persistedPairing) {
+    // The ordinary user case: the import happened once, before this launch, and
+    // the app is started with no pairing argument at all. The connect must come
+    // from the app itself, so this path presses nothing to connect.
+    await waitForSnapshot(
+      'PERSISTED_AUTO_CONNECT',
+      connectSnapshotStart,
+      connectRejectionStart,
+      snapshot => snapshot.connectionState === 'connected' && Number(snapshot.renderedFrames) > 0,
+      'connectionState=connected with renderedFrames>0 after a no-argument launch',
+    );
+    if (observations.persisted_pairing) observations.persisted_pairing.auto_connect = 'connected';
+    passGate('PERSISTED_AUTO_CONNECT', 'a no-argument launch connected through the persisted store', {
+      store: persistedStore,
+      launch_arguments: [],
+    });
+    // The drawer holds the takeover control; the connect itself came from the app.
+    await pressAxButton(appChild.pid, '打开菜单', 'AX_OPEN_MENU');
+    await sleep(750);
+  } else {
+    await pressAxButton(appChild.pid, '打开菜单', 'AX_OPEN_MENU');
+    await sleep(750);
+    await pressAxButton(appChild.pid, '连接', 'AX_CONNECT');
+  }
   const connected = await waitForSnapshot(
     'CONNECT',
     connectSnapshotStart,

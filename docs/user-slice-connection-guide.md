@@ -29,6 +29,49 @@ node scripts/mac-user-acceptance.mjs
 `result` 是 `PASS_AUTOMATED`，不是完整用户路径 PASS。完整人工步骤见
 [docs/macos-client.md](macos-client.md)。
 
+## Mac 一次性配置与直接启动
+
+2026-10-22 在独占 worktree 上用隔离 fixture Host 实测了持久配对路径，结果
+`PASS_AUTOMATED`。回执在
+`evidence/mac-persisted-pairing/<run>/receipt.json`。两个关键 gate 是
+`PERSISTED_IMPORT` 与 `PERSISTED_AUTO_CONNECT`：先在临时 HOME 的默认存储导入
+配对文件，再以不带任何参数的方式启动应用，应用自己连上 Host 并显示画面。
+
+配置只做一次，之后每次双击应用都能直接连接：
+
+1. 打开 `AgentBrowserMac.app`。
+2. 选择菜单 `连接` → `导入本机配对…`。
+3. 在系统选择面板中选择导出的 `.abconnection` 文件。
+4. 关闭应用，再次打开。不需要参数，也不需要重新配对。
+
+导入写入默认存储 `~/Library/Application Support/AgentBrowser/mac-pairing/`：
+目录权限 `0700`，`endpoint.txt` 与 `token` 权限 `0600`。先写临时文件再改名，
+中途失败不会留下半个存储。默认存储同时有这两个文件才算已配置。
+
+存储解析顺序是：先看 `AGENTBROWSER_MAC_PAIRING`（应用带的 `--pairing-dir`
+只为测试设它），再看默认存储。自动连接每次启动最多一次，只在默认存储路径下
+发生，且要求 `connectionSetup.state=configured` 与空闲状态。带 `--pairing-dir`
+的启动保持手动连接，因为它是测试和开发入口。第一次自动连接之后，断开、重连和
+重试都由人决定，真实连接错误照常显示。
+
+导入失败会给出类型化原因并保留原来的存储：`PAIRING_BUNDLE_INVALID`、
+`PAIRING_BUNDLE_READ_FAILED`、`PAIRING_STORE_UNAVAILABLE`。原因里不含令牌。
+
+自动化复现命令：
+
+```sh
+node scripts/mac-user-acceptance.mjs --persisted-pairing \
+  --receipt-dir evidence/mac-persisted-pairing
+```
+
+该模式在 `target/persisted-home-<run>` 建临时 HOME，导入后以无参数方式启动
+应用，跑完接管、返回观察和 `inspect` 比对，最后删除临时 HOME 并记录在
+`cleanup.scratch_home`。本机真实存储不会被碰到。
+
+说明一处待确认的产品口径：`docs/design.md` 写的是手机优先。本轮把 Mac 一次性
+配置与直接启动当作本轮交付优先项，没有改写总产品顺序。是否需要把文档改成 Mac
+优先，需要用户确认后再动。
+
 ## 已交付的产物
 
 | 产物 | 位置 | 身份 |

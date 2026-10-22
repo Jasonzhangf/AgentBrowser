@@ -71,10 +71,51 @@ collapsed into a successful startup or silently retried path.
 
 Pairing is a private directory containing `endpoint.txt` and a mode-0600
 `token`. Those two files are the whole pairing state; the bridge reads nothing
-else, and a missing `token` fails as `PAIRING_FILE_MISSING:token`. The helper
-reads the directory only through the `AGENTBROWSER_MAC_PAIRING` environment
-variable. The app's `--pairing-dir` argument sets that variable for its child.
-The token never enters JS, snapshots, or logs.
+else, and a missing `token` fails as `PAIRING_FILE_MISSING:token`. The token
+never enters JS, snapshots, or logs.
+
+The bridge resolves the pairing directory in this order:
+
+1. `AGENTBROWSER_MAC_PAIRING`, when set and non-empty. The app's `--pairing-dir`
+   argument sets this variable for its child, so existing harnesses keep the
+   same behavior.
+2. `$HOME/Library/Application Support/AgentBrowser/mac-pairing`, the default
+   store used by an ordinary double-click launch.
+
+The default store is configured when both `endpoint.txt` and `token` are
+present. A partial store reports `unconfigured`; the bridge never guesses a
+missing file.
+
+### One-time pairing, then a plain launch
+
+Configuration happens once. The human imports one `.abconnection` bundle, and
+every later launch connects by itself.
+
+1. Open the app and choose the `连接` menu, then `导入本机配对…`.
+2. Select the exported `.abconnection` file in the native open panel.
+3. The bridge validates the bundle and writes the store: directory mode `0700`,
+   `endpoint.txt` and `token` mode `0600`. It writes a temporary file first and
+   renames it, so an interrupted import never leaves a half store.
+4. Close and reopen `AgentBrowserMac.app` with no argument. The app connects to
+   the saved Host one time and shows frames.
+
+The import panel is owned by native code. The page may request
+`import_connection` or `open_connection_setup`, but native always replaces any
+page-supplied path with the human's open-panel selection, so page content can
+never choose the imported file.
+
+Import rejects a bundle with a typed error and keeps the previous store
+unchanged: `PAIRING_BUNDLE_INVALID` (not JSON, or `endpoint`/`token` missing,
+empty or larger than 4096 bytes), `PAIRING_BUNDLE_READ_FAILED` (unreadable path,
+not a regular file, or larger than 8192 bytes), and `PAIRING_STORE_UNAVAILABLE`
+(no home directory to resolve the store). A rejection names the reason only; it
+never echoes the token.
+
+Auto-connect runs at most once per launch and only for a default-store launch:
+it needs `connectionSetup.state=configured` and an idle or stopped connection.
+An explicit `--pairing-dir` keeps manual control, because it is a test and
+developer override. After the first attempt the human owns every further
+connect, disconnect, and retry, and a real connect error stays visible.
 
 Build the app bundle with the selected protocol owner and a writable Swift
 module cache:
@@ -129,6 +170,24 @@ scroll and Chinese IME are listed in the receipt's `manual` section with status
 its raw evidence, and a nonzero exit code. `node scripts/mac-user-acceptance.mjs
 --help` lists the optional receipt, timeout and observation-hold arguments.
 
+`--persisted-pairing` runs the one-time configuration path instead of the
+`--pairing-dir` path:
+
+```sh
+node scripts/mac-user-acceptance.mjs --persisted-pairing \
+  --receipt-dir evidence/mac-persisted-pairing
+```
+
+This mode creates a throwaway HOME under `target/persisted-home-<run>`, imports
+the fixture bundle into that HOME's default store through the bridge
+`import_connection` command, and checks the store modes `0700`/`0600`. It then
+launches the app with no pairing argument at all. The gate
+`PERSISTED_AUTO_CONNECT` passes only when that launch reaches
+`connectionState=connected` with `renderedFrames>0` without any connect press.
+The run removes the throwaway HOME and records the result in
+`cleanup.scratch_home`. The real user store in the developer home is never
+touched.
+
 The script captures both app stdout and stderr because this revision writes
 `MAC_NATIVE_SEND`/`MAC_NATIVE_RECV` diagnostics to stderr. Do not bind AX by the
 app name: another `AgentBrowserMac` instance may already be running. The script
@@ -172,6 +231,10 @@ setup above first so `OBSCURA_PROTOCOL_ROOT` and `OBSCURA_BIN_DIR` are set.
    apps/macos/build/AgentBrowserMac.app/Contents/MacOS/AgentBrowserMac \
      --pairing-dir "$FIXTURE_DIR"
    ```
+
+   To verify the persisted path instead, import `$FIXTURE_DIR/pairing.abconnection`
+   once through `连接` → `导入本机配对…`, then launch the app with no argument.
+   The app connects by itself and you can continue at step 5.
 
 4. In the app, press `打开菜单`, then `连接`. The expected status is
    `connected`, the native video area shows the fixture page, and the diagnostic

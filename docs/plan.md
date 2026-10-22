@@ -21,6 +21,18 @@
 不变 gate 已在本机运行并通过（`PASS_AUTOMATED`）；换环境需重新运行。原生点击、键盘、
 滚动和中文 IME 仍是 `PENDING_HUMAN`，本轮不声明 P5/P6 或 M1 通过。
 
+2026-10-22 Mac 持久配对：在独占
+`playground/agentbrowser/mac-persist-pairing-r1-20261021` 上，把配对从“每次给
+参数”改成“一次性导入后直接打开应用”。默认存储是
+`~/Library/Application Support/AgentBrowser/mac-pairing/`（目录 `0700`，文件
+`0600`）；`AGENTBROWSER_MAC_PAIRING` 优先，`--pairing-dir` 只为测试设它。新增
+bridge 命令 `import_connection`（字段封闭为 `op` 与 `path`）、原生选择面板和
+每次启动最多一次的自动连接。`scripts/mac-user-acceptance.mjs --persisted-pairing`
+在临时 HOME 里先导入再以无参数方式启动，`PERSISTED_IMPORT` 与
+`PERSISTED_AUTO_CONNECT` 已通过，回执 `PASS_AUTOMATED`；原 `--pairing-dir` 路径
+仍为 `PASS_AUTOMATED`。本轮把 Mac 可用当作交付优先项，没有改写
+[design.md](design.md) 的“手机优先”产品顺序，该口径待用户确认。
+
 | 阶段 | Owner / 范围 | 前置 | 验收证据 | 当前状态 |
 | --- | --- | --- | --- | --- |
 | P0 治理启动 | AgentBrowser：项目配置、设计与计划 | 用户授权已给出 | 初始化结果、真实项目绑定验证、讨论决策记录 | agentbrowser draft verify 通过；Guidance/worktree 未就绪 |
